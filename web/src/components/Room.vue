@@ -23,17 +23,18 @@ const walkers = new Map<string, Walker>()
 let hits: Hit[] = []
 let raf = 0
 let k = 1
+let hLog = 250
 let lastStatic = ''
 
-/** Integer pixel scale so the pixel art stays crisp: as many whole device pixels per art pixel as fit. */
+/** The canvas fills its box exactly (width AND height). The scene scales by width; spare height is extra floor. */
 function fitCanvas() {
   const c = canvas.value, box = wrap.value
   if (!c || !box) return
   const dpr = window.devicePixelRatio || 1
-  const avail = box.clientWidth * dpr
-  k = Math.max(1, Math.floor(avail / W))
-  c.width = W * k; c.height = h.value * k
-  c.style.width = avail >= W ? `${(W * k) / dpr}px` : '100%'
+  box.style.minHeight = `${(h.value * box.clientWidth) / W}px` // never shorter than the scene needs
+  c.width = Math.max(1, Math.round(box.clientWidth * dpr)); c.height = Math.max(1, Math.round(box.clientHeight * dpr))
+  k = c.width / W
+  hLog = c.height / k
   lastStatic = ''
 }
 
@@ -45,11 +46,11 @@ function frame(t: number) {
   if (!ctx) return
   // With reduced motion the picture only changes when data does, so skip identical redraws.
   if (reduced) {
-    const key = JSON.stringify([props.group.sessions, state.selectedId, Math.floor(state.now / 60000), c.width, h.value])
+    const key = JSON.stringify([props.group.sessions, state.selectedId, Math.floor(state.now / 60000), c.width, c.height, h.value])
     if (key === lastStatic) return
     lastStatic = key
   }
-  hits = drawRoom(ctx, { group: props.group, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: h.value })
+  hits = drawRoom(ctx, { group: props.group, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: Math.max(h.value, hLog) })
 }
 let ro: ResizeObserver | null = null
 onMounted(() => {
@@ -63,7 +64,7 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect() })
 
 function at(e: MouseEvent): Hit | undefined {
   const b = canvas.value!.getBoundingClientRect()
-  return hitTest(hits, (e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * h.value)
+  return hitTest(hits, (e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * hLog)
 }
 const onClick = (e: MouseEvent) => { const h = at(e); if (h) select(h.id) }
 const onMove = (e: MouseEvent) => { canvas.value!.style.cursor = at(e) ? 'pointer' : 'default' }

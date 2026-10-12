@@ -30,10 +30,11 @@ export function slotPos(zone: Zone, i: number, n: number): Pos {
   const cols = Math.max(1, Math.min(n, MAX_COLS[zone]))
   const [x0, x1] = ZONE_X[zone]
   const col = i % cols, row = Math.floor(i / cols)
-  return { x: Math.round(x0 + (col + 0.5) * (x1 - x0) / cols), top: FIRST_TOP[zone] + row * ROW_H[zone] }
+  const pad = 10 // keeps timers and bubbles inside the room edge
+  return { x: Math.round(x0 + pad + (col + 0.5) * (x1 - x0 - 2 * pad) / cols), top: FIRST_TOP[zone] + row * ROW_H[zone] }
 }
 /** Width available to one slot (desks shrink with it). */
-export const slotWidth = (zone: Zone, n: number): number => (ZONE_X[zone][1] - ZONE_X[zone][0]) / Math.max(1, Math.min(n, MAX_COLS[zone]))
+export const slotWidth = (zone: Zone, n: number): number => (ZONE_X[zone][1] - ZONE_X[zone][0] - 20) / Math.max(1, Math.min(n, MAX_COLS[zone]))
 
 /** Eased position between two slots. `moving` is false once arrived (or when motion is reduced). */
 export function walkPos(from: Pos, to: Pos, elapsedMs: number, reduced: boolean, dur = WALK_MS): Pos & { moving: boolean } {

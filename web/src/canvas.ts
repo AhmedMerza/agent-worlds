@@ -112,24 +112,24 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.fillText(t, x, y)
 }
 
-function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: number, top: number, moving: boolean, n: number, o: DrawOpts, hits: Hit[]) {
+function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: number, top: number, dest: { x: number; top: number }, moving: boolean, n: number, o: DrawOpts, hits: Hit[]) {
   const l = look(s.id), tt = o.reduced ? 0 : o.t
   const step = moving && Math.floor(o.t / 150) % 2 === 1
   let hb: { x: number; y: number; w: number; h: number }
   if (zone === 'desks') {
-    const deskY = top + 30
+    const deskY = dest.top + 30, dx = dest.x // the desk waits at the destination slot while the sprite walks over
     const bob = moving ? 0 : Math.floor(tt / 260 + l.seed) % 2
     hb = { x: x - 12, y: top, w: 24, h: 30 }
     if (moving) drawSprite(ctx, x - 12, top, 3, pal(l), step)
     else drawSprite(ctx, x - 12, top + bob, 3, pal(l), false)
-    drawDesk(ctx, x, deskY, Math.min(64, slotWidth('desks', n) - 6), s, l.shirt)
+    drawDesk(ctx, dx, deskY, Math.min(64, slotWidth('desks', n) - 6), s, l.shirt)
     for (let k = 0; k < 3 && !moving; k++) {
       const ph = ((tt / 1100) + k / 3 + l.seed) % 1
       ctx.fillStyle = rgba(l.shirt, 1 - ph)
-      ctx.fillRect(x - 6 + ((k * 5 + Math.floor(l.seed * 7)) % 12), deskY - 14 - ph * 22, 2, 2)
+      ctx.fillRect(dx - 6 + ((k * 5 + Math.floor(l.seed * 7)) % 12), deskY - 14 - ph * 22, 2, 2)
     }
     s.helpers.slice(0, 3).forEach((h, i) => {
-      const hx = x - 26 + i * 18, hy = deskY + 26
+      const hx = dx - 26 + i * 18, hy = deskY + 26
       const b = h.state === 'working' && !o.reduced ? Math.floor(tt / 220 + i) % 2 : 0
       ctx.fillStyle = rgba(l.shirt, 0.7)
       for (let d = deskY + 21; d < hy + b; d += 2) ctx.fillRect(hx + 8, d, 1, 1)
@@ -137,9 +137,9 @@ function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: n
       if (h.state === 'done') { ctx.fillStyle = STATE_COLOR.done; ctx.fillRect(hx + 13, hy - 2, 4, 4) }
     })
     if (s.helpers.length > 3) {
-      ctx.fillStyle = rgba(l.shirt, 0.9); ctx.fillRect(x + 28, deskY + 32, 16, 11)
+      ctx.fillStyle = rgba(l.shirt, 0.9); ctx.fillRect(dx + 28, deskY + 32, 16, 11)
       ctx.fillStyle = '#14110b'; ctx.font = '600 8px "Pixelify Sans", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText('+' + (s.helpers.length - 3), x + 36, deskY + 38)
+      ctx.fillText('+' + (s.helpers.length - 3), dx + 36, deskY + 38)
     }
   } else if (zone === 'lounge') {
     hb = { x: x - 12, y: top, w: 24, h: 36 }
@@ -168,6 +168,12 @@ function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: n
         ctx.fillStyle = `rgba(150,150,150,${0.6 - ph * 0.6})`; ctx.fillRect(x - 2 + k * 2 + ph * 4, top - 4 - ph * 18, 3, 3)
       }
     }
+    s.helpers.slice(0, 3).forEach((h, i) => {
+      const hx = x + 13 + i * 6, hy = sy + 14 + (h.state === 'working' && !o.reduced ? Math.floor(tt / 220 + i) % 2 : 0)
+      drawSprite(ctx, hx, hy, 1, pal(l, true), false)
+      if (h.state === 'done') { ctx.fillStyle = STATE_COLOR.done; ctx.fillRect(hx + 6, hy - 2, 2, 2) }
+    })
+    if (s.helpers.length > 3) { ctx.fillStyle = '#ece6d9'; ctx.font = '600 7px "Pixelify Sans", monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('+' + (s.helpers.length - 3), x + 13, sy + 32) }
     label(ctx, s.repoName, x, top + 44, slotWidth('help', n) - 2)
   }
   if (o.selectedId === s.id) brackets(ctx, hb.x, hb.y, hb.w, hb.h)
@@ -212,13 +218,21 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   const tint = o.group.world.color
   const wall = mix(tint, '#12161d', 0.78), trim = mix(tint, '#12161d', 0.65)
   ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.imageSmoothingEnabled = false
+  // At a fractional scale rects would blur at their edges and leave seams: snap every rect to whole device pixels.
+  const k = o.k, rect = CanvasRenderingContext2D.prototype.fillRect
+  const snap = (v: number) => Math.round(v * k) / k
+  ctx.fillRect = (x: number, y: number, w: number, h: number) => { const x0 = snap(x), y0 = snap(y); rect.call(ctx, x0, y0, snap(x + w) - x0, snap(y + h) - y0) }
+  try { return paintRoom(ctx, o, wall, trim) } finally { Reflect.deleteProperty(ctx, 'fillRect') }
+}
+
+function paintRoom(ctx: CanvasRenderingContext2D, o: DrawOpts, wall: string, trim: string): Hit[] {
   drawScenery(ctx, wall, trim, o.h)
 
   const zones = assignZones(o.group.sessions)
   const live = new Set(o.group.sessions.map((s) => s.id))
   for (const id of o.walkers.keys()) if (!live.has(id)) o.walkers.delete(id)
 
-  const placed: { s: Session; zone: Zone; x: number; top: number; moving: boolean; n: number }[] = []
+  const placed: { s: Session; zone: Zone; x: number; top: number; dest: { x: number; top: number }; moving: boolean; n: number }[] = []
   for (const zone of ['lounge', 'desks', 'help'] as Zone[]) {
     const list = zones[zone], cap = capacity(zone)
     list.forEach((s, i) => {
@@ -226,7 +240,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
       const w = retarget(o.walkers.get(s.id), slotPos(zone, i, list.length), o.t, o.reduced)
       o.walkers.set(s.id, w)
       const p = walkPos(w.from, w.to, o.t - w.start, o.reduced)
-      placed.push({ s, zone, x: Math.round(p.x), top: Math.round(p.top), moving: p.moving, n: list.length })
+      placed.push({ s, zone, x: Math.round(p.x), top: Math.round(p.top), dest: w.to, moving: p.moving, n: list.length })
     })
     if (list.length > cap) {
       const [x0, x1] = ZONE_X[zone]
@@ -238,7 +252,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   }
   placed.sort((a, b) => a.top - b.top)
   const hits: Hit[] = []
-  for (const p of placed) drawStation(ctx, p.s, p.zone, p.x, p.top, p.moving, p.n, o, hits)
+  for (const p of placed) drawStation(ctx, p.s, p.zone, p.x, p.top, p.dest, p.moving, p.n, o, hits)
 
   const { links, badges } = roomConflicts(o.group.sessions)
   const warn = STATE_COLOR.waiting
