@@ -56,3 +56,30 @@ describe('applyMessage alerts', () => {
     expect(applyMessage(st, { type: 'session', session: { ...w, now: 'x' } })).toBeNull()
   })
 })
+
+import { claimPending } from '../src/store'
+describe('claimPending', () => {
+  const s = mk('n', { tmux: { session: 'aw-n', pane: '%1' } })
+  it('claims the matching tmux session once, within 60s', () => {
+    const st = newState()
+    st.pending = { tmux: 'aw-n', until: 1000 }
+    expect(claimPending(st, mk('other'), 10)).toBe(false)
+    expect(st.pending).not.toBeNull()
+    expect(claimPending(st, s, 10)).toBe(true)
+    expect(st.pending).toBeNull()
+    expect(claimPending(st, s, 10)).toBe(false)
+  })
+  it('gives up after the deadline', () => {
+    const st = newState()
+    st.pending = { tmux: 'aw-n', until: 1000 }
+    expect(claimPending(st, s, 2000)).toBe(false)
+    expect(st.pending).toBeNull()
+  })
+  it('selects it through the reducer', () => {
+    const st = newState()
+    applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('a')] })
+    st.pending = { tmux: 'aw-n', until: Date.now() + 60000 }
+    applyMessage(st, { type: 'session', session: s })
+    expect(st.selectedId).toBe('n')
+  })
+})

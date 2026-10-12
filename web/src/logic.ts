@@ -143,3 +143,13 @@ export const diffClass = (l: string): string => (l.startsWith('@@') ? 'h' : l[0]
 export const ctxLevel = (pct: number): 0 | 1 | 2 => (pct >= 80 ? 2 : pct >= 50 ? 1 : 0)
 
 export const baseName = (p: string): string => p.replace(/\/+$/, '').split('/').pop() || p
+
+/** Permission/question cards the GUI can answer. `live:false` means only the terminal can (no GUI was connected, or the hold timed out). */
+export const cardLive = (c: Card): boolean => !((c.kind === 'permission' || c.kind === 'question') && c.live === false)
+
+/** Server errors are `{error}`; some routes use `{message}`. */
+export function errorText(status: number, body: unknown): string {
+  const b = (body ?? {}) as { error?: unknown; message?: unknown }
+  const t = typeof b.error === 'string' ? b.error : typeof b.message === 'string' ? b.message : ''
+  return t || `Request failed (${status}).`
+}

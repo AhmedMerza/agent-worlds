@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
 import type { Session, Question, Card } from '../types'
-import { fmtWait, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge } from '../logic'
+import { fmtWait, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive } from '../logic'
 import { state, needsYou, groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
 
@@ -64,6 +64,11 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
       <template v-if="c.kind === 'permission'">
         <code class="cmd">{{ c.command ?? inputText(c.input) }}</code>
         <p v-if="c.risky" class="why">Careful: this {{ c.risky }}.</p>
+        <div v-if="!cardLive(c)" class="actions">
+          <p class="why" style="width:100%">Answer this in the terminal.</p>
+          <button class="btn primary" @click="select(s.id); focusTerm()">Open its terminal</button>
+        </div>
+        <template v-else>
         <div class="actions">
           <button class="btn primary" :disabled="busy[c.requestId]" @click="run(c.requestId, () => decidePermission(s.id, c.requestId, 'allow'))">Allow once</button>
           <button class="btn danger" :disabled="busy[c.requestId]" @click="run(c.requestId, () => decidePermission(s.id, c.requestId, 'deny'))">Deny</button>
@@ -75,6 +80,15 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
             <button v-for="o in scopes" :key="o.scope" class="btn" :disabled="busy[c.requestId] || (o.scope === 'all' && !scopeAvailability(c).all)" @click="run(c.requestId, () => decidePermission(s.id, c.requestId, 'allow', o.scope))">{{ o.label(s.repoName, world(s)?.name ?? '') }}</button>
           </div>
           <p v-if="scopeAvailability(c).allReason" class="soon">"Everywhere" {{ scopeAvailability(c).allReason?.toLowerCase() }}</p>
+        </div>
+        </template>
+      </template>
+
+      <template v-else-if="c.kind === 'question' && !cardLive(c)">
+        <p class="why">{{ c.questions.map((q) => q.question).join(' ') }}</p>
+        <div class="actions">
+          <p class="why" style="width:100%">Answer this in the terminal.</p>
+          <button class="btn primary" @click="select(s.id); focusTerm()">Open its terminal</button>
         </div>
       </template>
 

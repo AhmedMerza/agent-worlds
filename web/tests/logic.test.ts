@@ -161,3 +161,20 @@ describe('new shortcuts', () => {
     expect(routeKey({ ...k, key: 'n', typing: true })).toBeNull()
   })
 })
+
+import { cardLive, errorText } from '../src/logic'
+describe('live cards and server errors', () => {
+  it('only live:false permission/question cards are terminal-only', () => {
+    expect(cardLive({ ...perm, live: false })).toBe(false)
+    expect(cardLive({ ...perm, live: true })).toBe(true)
+    expect(cardLive(perm)).toBe(true)
+    expect(cardLive({ kind: 'question', requestId: 'q', questions: [], live: false })).toBe(false)
+    expect(cardLive({ kind: 'error', summary: 'x' })).toBe(true)
+  })
+  it('reads {error}, then {message}, then falls back to the status', () => {
+    expect(errorText(409, { error: 'stale' })).toBe('stale')
+    expect(errorText(500, { message: 'boom' })).toBe('boom')
+    expect(errorText(502, null)).toBe('Request failed (502).')
+    expect(errorText(400, { error: 5 })).toBe('Request failed (400).')
+  })
+})

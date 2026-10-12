@@ -12,8 +12,8 @@ export interface ReviewFile { path: string; added: number; deleted: number }
 export interface Review { files: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
 
 export type Card =
-  | { kind: 'permission'; requestId: string; tool: string; command: string | null; input: unknown; risky: string | null; seenCount: number }
-  | { kind: 'question'; requestId: string; questions: Question[] }
+  | { kind: 'permission'; requestId: string; tool: string; command: string | null; input: unknown; risky: string | null; seenCount: number; live?: boolean }
+  | { kind: 'question'; requestId: string; questions: Question[]; live?: boolean }
   | { kind: 'done'; summary: string | null; review?: Review | null }
   | { kind: 'error'; summary: string }
 

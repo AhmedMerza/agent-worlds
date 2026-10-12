@@ -38,6 +38,6 @@ const WHAT = { permission: 'wants to run a command', question: 'has a question',
 export function alertNeedsYou(s: Session, worldIndex: number, worldName: string): void {
   tone(worldIndex)
   if (prefs.notify && notifySupported && Notification.permission === 'granted' && document.hidden) {
-    try { new Notification(`${s.repoName} ${WHAT[s.card!.kind]}`, { body: worldName, tag: s.id }) } catch { /* ignore */ }
+    try { new Notification(`${s.repoName} ${WHAT[s.card!.kind]}`, { body: worldName, tag: s.id, icon: '/icon-192.png', badge: '/icon-192.png' }) } catch { /* ignore */ }
   }
 }
