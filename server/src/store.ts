@@ -15,6 +15,7 @@ type Question = { question: string; header: string; multiSelect: boolean; option
 type Card =
   | null
   | { kind: 'done'; summary: string | null; review: Review | null }
+  | { kind: 'asking'; summary: string | null }
   | { kind: 'error'; summary: string };
 
 type Pending = {
@@ -34,25 +35,32 @@ type Pending = {
 export type Session = {
   id: string; worldId: string | null; repo: string; repoName: string; cwd: string;
   branch: string | null; worktree: boolean; tmux: { session: string | null; pane: string } | null;
-  state: State; waitingSince: number | null; task: string | null; now: string;
+  state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];
   card: Card;
   catchup: { asked: string; did: string; needs: string } | null;
   catchupAt: number | null;
   catchupRunning: boolean;
+  /** State or card changed after the catch-up was made. */
+  catchupStale: boolean;
   context: { used: number; limit: number; pct: number } | null;
   conflicts: Conflict[];
   startedAt: number; updatedAt: number;
   // internal, never sent to clients
   pending: Pending[];
   top: string;
+  baseSha: string | null;
+  taskSure: boolean;
+  catchupSig: string | null;
+  branchAt: number;
+  branchTimer: NodeJS.Timeout | null;
   model: string | null;
   transcriptPath: string | null;
   tests: Review['tests'];
   testing: Set<string>;
 };
-const INTERNAL = ['pending', 'top', 'model', 'transcriptPath', 'tests', 'testing'] as const;
+const INTERNAL = ['pending', 'top', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -60,6 +68,8 @@ export type Deps = {
   tmuxSessionOf: (pane: string) => Promise<string | null>;
   clientsConnected: () => boolean;
   holdMs: number;
+  /** Minimum gap between branch refreshes of one session (default 2000). */
+  branchDebounceMs?: number;
   stats: { get(repo: string, rule: string): number; inc(repo: string, rule: string): number };
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
@@ -148,9 +158,30 @@ export class Store {
 
   list() { return [...this.sessions.values()].map((s) => this.view(s)); }
 
+  /** What a catch-up describes: the state and card, not the review or the helper chatter. */
+  sigOf(s: Session): string {
+    const c = s.card;
+    return [s.state, c?.kind ?? '', c && 'summary' in c ? c.summary : '', s.pending[0]?.requestId ?? ''].join('\0');
+  }
+
+  /** Re-read the branch (a checkout may have happened); at most once per debounce window, with a trailing run. */
+  private refreshBranch(s: Session) {
+    const gap = this.deps.branchDebounceMs ?? 2000;
+    const run = () => {
+      s.branchAt = Date.now();
+      this.deps.branchOf(s.cwd).then((b) => { if (b !== s.branch && this.sessions.has(s.id)) { s.branch = b; this.push(s); } });
+    };
+    if (s.branchTimer) return;
+    const wait = s.branchAt + gap - Date.now();
+    if (wait <= 0) { run(); return; }
+    s.branchTimer = setTimeout(() => { s.branchTimer = null; if (this.sessions.has(s.id)) run(); }, wait);
+    s.branchTimer.unref();
+  }
+
   /** Broadcast a changed session, plus any other session whose conflicts changed with it. */
   push(s: Session) {
     s.updatedAt = this.now();
+    if (s.catchupAt && !s.catchupStale && s.catchupSig !== this.sigOf(s)) s.catchupStale = true;
     const changed = new Set<Session>([s]);
     const all = [...this.sessions.values()];
     const next = computeConflicts(all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0 })));
@@ -191,10 +222,10 @@ export class Store {
     const s: Session = {
       id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null,
-      state: 'idle', waitingSince: null, task: null, now: 'Started',
-      log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, context: null, conflicts: [],
+      state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
+      log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
-      pending: [], top: info.top ?? cwd, model: null, transcriptPath: null, tests: null, testing: new Set(),
+      pending: [], top: info.top ?? cwd, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(),
     };
     if (starting) {
       s.task = starting.task;
@@ -258,9 +289,10 @@ export class Store {
         this.settleAll(s);
         const prompt = typeof p.prompt === 'string' ? p.prompt : '';
         if (!s.task && prompt && !prompt.startsWith('/')) s.task = oneLine(prompt, 200);
+        s.lastPrompt = oneLine(prompt, 200) ?? s.lastPrompt;
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Thinking';
         this.log(s, `You: ${prompt}`);
-        this.deps.branchOf(s.cwd).then((b) => { if (b !== s.branch && this.sessions.has(s.id)) { s.branch = b; this.push(s); } });
+        this.refreshBranch(s);
         break;
       }
       case 'PreToolUse':
@@ -286,6 +318,7 @@ export class Store {
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
+        if (ev === 'PostToolUse' && tool === 'Bash') this.refreshBranch(s);
         if (tool === 'Bash' && typeof input.command === 'string' && TEST_RE.test(input.command)) {
           const r = (p.tool_response ?? {}) as Record<string, unknown>;
           const out = [r.stdout, r.stderr, p.error].filter((x) => typeof x === 'string').join('\n');
@@ -339,8 +372,17 @@ export class Store {
       }
       case 'Stop':
         this.settleAll(s);
-        s.state = 'done'; s.waitingSince = null; s.now = 'Done';
         s.testing.clear();
+        this.refreshBranch(s);
+        if (typeof p.last_assistant_message === 'string' && p.last_assistant_message.trim().endsWith('?')) {
+          // The turn ended on a question: the session is waiting for an answer, not finished.
+          s.state = 'waiting'; s.waitingSince ??= this.now(); s.now = 'Asked you a question';
+          // the question is what matters, and it is the last line of the message
+          const lines = p.last_assistant_message.split('\n').map((l) => l.trim()).filter(Boolean);
+          s.card = { kind: 'asking', summary: oneLine(lines.at(-1)) };
+          break;
+        }
+        s.state = 'done'; s.waitingSince = null; s.now = 'Done';
         s.card = { kind: 'done', summary: oneLine(p.last_assistant_message), review: null };
         break;
       case 'StopFailure': {

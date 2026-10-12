@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Store } from './store.ts';
+import { oneLine } from './store.ts';
 import { readHead, readTail, firstPrompt, contextOf, excerpt } from './transcript.ts';
 import { reviewOf } from './review.ts';
 
@@ -51,6 +52,12 @@ export const runClaude: Summarise = (bin, transcript) => new Promise((ok, fail) 
 });
 
 
+/** "none", "n/a", "-" and friends mean nothing is needed. */
+export const normaliseNeeds = (n: string): string => {
+  const t = n.trim();
+  return /^(none|nothing|n\/?a|no|nil|-+|—)$/i.test(t.replace(/^[\s.,;:!"'()]+|[\s.,;:!"'()]+$/g, '')) ? '' : t;
+};
+
 /** Catch-up summaries, context use and the done-review, derived from transcripts and git. */
 export class Insights {
   store: Store;
@@ -71,6 +78,7 @@ export class Insights {
   onEvent = (s: Session, ev: string) => {
     if (ev === 'Stop' || (ev === 'PostToolUse' && Date.now() - (this.contextAt.get(s.id) ?? 0) > CONTEXT_THROTTLE_MS)) void this.updateContext(s);
     if (ev === 'Stop') void this.updateReview(s);
+    if (!s.taskSure && s.transcriptPath && (ev === 'UserPromptSubmit' || ev === 'PreToolUse' || ev === 'Stop')) void this.updateTask(s);
   };
 
   forget(id: string) { this.contextAt.delete(id); }
@@ -86,10 +94,21 @@ export class Insights {
     } catch (e) { console.error(`[agent-worlds] context for ${s.id}: ${(e as Error).message}`); }
   }
 
+  /** session.task is the first prompt of the whole conversation, which a resumed session only knows from its transcript. */
+  async updateTask(s: Session) {
+    try {
+      const first = firstPrompt(await readHead(s.transcriptPath!, 256 * 1024));
+      if (!first || !this.alive(s)) return;
+      s.taskSure = true;
+      const t = oneLine(first, 200);
+      if (t !== s.task) { s.task = t; this.store.push(s); }
+    } catch { /* transcript not written yet; the next event retries */ }
+  }
+
   async updateReview(s: Session) {
     const card = s.card;
     try {
-      const review = await reviewOf(s.top, s.tests);
+      const review = await reviewOf(s.top, s.tests, s.baseSha);
       if (review && this.alive(s) && s.card === card && card?.kind === 'done') { card.review = review; this.store.push(s); }
     } catch (e) { console.error(`[agent-worlds] review for ${s.id}: ${(e as Error).message}`); }
   }
@@ -118,15 +137,18 @@ export class Insights {
   /** Never throws: a failure leaves the previous catch-up in place and is logged. */
   async catchup(s: Session) {
     if (!this.alive(s) || !s.transcriptPath) return;
+    const sig = this.store.sigOf(s);
     try {
       const [head, tail] = await Promise.all([readHead(s.transcriptPath, 256 * 1024), readTail(s.transcriptPath, 512 * 1024)]);
-      const asked = firstPrompt(head) ?? s.task ?? '';
+      const asked = s.task ?? firstPrompt(head) ?? '';
       const text = excerpt(tail);
       if (!text) throw new Error('transcript has nothing to summarise yet');
       const r = await this.summarise(this.bin, text);
       if (!this.alive(s)) return;
-      s.catchup = { asked: asked.length > 300 ? asked.slice(0, 299) + '…' : asked, did: r.did, needs: r.needs };
+      s.catchup = { asked: asked.length > 300 ? asked.slice(0, 299) + '…' : asked, did: r.did, needs: normaliseNeeds(r.needs) };
       s.catchupAt = Date.now();
+      s.catchupSig = sig;
+      s.catchupStale = this.store.sigOf(s) !== sig;
     } catch (e) {
       console.error(`[agent-worlds] catch-up for ${s.id} failed: ${(e as Error).message}`);
     }

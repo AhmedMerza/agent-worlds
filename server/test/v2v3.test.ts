@@ -287,7 +287,8 @@ test('test commands are recognised and summarised', async () => {
   for (const c of ['php artisan test --filter=X', 'vendor/bin/phpunit', 'npx vitest run', 'npm test', 'npm run test', 'pytest -q', 'go test ./...', 'flutter test', 'cargo test', 'node --test']) assert.ok(TEST_RE.test(c), c);
   for (const c of ['npm install', 'git status', 'ls tests/']) assert.ok(!TEST_RE.test(c), c);
   assert.equal(testLine('\x1b[32mrunning\x1b[0m\nTests:  2 failed, 10 passed\nTime: 3s\n'), 'Tests:  2 failed, 10 passed');
-  assert.equal(testLine('ℹ tests 2\nℹ pass 2\nℹ fail 0\nℹ duration_ms 50'), 'ℹ tests 2', 'node --test totals');
+  assert.equal(testLine('ℹ tests 5\nℹ pass 2\nℹ fail 1\nℹ duration_ms 50'), 'pass 2, fail 1', 'node --test: pass/fail, not the subtest count');
+  assert.equal(testLine('Test Files  1 passed (1)\n     Tests  4 passed (4)'), '     Tests  4 passed (4)'.trim());
 
   const { store } = setup(tmp(), { clients: false });
   await store.handle({ ...ev.postBash, hook_event_name: 'PostToolUseFailure', tool_input: { command: 'npm test' }, error: 'Exit code 1\nFAIL 1 failed', tool_response: undefined }, null);
