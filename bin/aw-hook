@@ -3,10 +3,12 @@
 # Reads the hook JSON on stdin and POSTs it with the token. Prints the server's reply
 # (a PermissionRequest decision) when there is one. Never fails the Claude session:
 # if the server is down, unconfigured, or AGENT_WORLDS_DISABLE=1, it exits 0 silently.
-[ "${AGENT_WORLDS_DISABLE:-}" = "1" ] && exit 0
+# Early exits still read stdin, so Claude never writes into a closed pipe.
+quit() { cat >/dev/null; exit 0; }
+[ "${AGENT_WORLDS_DISABLE:-}" = "1" ] && quit
 home="${AGENT_WORLDS_HOME:-$HOME/.config/agent-worlds}"
-[ -r "$home/endpoint" ] && [ -r "$home/token" ] || exit 0
-command -v curl >/dev/null 2>&1 || exit 0
+[ -r "$home/endpoint" ] && [ -r "$home/token" ] || quit
+command -v curl >/dev/null 2>&1 || quit
 url="$(head -n1 "$home/endpoint")"
 token="$(head -n1 "$home/token")"
 payload="$(cat)"
