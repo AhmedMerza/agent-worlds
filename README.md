@@ -59,14 +59,22 @@ Optional keys:
 | `claudeBin` | `claude` | the Claude Code binary used for new sessions and catch-up summaries |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as a 1M window) |
 
-## Add the hooks
+## Add the hooks (only for sessions you start by hand)
 
-Agent Worlds never edits your Claude settings. Print the hooks block and paste it into
+Sessions started from the app ("+ new task") or with `agent-worlds new` need nothing: they
+run `claude --settings ~/.config/agent-worlds/hooks.json` (the server writes that file when it
+starts), so they report to Agent Worlds without any global install.
+
+To also see sessions you start yourself with plain `claude`, add the hooks globally. Agent
+Worlds never edits your Claude settings: print the block and paste it into
 `~/.claude/settings.json` yourself (merge it with any `"hooks"` you already have):
 
 ```sh
 bin/agent-worlds hooks --print
 ```
+
+Having both is fine: Claude runs an identical hook command only once, and the server also
+ignores a byte-identical event that arrives twice at the same moment.
 
 The block wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`,

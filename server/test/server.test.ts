@@ -112,7 +112,7 @@ test('hook: PermissionRequest is held until POST /permission, broadcast over /ws
   assert.equal(msgs()[0].type, 'snapshot');
   assert.ok(Array.isArray(msgs()[0].worlds));
 
-  const held = hook(ev.permBash);
+  const held = hook({ ...ev.permBash, prompt_id: 'p2' }); // a later turn asking the same thing
   let card: any;
   for (let i = 0; i < 50 && !card?.live; i++) {
     await new Promise((r) => setTimeout(r, 20));

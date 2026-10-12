@@ -56,20 +56,24 @@ const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'
  * Start `claude` in a new detached tmux session, optionally in a fresh worktree
  * (<repo>-worktrees/<branch>, new branch). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null }> {
   const id = randomBytes(2).toString('hex');
   let dir = opts.repo;
   let branch: string | null = null;
   if (opts.worktree) {
-    branch = opts.branch || `aw/${slug(opts.task || 'task', 32)}-${id}`;
+    branch = opts.branch || `aw/${slug(opts.task || 'session', 32)}-${id}`;
     if ((await run('git', ['check-ref-format', '--branch', branch])) === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
     dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));
     const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, '--', dir]);
     if (err !== null) throw new Error(`git worktree add failed: ${err}`);
   }
   const name = `${opts.prefix ?? 'aw-'}${slug(basename(opts.repo))}-${id}`;
-  const task = opts.task.trim();
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, opts.claudeBin ?? 'claude', ...(task ? ['--', task] : [])]);
+  const task = (opts.task ?? '').trim();
+  // With `home`, the session reports to this server through <home>/hooks.json even when the
+  // user never installed the hooks globally.
+  const env = opts.home ? ['-e', `AGENT_WORLDS_HOME=${opts.home}`] : [];
+  const settings = opts.home ? ['--settings', join(opts.home, 'hooks.json')] : [];
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...settings, ...(task ? ['--', task] : [])]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   return { tmuxSession: name, dir, branch };
 }

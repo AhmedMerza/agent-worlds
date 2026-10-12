@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, statSync, readFileSync, existsSync } from '
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hooksBlock, HOOK_EVENTS } from '../src/cli.ts';
+import { hooksBlock, HOOK_EVENTS, writeHooksFile } from '../src/hooks.ts';
 import { ensureToken, parseConfig, loadConfig, writeEndpoint, DEFAULTS } from '../src/config.ts';
 
 const BIN = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin');

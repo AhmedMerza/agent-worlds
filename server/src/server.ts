@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,6 +93,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
   const createSession = opts.createSession ?? sys.createSession;
+  // Claude runs identical hook commands once, but the same hook installed under two different
+  // command strings (say a symlinked path globally plus our --settings file) would report every
+  // event twice. A byte-identical payload within a few seconds gets the first one's reply instead.
+  // Entries live while the first request is in flight and DEDUPE_MS after it settled.
+  const recent = new Map<string, { at: number; reply: Promise<string> }>();
+  const DEDUPE_MS = 500;
   const worlds = new Worlds(cfg, join(opts.home ?? homeDir(), 'config.json'), opts.resolveRepo);
   const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
@@ -139,10 +145,18 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const pane = req.headers['x-aw-pane'];
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableFinished) ac.abort(); });
+      const now = Date.now();
+      for (const [k, v] of recent) if (v.at && now - v.at > DEDUPE_MS) recent.delete(k);
+      const key = createHash('sha1').update(String(pane)).update('\0').update(JSON.stringify(body)).digest('hex');
+      let reply = recent.get(key)?.reply;
+      if (!reply) {
+        reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal);
+        const entry = { at: 0, reply };
+        recent.set(key, entry);
+        reply.finally(() => { entry.at = Date.now(); }).catch(() => {});
+      }
       let out: string;
-      try {
-        out = await store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal);
-      } catch (e) { return send(res, 400, { error: (e as Error).message }); }
+      try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -175,7 +189,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
       if (b.branch !== undefined && b.branch !== '' && (typeof b.branch !== 'string' || !b.worktree)) return send(res, 400, { error: 'branch must be a string and needs worktree: true' });
       try {
-        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, claudeBin: cfg.claudeBin });
+        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir() });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }

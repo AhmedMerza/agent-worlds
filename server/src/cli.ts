@@ -1,26 +1,9 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type Config } from './config.ts';
 import { startServer } from './server.ts';
+import { hooksBlock, writeHooksFile } from './hooks.ts';
 import { createSession } from './sys.ts';
-
-const HOOK = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-hook');
-
-/** Hook timeouts (seconds). PermissionRequest is held by the server for up to HOLD_MS (3540 s), so its hook gets 3600 s. */
-const HOLD_TIMEOUT = 3600;
-const FAST_TIMEOUT = 10;
-export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest',
-  'Notification', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'SessionEnd'];
-
-export function hooksBlock(hookPath = HOOK) {
-  const command = /^[\w./-]+$/.test(hookPath) ? hookPath : `'${hookPath.replace(/'/g, `'\\''`)}'`;
-  const hooks: Record<string, unknown> = {};
-  for (const ev of HOOK_EVENTS) {
-    hooks[ev] = [{ hooks: [{ type: 'command', command, timeout: ev === 'PermissionRequest' ? HOLD_TIMEOUT : FAST_TIMEOUT }] }];
-  }
-  return { hooks };
-}
 
 const urlOf = (cfg: Config, token: string) => {
   const host = cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host;
@@ -50,6 +33,7 @@ async function main(argv: string[]) {
       const app = startServer(cfg, token);
       try { await app.listen(); } catch (e) { die(`cannot listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`); }
       writeEndpoint(cfg);
+      writeHooksFile(homeDir());
       if (!existsSync(join(homeDir(), 'config.json'))) console.log(`no config yet: run \`agent-worlds init\` and edit ${join(homeDir(), 'config.json')}`);
       console.log(`agent-worlds listening on ${cfg.host}:${cfg.port}\nopen: ${urlOf(cfg, token)}`);
       const stop = () => app.close().then(() => process.exit(0));
@@ -69,7 +53,8 @@ async function main(argv: string[]) {
       const dir = resolve(repoPath);
       if (!existsSync(dir) || !statSync(dir).isDirectory()) die(`not a directory: ${dir}`);
       try {
-        const r = await createSession({ repo: dir, task: task.join(' '), worktree: false, claudeBin: cfg.claudeBin });
+        writeHooksFile(homeDir());
+        const r = await createSession({ repo: dir, task: task.join(' '), worktree: false, claudeBin: cfg.claudeBin, home: homeDir() });
         console.log(r.tmuxSession);
       } catch (e) { die((e as Error).message); }
       return;

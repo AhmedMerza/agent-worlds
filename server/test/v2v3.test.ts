@@ -419,7 +419,7 @@ test('POST /api/sessions validates, PWA files are public, multiple listen addres
     const ok = await post({ worldId: 'web', repo: `${root}/repo-a`, task: 'do it', worktree: true });
     assert.equal(ok.status, 201);
     assert.deepEqual(await ok.json(), { tmuxSession: 'aw-x-1' });
-    assert.deepEqual(calls[0], { repo: `${root}/repo-a`, task: 'do it', worktree: true, branch: undefined, claudeBin: 'claude' });
+    assert.deepEqual(calls[0], { repo: `${root}/repo-a`, task: 'do it', worktree: true, branch: undefined, claudeBin: 'claude', home: root });
     const bad = await post({ worldId: 'web', repo: `${root}/repo-a`, worktree: true, branch: 'boom' });
     assert.equal(bad.status, 422);
     assert.match((await bad.json()).error, /worktree add failed/);
