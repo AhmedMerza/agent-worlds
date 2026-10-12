@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { execFile, spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type Config } from './config.ts';
 import { startServer } from './server.ts';
@@ -15,12 +17,48 @@ function die(msg: string): never {
   process.exit(1);
 }
 
+type Row = { name: string; path: string; attached: number; state: string | null };
+
+/** tmux sessions with our prefix, plus each one's state when the server answers. */
+export async function awSessions(prefix = 'aw-', home = homeDir()): Promise<Row[]> {
+  const out = await new Promise<string>((done) => execFile('tmux', ['list-sessions', '-F', '#{session_name}\t#{pane_current_path}\t#{session_attached}'], (e, o) => done(e ? '' : String(o))));
+  const rows: Row[] = out.split('\n').filter(Boolean).map((l) => l.split('\t')).filter(([n]) => n.startsWith(prefix))
+    .map(([name, path, att]) => ({ name, path, attached: Number(att) || 0, state: null }));
+  try {
+    const url = readFileSync(join(home, 'endpoint'), 'utf8').trim();
+    const token = readFileSync(join(home, 'token'), 'utf8').trim();
+    const st = await (await fetch(`${url}/api/state`, { headers: { 'x-aw-token': token }, signal: AbortSignal.timeout(1000) })).json() as { sessions: { state: string; tmux: { session: string } | null }[] };
+    for (const r of rows) r.state = st.sessions.find((s) => s.tmux?.session === r.name)?.state ?? null;
+  } catch { /* server not running: list without states */ }
+  return rows;
+}
+
+export const formatRows = (rows: Row[]) => rows.map((r, i) =>
+  `${String(i + 1).padStart(2)}  ${r.name.padEnd(28)} ${(r.state ?? '-').padEnd(8)} ${r.attached ? 'attached ' : '         '}${r.path}`).join('\n');
+
+/** "2" or a session name → that row; anything else → null. */
+export function pick(answer: string, rows: Row[]): Row | null {
+  const a = answer.trim();
+  const n = Number(a);
+  if (Number.isInteger(n) && n >= 1 && n <= rows.length) return rows[n - 1];
+  return rows.find((r) => r.name === a) ?? null;
+}
+
+function attachTo(name: string): never {
+  // Inside tmux, attaching would nest; switch this client instead.
+  const args = process.env.TMUX ? ['switch-client', '-t', '=' + name] : ['attach-session', '-t', '=' + name];
+  const r = spawnSync('tmux', args, { stdio: 'inherit' });
+  process.exit(r.status ?? 1);
+}
+
 const USAGE = `usage: agent-worlds <command>
   start                         run the server
   url                           print the URL to open (includes the token)
   hooks --print                 print the "hooks" block for ~/.claude/settings.json
   new <worldId> <repoPath> [task]  start claude in a new tmux session aw-<name>
-  init [--force]                write an example config
+  init [--force]                write a config with no worlds
+  ls                            list Agent Worlds tmux sessions
+  attach [name]                 attach this terminal to one (asks which when no name)
 config dir: ${homeDir()} (override with AGENT_WORLDS_HOME)`;
 
 async function main(argv: string[]) {
@@ -66,6 +104,23 @@ async function main(argv: string[]) {
       writeFileSync(file, JSON.stringify(EXAMPLE_CONFIG, null, 2) + '\n', { mode: 0o600 });
       ensureToken();
       return console.log(`wrote ${file}: edit the worlds and repo paths, then run \`agent-worlds start\``);
+    }
+    case 'ls': {
+      const rows = await awSessions();
+      console.log(rows.length ? formatRows(rows) : 'no Agent Worlds sessions (tmux sessions named aw-*)');
+      return;
+    }
+    case 'attach': {
+      if (rest[0]) attachTo(rest[0]);
+      const rows = await awSessions();
+      if (!rows.length) die('no Agent Worlds sessions to attach to');
+      console.log(formatRows(rows));
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await new Promise<string>((ok) => rl.question('attach to (number or name): ', ok));
+      rl.close();
+      const row = pick(answer, rows);
+      if (!row) die(`no such session: ${answer.trim()}`);
+      attachTo(row.name);
     }
     default:
       console.log(USAGE);
