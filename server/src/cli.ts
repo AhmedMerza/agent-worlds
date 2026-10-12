@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type Config } from './config.ts';
@@ -51,9 +51,21 @@ function attachTo(name: string): never {
   process.exit(r.status ?? 1);
 }
 
+/** Launch the platform opener detached; resolves false when it is missing or fails fast. */
+function openBrowser(target: string): Promise<boolean> {
+  const bin = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  return new Promise((done) => {
+    const p = spawn(bin, [target], { detached: true, stdio: 'ignore' });
+    const t = setTimeout(() => { p.unref(); done(true); }, 1000); // still running: assume it took over
+    p.on('error', () => { clearTimeout(t); done(false); });
+    p.on('exit', (code) => { clearTimeout(t); done(code === 0); });
+  });
+}
+
 const USAGE = `usage: agent-worlds <command>
   start                         run the server
   url                           print the URL to open (includes the token)
+  open                          open that URL in your browser (prints it if no opener)
   hooks --print                 print the "hooks" block for ~/.claude/settings.json
   new <worldId> <repoPath> [task]  start claude in a new tmux session aw-<name>
   init [--force]                write a config with no worlds
@@ -83,6 +95,12 @@ async function main(argv: string[]) {
     }
     case 'url':
       return console.log(urlOf(load(), ensureToken()));
+    case 'open': {
+      const u = urlOf(load(), ensureToken());
+      if (await openBrowser(u)) return;
+      console.log(`${u}\n(could not launch a browser; open the URL above manually)`);
+      return;
+    }
     case 'hooks':
       if (rest[0] !== '--print') die('usage: agent-worlds hooks --print');
       return console.log(JSON.stringify(hooksBlock(), null, 2));

@@ -77,8 +77,13 @@ test('auth: /?token= sets an HttpOnly SameSite=Strict cookie and redirects', asy
   const r = await fetch(`${base}/?token=${TOKEN}`, { redirect: 'manual' });
   assert.equal(r.status, 302);
   assert.equal(r.headers.get('location'), '/');
-  assert.match(r.headers.get('set-cookie')!, /^aw_token=a+; HttpOnly; SameSite=Strict; Path=\/$/);
-  assert.equal((await fetch(`${base}/?token=wrong`, { redirect: 'manual' })).status, 401);
+  assert.match(r.headers.get('set-cookie')!, /^aw_token=a+; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=\/$/);
+  const https = await fetch(`${base}/?token=${TOKEN}`, { redirect: 'manual', headers: { 'x-forwarded-proto': 'https' } });
+  assert.match(https.headers.get('set-cookie')!, /; Path=\/; Secure$/);
+  const bad = await fetch(`${base}/?token=wrong`, { redirect: 'manual' });
+  assert.equal(bad.status, 401);
+  assert.match(bad.headers.get('content-type')!, /text\/html/);
+  assert.match(await bad.text(), /agent-worlds open/);
 });
 
 test('origin check: foreign origins are refused, configured extra hosts allowed', async () => {
