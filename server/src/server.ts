@@ -125,14 +125,24 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
-  const hostPort = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${cfg.port}`;
-  const allowed = new Set([...cfg.listen.map(hostPort), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, `[::1]:${cfg.port}`, ...cfg.extraHosts]);
+  // host:port names this server answers to. The port is read once listening (config may say 0 in tests).
+  let allowed: Set<string> | null = null;
+  const allowedHosts = () => {
+    if (allowed) return allowed;
+    const port = (servers[0].address() as { port?: number } | null)?.port ?? cfg.port;
+    const hp = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${port}`;
+    const set = new Set([...cfg.listen.map(hp), `localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, ...cfg.extraHosts].map((h) => h.toLowerCase()));
+    if (servers[0].listening) allowed = set;
+    return set;
+  };
+  /** DNS-rebinding guard: a page on evil.example resolving to 127.0.0.1 still sends Host: evil.example. */
+  const hostOk = (req: IncomingMessage) => typeof req.headers.host === 'string' && allowedHosts().has(req.headers.host.toLowerCase());
 
   const authed = (req: IncomingMessage) => same(cookie(req, 'aw_token'), token) || same(req.headers['x-aw-token'] as string, token);
   const originOk = (req: IncomingMessage) => {
     const o = req.headers.origin;
     if (!o) return true;
-    try { return allowed.has(new URL(o).host); } catch { return false; }
+    try { return allowedHosts().has(new URL(o).host.toLowerCase()); } catch { return false; }
   };
 
   async function serveStatic(req: IncomingMessage, res: ServerResponse, path: string) {
@@ -151,6 +161,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const url = new URL(req.url ?? '/', 'http://x');
     const method = req.method ?? 'GET';
 
+    if (!hostOk(req)) return send(res, 421, { error: 'unknown host; add it to extraHosts in the config' });
     if (url.pathname === '/' && url.searchParams.has('token')) {
       if (!same(url.searchParams.get('token'), token)) return send(res, 401, 'bad token\n');
       res.writeHead(302, { 'set-cookie': `aw_token=${token}; HttpOnly; SameSite=Strict; Path=/`, location: '/' });
@@ -216,6 +227,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
       try {
         const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -245,7 +257,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
       if (b.branch !== undefined && b.branch !== '' && (typeof b.branch !== 'string' || !b.worktree)) return send(res, 400, { error: 'branch must be a string and needs worktree: true' });
       try {
-        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir() });
+        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: (b.task as string) || null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -291,6 +304,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const onUpgrade = (req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const reject = (code: number, text: string) => { socket.end(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); };
+    if (!hostOk(req)) return reject(421, 'Misdirected Request');
     if (!originOk(req)) return reject(403, 'Forbidden');
     if (!authed(req)) return reject(401, 'Unauthorized');
     if (url.pathname === '/ws') {
