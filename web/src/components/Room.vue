@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, layout, W, K, type Hit } from '../canvas'
 import { LABEL, NEEDS_YOU, roomConflicts, UNSORTED } from '../logic'
-import { state, select } from '../store'
+import { state, select, ui } from '../store'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
 defineEmits<{ 'new-task': [worldId: string] }>()
@@ -52,9 +52,10 @@ const onMove = (e: MouseEvent) => { canvas.value!.style.cursor = at(e) ? 'pointe
     <canvas ref="canvas" :width="W * K" :height="size.H * K" :aria-label="`${group.world.name} room`" @click="onClick" @mousemove="onMove" />
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
-      <button v-for="s in group.sessions" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
+      <template v-for="s in group.sessions" :key="s.id"><button class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
         <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span>
       </button>
+      <button v-if="!canCreate" class="chip-more" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button></template>
     </div>
   </article>
 </template>

@@ -4,6 +4,7 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const PORT = Number(process.env.MOCK_PORT || 4322)
@@ -11,10 +12,10 @@ const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist
 const MIN = 60000
 const now = () => Date.now()
 
-const worlds = [
+let worlds = process.env.MOCK_EMPTY ? [] : [
   { id: 'web', name: 'Web', color: '#47b4a7', repos: ['/work/repo-a', '/work/repo-b', '/work/repo-c', '/work/repo-d'] },
   { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: ['/work/repo-e', '/work/repo-f', '/work/repo-g'] },
-  { id: 'tools', name: 'Tools', color: '#9c88df', repos: ['/work/repo-h'] },
+  { id: 'tools', name: 'Tools', color: '#9c88df', repos: ['/work/repo-h', '/work/repo-j'] },
 ]
 const mkSession = (id, worldId, over) => ({
   id, worldId, repo: `/work/${id}`, repoName: id, cwd: `/work/${id}`, branch: 'main', worktree: false,
@@ -71,6 +72,17 @@ function onFrames(socket, handler) {
 const broadcast = (msg) => { const f = frame(JSON.stringify(msg)); for (const s of wsClients) s.write(f) }
 const upsert = (s) => { s.updatedAt = now(); broadcast({ type: 'session', session: s }) }
 
+// ---- worlds: a session belongs to the first world listing its repo ----
+const inRepo = (repo, root) => repo === root || repo.startsWith(root + '/')
+function regroup() {
+  for (const s of sessions.values()) {
+    const w = worlds.find((x) => x.repos.some((r) => inRepo(s.repo, r)))
+    const id = w ? w.id : null
+    if (s.worldId !== id) { s.worldId = id; upsert(s) }
+  }
+}
+const pushWorlds = () => { regroup(); broadcast({ type: 'worlds', worlds }) }
+let wseq = 1
 // ---- state transitions ----
 function resume(s, text) { Object.assign(s, { state: 'working', waitingSince: null, card: null, now: text }); s.log.push({ t: now(), text }); upsert(s) }
 function tick() {
@@ -101,6 +113,36 @@ const server = http.createServer(async (req, res) => {
     const s = mkSession(id, b.worldId, { repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
     sessions.set(id, s); upsert(s)
     return json(201, { id, tmuxSession: s.tmux.session })
+  }
+  if (url.pathname === '/api/fs' && req.method === 'GET') {
+    const want = path.resolve(url.searchParams.get('path') || os.homedir())
+    try {
+      const entries = fs.readdirSync(want, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => { const p = path.join(want, d.name); return { name: d.name, path: p, isRepo: fs.existsSync(path.join(p, '.git')) } })
+      return json(200, { path: want, parent: want === '/' ? null : path.dirname(want), entries })
+    } catch (e) { return json(400, { error: `Cannot read ${want}: ${e.code || 'error'}` }) }
+  }
+  if (url.pathname === '/api/worlds/order' && req.method === 'POST') {
+    const { ids } = await readBody(req)
+    if (!Array.isArray(ids) || ids.length !== worlds.length || !ids.every((i) => worlds.some((w) => w.id === i))) return json(400, { error: 'ids must list every world once' })
+    worlds = ids.map((i) => worlds.find((w) => w.id === i)); pushWorlds(); return json(200, { ok: true })
+  }
+  if (url.pathname === '/api/worlds' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b.name || !String(b.name).trim()) return json(400, { error: 'A world needs a name.' })
+    if (worlds.some((w) => w.name.toLowerCase() === String(b.name).trim().toLowerCase())) return json(400, { error: 'A world with that name already exists.' })
+    const world = { id: `w${wseq++}-${crypto.randomBytes(2).toString('hex')}`, name: String(b.name).trim(), color: b.color || '#6aaef0', repos: Array.isArray(b.repos) ? b.repos : [] }
+    worlds = [...worlds, world]; pushWorlds(); return json(201, { world })
+  }
+  const wm = url.pathname.match(/^\/api\/worlds\/([^/]+)$/)
+  if (wm && (req.method === 'PATCH' || req.method === 'DELETE')) {
+    const w = worlds.find((x) => x.id === decodeURIComponent(wm[1]))
+    if (!w) return json(404, { error: 'No such world.' })
+    if (req.method === 'DELETE') { worlds = worlds.filter((x) => x !== w); pushWorlds(); return json(200, { ok: true }) }
+    const b = await readBody(req)
+    if (b.name !== undefined) { if (!String(b.name).trim()) return json(400, { error: 'A world needs a name.' }); w.name = String(b.name).trim() }
+    if (b.color) w.color = b.color
+    if (Array.isArray(b.repos)) w.repos = b.repos
+    pushWorlds(); return json(200, { world: w })
   }
   const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack|catchup)$/)
   if (req.method === 'POST' && m) {

@@ -1,5 +1,5 @@
 import { reactive, computed, ref } from 'vue'
-import type { ServerMessage, Session, World } from './types'
+import type { ServerMessage, Session, World, FsListing } from './types'
 import { alertNeedsYou } from './notify'
 import { errorText, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
 
@@ -53,6 +53,9 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
     case 'session-removed':
       delete st.sessions[msg.id]
       st.order = st.order.filter((i) => i !== msg.id)
+      break
+    case 'worlds':
+      st.worlds = msg.worlds
       break
     case 'toast':
       st.toast = { text: msg.text, n: (st.toast?.n ?? 0) + 1 }
@@ -111,6 +114,21 @@ async function post(path: string, body?: unknown): Promise<boolean> {
   }
 }
 const base = (id: string) => `/api/sessions/${encodeURIComponent(id)}`
+type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
+async function api<T>(method: string, path: string, body?: unknown): Promise<ApiResult<T>> {
+  try {
+    const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+    let data: unknown = null
+    try { data = await r.json() } catch { /* empty body */ }
+    return r.ok ? { ok: true, data: data as T } : { ok: false, error: errorText(r.status, data) }
+  } catch { return { ok: false, error: 'Could not reach the server.' } }
+}
+export const createWorld = (name: string, color: string, repos: string[] = []) => api<{ world: World }>('POST', '/api/worlds', { name, color, repos })
+export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'color' | 'repos'>>) => api<{ world: World }>('PATCH', `/api/worlds/${encodeURIComponent(id)}`, patch)
+export const deleteWorld = (id: string) => api<unknown>('DELETE', `/api/worlds/${encodeURIComponent(id)}`)
+export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/worlds/order', { ids })
+export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
+
 export type Scope = 'once' | 'repo' | 'world' | 'all'
 export const decidePermission = (id: string, requestId: string, decision: 'allow' | 'deny', scope: Scope = 'once') =>
   post(`${base(id)}/permission`, { requestId, decision, scope })
@@ -171,3 +189,6 @@ export function startClock(): void { setInterval(() => { state.now = Date.now() 
 /** Bumped to ask the terminal panel to scroll into view and take focus. */
 export const termFocusTick = ref(0)
 export const focusTerminal = (): void => { termFocusTick.value++ }
+
+/** Dialog state shared by the header, rooms and detail panel. */
+export const ui = reactive({ worldsOpen: false, putSession: null as string | null })

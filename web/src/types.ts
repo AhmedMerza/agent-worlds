@@ -46,6 +46,10 @@ export type ServerMessage =
   | { type: 'snapshot'; worlds: World[]; sessions: Session[] }
   | { type: 'session'; session: Session }
   | { type: 'session-removed'; id: string }
+  | { type: 'worlds'; worlds: World[] }
   | { type: 'toast'; text: string }
 
 export interface RoomGroup { world: World; sessions: Session[] }
+
+export interface FsEntry { name: string; path: string; isRepo: boolean }
+export interface FsListing { path: string; parent: string | null; entries: FsEntry[] }

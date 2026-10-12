@@ -58,7 +58,7 @@ export interface KeyInfo {
 }
 export type KeyAction =
   | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' }
-  | { kind: 'new-task' } | { kind: 'mute' } | { kind: 'catchup' } | null
+  | { kind: 'new-task' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | null
 
 /** Decides what a keypress means. Never claims a key while the user is typing (or in the terminal). */
 export function routeKey(k: KeyInfo): KeyAction {
@@ -70,6 +70,7 @@ export function routeKey(k: KeyInfo): KeyAction {
   if (k.key === 'n' || k.key === 'N') return { kind: 'new-task' }
   if (k.key === 'm' || k.key === 'M') return { kind: 'mute' }
   if (k.key === 'c' || k.key === 'C') return { kind: 'catchup' }
+  if (k.key === 'w' || k.key === 'W') return { kind: 'worlds' }
   if (/^[1-9]$/.test(k.key)) return { kind: 'jump', index: Number(k.key) - 1 }
   return null
 }
@@ -173,3 +174,23 @@ export function catchupView(s: Session, now: number): CatchupView {
   const written = min === null ? null : min < 1 ? 'Written just now' : `Written ${min} min ago`
   return { mode: 'filled', asked, did: c.did, needs: c.needs, written }
 }
+
+/** Swatches offered when colouring a world. */
+export const PALETTE = ['#47b4a7', '#e07aa8', '#9c88df', '#f2b84b', '#6aaef0', '#72cf98', '#ee705f', '#f08a5d']
+
+/** First palette colour no world uses yet (cycling when all are taken). */
+export function nextColor(worlds: World[]): string {
+  const used = new Set(worlds.map((w) => w.color.toLowerCase()))
+  return PALETTE.find((c) => !used.has(c)) ?? PALETTE[worlds.length % PALETTE.length]
+}
+
+/** New id order after moving `id` one step up (-1) or down (+1); unchanged at the ends. */
+export function moveId(ids: string[], id: string, dir: -1 | 1): string[] {
+  const i = ids.indexOf(id), j = i + dir
+  if (i < 0 || j < 0 || j >= ids.length) return ids
+  const out = [...ids]; [out[i], out[j]] = [out[j], out[i]]
+  return out
+}
+
+/** Repos list with `repo` added once. */
+export const withRepo = (repos: string[], repo: string): string[] => (repos.includes(repo) ? repos : [...repos, repo])

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { LABEL, ctxColor, ctxLevel } from '../logic'
-import { selected, groups, focusTerminal, sendInput, showToast } from '../store'
+import { LABEL, ctxColor, ctxLevel, UNSORTED } from '../logic'
+import { selected, groups, focusTerminal, sendInput, showToast, ui } from '../store'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
@@ -50,6 +50,7 @@ async function copyAttach() {
       <div class="actions">
         <button class="btn" @click="focusTerminal">Open in terminal</button>
         <button v-if="s.tmux" class="btn" @click="copyAttach">Copy attach command</button>
+        <button v-if="world?.id === UNSORTED.id" class="btn" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
       </div>
     </div>
   </section>
