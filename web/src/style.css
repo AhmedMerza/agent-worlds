@@ -213,3 +213,25 @@ pre.diff{max-height:320px;overflow:auto}
 .attach-cmd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .attach-cmd code{font-family:var(--f-mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
 .term-paused{margin-left:auto;font-size:11px;color:var(--wait)}
+
+/* Fixed app shell on desktop: the page never scrolls, each region scrolls on its own. */
+@media (min-width:1000px){
+  html,body,#app{height:100%;overflow:hidden}
+  body{padding-block:12px}
+  .wrap{height:100%;gap:12px}
+  .top{flex:none}
+  .layout{flex:1;min-height:0;grid-template-rows:minmax(0,1fr);align-items:stretch}
+  .main-col{min-height:0}
+  .worlds{flex:1 1 50%;min-height:0;overflow:auto;align-content:start;grid-auto-rows:max-content}
+  .main-col > .term{flex:1 1 50%;min-height:0}
+  .term-body{flex:1;height:auto;min-height:0}
+  aside{min-height:0}
+  aside > .panel{min-height:0;overflow:auto}
+  aside > .panel:first-child{flex:1 1 0}
+  aside > .panel:last-child{flex:0 1 auto;max-height:45%}
+}
+@media (min-width:2200px){
+  .layout > .worlds{align-self:stretch}
+  .term{position:static;height:auto;align-self:stretch}
+  .term-body{flex:1;height:auto;min-height:0}
+}
