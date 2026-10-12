@@ -6,12 +6,12 @@ import { join, resolve } from 'node:path';
 export type World = { id: string; name: string; color: string; repos: string[] };
 export type Config = {
   port: number; host: string; listen: string[]; extraHosts: string[]; worlds: World[];
-  userSettingsPath: string; claudeBin: string;
+  userSettingsPath: string; claudeBin: string; contextLimit: number;
 };
 
 export const DEFAULTS: Config = {
   port: 4317, host: '127.0.0.1', listen: ['127.0.0.1'], extraHosts: [], worlds: [],
-  userSettingsPath: join(homedir(), '.claude', 'settings.json'), claudeBin: 'claude',
+  userSettingsPath: join(homedir(), '.claude', 'settings.json'), claudeBin: 'claude', contextLimit: 1_000_000,
 };
 
 export function homeDir(): string {
@@ -46,6 +46,10 @@ export function parseConfig(raw: unknown): Config {
   const usp = str('userSettingsPath');
   if (usp) cfg.userSettingsPath = resolve(usp.replace(/^~(?=\/)/, homedir()));
   cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
+  if (r.contextLimit !== undefined) {
+    if (!Number.isInteger(r.contextLimit) || (r.contextLimit as number) < 1000) throw new Error('contextLimit must be an integer >= 1000');
+    cfg.contextLimit = r.contextLimit as number;
+  }
   if (r.extraHosts !== undefined) {
     if (!Array.isArray(r.extraHosts) || r.extraHosts.some((h) => typeof h !== 'string')) throw new Error('extraHosts must be an array of strings');
     cfg.extraHosts = r.extraHosts as string[];

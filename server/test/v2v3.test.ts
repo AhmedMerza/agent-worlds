@@ -242,12 +242,13 @@ test('transcript: first real prompt, context from the last usage, excerpt', asyn
   const f = transcript(tmp());
   const all = await readTail(f, 1 << 20);
   assert.equal(firstPrompt(await readHead(f, 1 << 20)), 'Add a login page');
-  assert.deepEqual(contextOf(all, 'claude-haiku'), { used: 50_010, limit: 200_000, pct: 25 });
-  assert.equal(contextOf(all, 'claude-opus[1m]')!.limit, 1_000_000);
+  assert.deepEqual(contextOf(all, 'claude-haiku'), { used: 50_010, limit: 1_000_000, pct: 5 }, 'default window is 1M');
+  assert.deepEqual(contextOf(all, 'claude-haiku', 200_000), { used: 50_010, limit: 200_000, pct: 25 }, 'configured window');
+  assert.equal(contextOf(all, 'claude-opus[1m]', 200_000)!.limit, 1_000_000, '[1m] model id proves a 1M window');
   assert.equal(excerpt(all), 'USER: Add a login page\nTOOL Bash: npm test\nASSISTANT: Added the page. Tests pass.\n');
   assert.ok(excerpt(all, 40).length <= 40, 'excerpt respects the cap, newest kept');
   const big = transcript(tmp(), { input_tokens: 1, cache_read_input_tokens: 300_000, cache_creation_input_tokens: 0 });
-  assert.deepEqual(contextOf(await readTail(big, 1 << 20), null), { used: 300_001, limit: 1_000_000, pct: 30 });
+  assert.deepEqual(contextOf(await readTail(big, 1 << 20), null, 200_000), { used: 300_001, limit: 1_000_000, pct: 30 }, 'usage past the configured window proves a bigger one');
   // a tail read that starts mid-line skips the cut line
   const tail = await readTail(f, 200);
   assert.ok(tail.length >= 1 && tail.every((e) => typeof e.type === 'string'));
@@ -372,7 +373,7 @@ test('context and review are filled on Stop', async () => {
   await store.handle({ ...ev.stop, cwd: d, transcript_path: transcript(tmp()) }, null);
   const s = store.sessions.get('sess-1')!;
   for (let i = 0; i < 100 && !(s.card as any).review; i++) await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(s.context, { used: 50_010, limit: 200_000, pct: 25 });
+  assert.deepEqual(s.context, { used: 50_010, limit: 1_000_000, pct: 5 });
   assert.deepEqual((s.card as any).review.files, [{ path: 'a.txt', added: 1, deleted: 2 }]);
 });
 
@@ -449,4 +450,7 @@ test('config: listen, userSettingsPath, claudeBin', () => {
   assert.equal(c.claudeBin, '/opt/claude');
   assert.throws(() => parseConfig({ listen: [] }), /listen/);
   assert.throws(() => parseConfig({ claudeBin: 5 }), /claudeBin/);
+  assert.equal(parseConfig({}).contextLimit, 1_000_000);
+  assert.equal(parseConfig({ contextLimit: 200_000 }).contextLimit, 200_000);
+  assert.throws(() => parseConfig({ contextLimit: 'big' }), /contextLimit/);
 });

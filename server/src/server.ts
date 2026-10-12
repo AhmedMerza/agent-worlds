@@ -90,7 +90,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     onEvent: (s, ev) => insights?.onEvent(s, ev),
     ...opts.deps,
   }, broadcast);
-  insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise });
+  insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
   const createSession = opts.createSession ?? sys.createSession;
   const webDist = opts.webDist ?? WEB_DIST;
   const hostPort = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${cfg.port}`;

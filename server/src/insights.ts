@@ -60,9 +60,12 @@ export class Insights {
   running = 0;
   queue: (() => void)[] = [];
 
-  constructor(store: Store, bin: string, opts: { summarise?: Summarise } = {}) {
+  contextLimit: number | undefined;
+
+  constructor(store: Store, bin: string, opts: { summarise?: Summarise; contextLimit?: number } = {}) {
     this.store = store; this.bin = bin;
     this.summarise = opts.summarise ?? runClaude;
+    this.contextLimit = opts.contextLimit;
   }
 
   onEvent = (s: Session, ev: string) => {
@@ -78,7 +81,7 @@ export class Insights {
     this.contextAt.set(s.id, Date.now());
     if (!s.transcriptPath) return;
     try {
-      const ctx = contextOf(await readTail(s.transcriptPath, 256 * 1024), s.model);
+      const ctx = contextOf(await readTail(s.transcriptPath, 256 * 1024), s.model, this.contextLimit);
       if (ctx && this.alive(s) && JSON.stringify(ctx) !== JSON.stringify(s.context)) { s.context = ctx; this.store.push(s); }
     } catch (e) { console.error(`[agent-worlds] context for ${s.id}: ${(e as Error).message}`); }
   }

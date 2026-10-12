@@ -53,6 +53,7 @@ Optional keys:
 | `extraHosts` | `[]` | extra `host:port` origins allowed to call the server, e.g. `"localhost:5190"` when running the web UI's Vite dev server |
 | `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
 | `claudeBin` | `claude` | the Claude Code binary used for new sessions and catch-up summaries |
+| `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as a 1M window) |
 
 ## Add the hooks
 

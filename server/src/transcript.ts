@@ -56,8 +56,10 @@ export const firstPrompt = (entries: Entry[]): string | null => {
   return null;
 };
 
-/** Context use from the last assistant message's usage. */
-export function contextOf(entries: Entry[], model: string | null): { used: number; limit: number; pct: number } | null {
+export const DEFAULT_CONTEXT_LIMIT = 1_000_000;
+
+/** Context use from the last assistant message's usage. `limit` is the configured window; usage past it (or a "[1m]" model id) proves a bigger one. */
+export function contextOf(entries: Entry[], model: string | null, limit = DEFAULT_CONTEXT_LIMIT): { used: number; limit: number; pct: number } | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     const u = e.type === 'assistant' ? e.message?.usage : null;
@@ -65,8 +67,9 @@ export function contextOf(entries: Entry[], model: string | null): { used: numbe
     const used = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
     if (!used) continue;
     const id = String(model ?? e.message?.model ?? '');
-    const limit = id.includes('[1m]') || used > 200_000 ? 1_000_000 : 200_000;
-    return { used, limit, pct: Math.min(100, Math.round((used / limit) * 100)) };
+    let lim = id.includes('[1m]') ? Math.max(limit, 1_000_000) : limit;
+    if (used > lim) lim = Math.max(1_000_000, used);
+    return { used, limit: lim, pct: Math.min(100, Math.round((used / lim) * 100)) };
   }
   return null;
 }
