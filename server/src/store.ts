@@ -9,7 +9,7 @@ import { computeConflicts, type Conflict } from './conflicts.ts';
 
 export { riskOf };
 
-type State = 'working' | 'waiting' | 'done' | 'error' | 'idle';
+type State = 'starting' | 'working' | 'waiting' | 'done' | 'error' | 'idle';
 type Helper = { id: string; task: string; state: 'working' | 'done'; startedAt: number };
 type Question = { question: string; header: string; multiSelect: boolean; options: { label: string; description: string }[] };
 type Card =
@@ -88,6 +88,17 @@ const commandOf = (input: Record<string, unknown>): string | null => {
   return null;
 };
 
+/** What a permission is about, so the UI can say "Run this command?" vs "Edit this file?". */
+function targetOf(tool: string, input: Record<string, unknown>): { type: 'command' | 'file' | 'url' | 'other'; value: string } {
+  const str = (k: string) => (typeof input[k] === 'string' ? (input[k] as string) : null);
+  if (str('command') !== null) return { type: 'command', value: str('command')! };
+  const file = str('file_path') ?? str('notebook_path');
+  if (file !== null) return { type: 'file', value: file };
+  if (str('url') !== null) return { type: 'url', value: str('url')! };
+  const other = str('pattern') ?? str('path') ?? str('query') ?? str('description');
+  return { type: 'other', value: other ?? tool };
+}
+
 function questionsOf(input: Record<string, unknown>): Question[] {
   const qs = Array.isArray(input.questions) ? input.questions : [];
   return qs.map((q: Record<string, unknown>) => ({
@@ -128,7 +139,7 @@ export class Store {
     const p = s.pending[0];
     let card: unknown = s.card;
     if (p && p.kind === 'permission') {
-      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, seenCount: p.seenCount, live: p.live };
+      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), target: targetOf(p.tool, p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, seenCount: p.seenCount, live: p.live };
     } else if (p) {
       card = { kind: 'question', requestId: p.requestId, questions: questionsOf(p.input), live: p.live };
     }
@@ -155,11 +166,28 @@ export class Store {
     if (s.log.length > LOG_MAX) s.log.splice(0, s.log.length - LOG_MAX);
   }
 
-  private async create(id: string, cwd: string): Promise<Session> {
+  /**
+   * A session we just launched in tmux, shown at once as 'starting'. Claude may first ask to
+   * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
+   * session on the first event from that pane; swept with the tmux session if it dies.
+   */
+  async addStarting(o: { tmuxSession: string; pane: string | null; dir: string; task: string | null }): Promise<string> {
+    const id = `starting:${o.tmuxSession}`;
+    const s = await this.create(id, o.dir);
+    s.state = 'starting';
+    s.task = o.task ? oneLine(o.task, 200) : null;
+    s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
+    s.now = 'Starting… Claude may ask you to trust this folder in the terminal';
+    this.push(s);
+    return id;
+  }
+
+  private async create(id: string, cwd: string, pane: string | null = null): Promise<Session> {
     const info = await this.deps.repoInfo(cwd);
     const existing = this.sessions.get(id); // another event may have created it while git ran
     if (existing) return existing;
     const t = this.now();
+    const starting = pane ? [...this.sessions.values()].find((x) => x.state === 'starting' && x.tmux?.pane === pane) : undefined;
     const s: Session = {
       id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null,
@@ -168,6 +196,13 @@ export class Store {
       startedAt: t, updatedAt: t,
       pending: [], top: info.top ?? cwd, model: null, transcriptPath: null, tests: null, testing: new Set(),
     };
+    if (starting) {
+      s.task = starting.task;
+      s.startedAt = starting.startedAt;
+      s.tmux = starting.tmux;
+      this.sessions.delete(starting.id);
+      this.emit({ type: 'session-removed', id: starting.id });
+    }
     this.sessions.set(id, s);
     return s;
   }
@@ -202,7 +237,7 @@ export class Store {
       return '';
     }
     const cwd = typeof p.cwd === 'string' && p.cwd.startsWith('/') ? p.cwd : '/';
-    const s = this.sessions.get(id) ?? (await this.create(id, cwd));
+    const s = this.sessions.get(id) ?? (await this.create(id, cwd, pane));
     if (pane && s.tmux?.pane !== pane) {
       s.tmux = { session: null, pane };
       this.deps.tmuxSessionOf(pane).then((name) => {

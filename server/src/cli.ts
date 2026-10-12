@@ -69,7 +69,10 @@ async function main(argv: string[]) {
       const cfg = load();
       const token = ensureToken();
       const app = startServer(cfg, token);
-      try { await app.listen(); } catch (e) { die(`cannot listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`); }
+      try { await app.listen(); } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') die(`port ${cfg.port} is busy — another Agent Worlds? change "port" in ${join(homeDir(), 'config.json')}`);
+        die(`cannot listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`);
+      }
       writeEndpoint(cfg);
       writeHooksFile(homeDir());
       if (!existsSync(join(homeDir(), 'config.json'))) console.log(`no config yet: run \`agent-worlds init\` and edit ${join(homeDir(), 'config.json')}`);

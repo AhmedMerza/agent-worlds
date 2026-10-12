@@ -59,7 +59,7 @@ const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'
  * Start `claude` in a new detached tmux session, optionally in a fresh worktree
  * (<repo>-worktrees/<branch>, new branch). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null }> {
   const id = randomBytes(2).toString('hex');
   let dir = opts.repo;
   let branch: string | null = null;
@@ -83,7 +83,8 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   // whichever client was used last instead of shrinking it to the smallest one.
   await run('tmux', ['set-option', '-w', '-t', `=${name}:`, 'window-size', 'latest']);
   await run('tmux', ['set-option', '-w', '-t', `=${name}:`, 'aggressive-resize', 'on']);
-  return { tmuxSession: name, dir, branch };
+  const pane = (await run('tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pane_id}']))?.trim() ?? '';
+  return { tmuxSession: name, dir, branch, pane: PANE_RE.test(pane) ? pane : null };
 }
 
 /** null on success, else the trimmed stderr. */
