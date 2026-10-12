@@ -1,6 +1,6 @@
 import { readdirSync, statSync, readFileSync, readlinkSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { readHead, readTail } from './transcript.ts';
+import { readHead, readTail, userPrompt } from './transcript.ts';
 
 export const SESSION_ID_RE = /^[0-9a-zA-Z][0-9a-zA-Z_-]{7,63}$/;
 
@@ -71,14 +71,21 @@ export async function history(dir: string, limit: number): Promise<HistoryItem[]
       const tail = await readTail(f.path, 64 * 1024);
       for (let i = tail.length - 1; i >= 0 && (!cwd || !lastPrompt); i--) {
         const e = tail[i];
-        if (!lastPrompt && e.type === 'last-prompt' && typeof e.lastPrompt === 'string') lastPrompt = oneLine(e.lastPrompt);
+        // "last-prompt" lines are written lazily, so a newer typed prompt can come after the last one.
+        if (!lastPrompt) {
+          const p = e.type === 'last-prompt' && typeof e.lastPrompt === 'string' ? e.lastPrompt : userPrompt(e);
+          if (p) lastPrompt = oneLine(p);
+        }
         if (!cwd && typeof e.cwd === 'string') cwd = e.cwd;
       }
       if (!cwd || !lastPrompt) {
         // The tail was all one long reply: fall back to the start of the file.
         const head = await readHead(f.path, 64 * 1024);
         cwd ??= head.find((e) => typeof e.cwd === 'string')?.cwd ?? null;
-        lastPrompt ??= head.findLast((e) => e.type === 'last-prompt' && typeof e.lastPrompt === 'string')?.lastPrompt ?? null;
+        if (!lastPrompt) {
+          const e = head.findLast((x) => (x.type === 'last-prompt' && typeof x.lastPrompt === 'string') || userPrompt(x));
+          lastPrompt = e ? (e.type === 'last-prompt' ? e.lastPrompt : userPrompt(e)) : null;
+        }
         if (lastPrompt) lastPrompt = oneLine(lastPrompt);
       }
     } catch { /* unreadable: keep the nulls */ }

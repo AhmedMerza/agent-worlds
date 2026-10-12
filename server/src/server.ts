@@ -27,7 +27,7 @@ const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.
 
 type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
-  home?: string; summarise?: Summarise; procRoot?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
+  home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -215,7 +215,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
       }
       try {
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir() });
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }

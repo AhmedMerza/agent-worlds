@@ -31,7 +31,10 @@ function projects(root: string, repo: string) {
     line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } }) +
     user(a, 'second question\nwith more lines', '2026-10-01T10:05:00.000Z') +
     line({ type: 'last-prompt', lastPrompt: 'second question\nwith more lines', leafUuid: 'y', sessionId: a }) +
-    line({ type: 'ai-title', aiTitle: 'Questions', sessionId: a }));
+    line({ type: 'ai-title', aiTitle: 'Questions', sessionId: a }) +
+    user(a, 'third question, before its last-prompt line is written', '2026-10-01T10:06:00.000Z') +
+    line({ type: 'user', isMeta: true, message: { role: 'user', content: 'meta' } }) +
+    line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'x' }] } }));
   // older session whose tail has no cwd (long assistant output at the end)
   writeFileSync(join(p, `${b}.jsonl`),
     user(b, 'make a page', '2026-09-30T09:00:00.000Z') +
@@ -50,7 +53,7 @@ test('history: newest first, last prompt one line, cwd from head when the tail l
   const { dir, a, b } = projects(root, '/work/repo-a');
   const h = await history(dir, 50);
   assert.deepEqual(h.map((x) => x.sessionId), [a, b]);
-  assert.deepEqual(h[0], { sessionId: a, cwd: '/work/repo-a', lastPrompt: 'second question', lastActivity: Date.parse('2026-10-01T10:05:00Z') });
+  assert.deepEqual(h[0], { sessionId: a, cwd: '/work/repo-a', lastPrompt: 'third question, before its last-prompt line is written', lastActivity: Date.parse('2026-10-01T10:05:00Z') });
   assert.equal(h[1].cwd, '/work/repo-a');
   assert.equal(h[1].lastPrompt, 'make a page', 'from the head when the tail is one long reply');
   assert.equal((await history(dir, 1)).length, 1);
@@ -149,7 +152,7 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
     const ok = await post('/api/sessions/resume', { sessionId: b });
     assert.equal(ok.status, 201);
     assert.deepEqual(ok.body, { tmuxSession: 'aw-repo-a-1' });
-    assert.deepEqual(calls[1], { repo, worktree: false, resume: b, claudeBin: 'claude', home: root });
+    assert.deepEqual(calls[1], { repo, worktree: false, resume: b, claudeBin: 'claude', home: root, prefix: undefined });
   } finally { await app.close(); }
 });
 
