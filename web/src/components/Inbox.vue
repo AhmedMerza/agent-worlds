@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
 import type { Session, Question, Card } from '../types'
-import { fmtWait, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive } from '../logic'
+import { fmtWait, permissionAsk, permissionWho, permissionDetail, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive } from '../logic'
 import { state, needsYou, groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
 
@@ -12,10 +12,11 @@ const picked = reactive<Record<string, Record<string, string[]>>>({})
 const reply = reactive<Record<string, string>>({})
 
 const world = (s: Session) => groups.value.find((g) => g.sessions.includes(s))?.world
-const WHO = { permission: 'wants to run a command', question: 'is asking you', done: 'finished', error: 'hit a problem' } as const
+const WHO = { question: 'is asking you', done: 'finished', error: 'hit a problem' } as const
+const who = (c: Card): string => (c.kind === 'permission' ? permissionWho(c) : WHO[c.kind])
 
 function ask(c: Card): string {
-  if (c.kind === 'permission') return c.command ? 'Run this command?' : `Allow ${c.tool}?`
+  if (c.kind === 'permission') return permissionAsk(c)
   if (c.kind === 'question') return c.questions.length === 1 ? c.questions[0].question : `${c.questions.length} questions`
   if (c.kind === 'done') return c.summary ?? 'Finished'
   return c.summary
@@ -56,13 +57,13 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
     <p v-if="!needsYou.length" class="empty">Nothing needs you. Every session is working or idle.</p>
     <article v-for="{ s, c } in items" :key="s.id + ':' + cardKey(c)" :class="['card', { current: state.selectedId === s.id }]" :style="{ '--tint': world(s)?.color ?? '#8a92a0' }">
       <div class="who">
-        <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ WHO[c.kind] }} ·
-        <span :class="['wait', { late: waitMinutes(s, state.now) >= 20 }]">{{ fmtWait(waitMinutes(s, state.now)) }}</span>
+        <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ who(c) }} ·
+        <span :class="['wait', { late: waitMinutes(s, state.now) >= 20 }]">{{ fmtWait(waitMinutes(s, state.now), s.state) }}</span>
       </div>
       <p class="ask">{{ ask(c) }}</p>
 
       <template v-if="c.kind === 'permission'">
-        <code class="cmd">{{ c.command ?? inputText(c.input) }}</code>
+        <code class="cmd">{{ permissionDetail(c) }}</code>
         <p v-if="c.risky" class="why">Careful: this {{ c.risky }}.</p>
         <div v-if="!cardLive(c)" class="actions">
           <p class="why" style="width:100%">Answer this in the terminal.</p>

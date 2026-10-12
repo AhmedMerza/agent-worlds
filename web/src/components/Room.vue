@@ -13,7 +13,8 @@ const canCreate = computed(() => props.group.world.id !== UNSORTED.id)
 const wrap = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
-const count = (st: (s: string) => boolean) => props.group.sessions.filter((s) => st(s.state)).length
+const real = computed(() => props.group.sessions.filter((s) => !s.ghost))
+const count = (st: (s: string) => boolean) => real.value.filter((s) => st(s.state)).length
 const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))
 const working = computed(() => count((st) => st === 'working'))
 const idle = computed(() => count((st) => st === 'idle'))
@@ -83,7 +84,7 @@ const onMove = (e: MouseEvent) => { canvas.value!.style.cursor = at(e) ? 'pointe
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <template v-for="s in group.sessions" :key="s.id">
         <button class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
-          <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span>
+          <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.ghost ? 'ghost' : s.state]" />{{ s.repoName }} <span class="st">{{ s.ghost ? 'plain terminal' : LABEL[s.state] }}</span>
         </button>
         <button v-if="!canCreate" class="chip-more" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
       </template>

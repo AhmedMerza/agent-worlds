@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import type { World } from '../types'
 import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList } from '../store'
-import { PALETTE, moveId, nextColor, withRepo, baseName } from '../logic'
+import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 
 const emit = defineEmits<{ close: [] }>()
@@ -76,7 +76,7 @@ defineExpose({ escape })
               <button class="btn danger" @click="confirming = w.id">Delete world</button>
             </div>
             <div v-if="confirming === w.id" class="confirm" role="alertdialog">
-              <p class="why">Delete {{ w.name }}? Its {{ sessionsIn(w) }} {{ sessionsIn(w) === 1 ? 'session moves' : 'sessions move' }} to Unsorted and keep running. Nothing is stopped.</p>
+              <p class="why">{{ deleteWorldText(w.name, sessionsIn(w)) }}</p>
               <div class="actions"><button class="btn danger" @click="confirmDelete(w)">Delete world</button><button class="btn" @click="confirming = null">Cancel</button></div>
             </div>
           </li>

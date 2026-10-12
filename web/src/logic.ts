@@ -1,11 +1,11 @@
-import type { Session, SessionState, World, RoomGroup, Card } from './types'
+import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
 const CARD_RANK: Record<string, number> = { permission: 0, question: 1, error: 2, done: 3 }
 
 export const LABEL: Record<SessionState, string> = {
-  working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
+  starting: 'Starting', working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
 }
 
 /** When did this session start needing the user? Falls back to updatedAt for cards without a waiting time. */
@@ -14,7 +14,12 @@ export const since = (s: Session): number => s.waitingSince ?? s.updatedAt
 export const waitMinutes = (s: Session, now: number): number =>
   Math.max(0, Math.floor((now - since(s)) / 60000))
 
-export const fmtWait = (min: number): string => (min < 1 ? 'waiting <1 min' : `waiting ${min} min`)
+/** Done and error cards are finished work, not a wait; only the others say "waiting". */
+export function fmtWait(min: number, state: SessionState = 'waiting'): string {
+  const done = state === 'done' || state === 'error'
+  if (done) return min < 1 ? 'finished just now' : `finished ${min} min ago`
+  return min < 1 ? 'waiting <1 min' : `waiting ${min} min`
+}
 
 /** 0 = fresh, 1 = slumped at 10 min, 2 = sitting on the floor at 20 min. */
 export const tiredLevel = (minutes: number): 0 | 1 | 2 => (minutes >= 20 ? 2 : minutes >= 10 ? 1 : 0)
@@ -58,16 +63,18 @@ export interface KeyInfo {
 }
 export type KeyAction =
   | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' }
-  | { kind: 'new-task' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | null
+  | { kind: 'new-task' } | { kind: 'recent' } | { kind: 'leave-terminal' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | null
 
 /** Decides what a keypress means. Never claims a key while the user is typing (or in the terminal). */
 export function routeKey(k: KeyInfo): KeyAction {
+  if (k.ctrl && !k.meta && !k.alt && k.key === ']') return { kind: 'leave-terminal' }
   if (k.ctrl || k.meta || k.alt) return null
   if (k.key === 'Escape') return k.overlayOpen ? { kind: 'escape' } : null
   if (k.typing) return null
   if (k.key === ' ') return k.onControl ? null : { kind: 'next' }
   if (k.key === '?') return { kind: 'help' }
   if (k.key === 'n' || k.key === 'N') return { kind: 'new-task' }
+  if (k.key === 'r' || k.key === 'R') return { kind: 'recent' }
   if (k.key === 'm' || k.key === 'M') return { kind: 'mute' }
   if (k.key === 'c' || k.key === 'C') return { kind: 'catchup' }
   if (k.key === 'w' || k.key === 'W') return { kind: 'worlds' }
@@ -85,6 +92,10 @@ export function isControlTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null
   return !!el && !!el.closest && !!el.closest('button,summary,a')
 }
+
+/** Ctrl+] is how a keyboard user leaves the terminal (Esc must keep going to Claude). */
+export const isLeaveTerminalKey = (e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): boolean =>
+  e.ctrlKey && !e.metaKey && !e.altKey && e.key === ']'
 
 export const ctxColor = (pct: number): string => (pct >= 80 ? '#ee705f' : pct >= 50 ? '#f2b84b' : '#72cf98')
 
@@ -156,11 +167,25 @@ export function errorText(status: number, body: unknown): string {
   return t || `Request failed (${status}).`
 }
 
+/** What a session needs when catch-up has no answer, by state. */
+export function needsFallback(state: SessionState): string {
+  switch (state) {
+    case 'done': return 'Your review'
+    case 'idle': return 'A new task'
+    case 'working': return 'Nothing right now. It is working.'
+    case 'waiting': return 'Your answer (see the inbox)'
+    case 'error': return 'A look at the error'
+    default: return 'Nothing yet. It is starting.'
+  }
+}
+
 export interface CatchupView {
   mode: 'running' | 'filled' | 'empty'
   asked: string | null
   did: string | null
   needs: string | null
+  /** Shown when `needs` is empty. */
+  needsFallback: string
   /** "Written 3 min ago" when filled. */
   written: string | null
 }
@@ -168,11 +193,11 @@ export interface CatchupView {
 export function catchupView(s: Session, now: number): CatchupView {
   const c = s.catchup ?? null
   const asked = c?.asked ?? s.task ?? null
-  if (s.catchupRunning) return { mode: 'running', asked, did: null, needs: null, written: null }
-  if (!c) return { mode: 'empty', asked, did: null, needs: null, written: null }
+  if (s.catchupRunning) return { mode: 'running', asked, did: null, needs: null, needsFallback: needsFallback(s.state), written: null }
+  if (!c) return { mode: 'empty', asked, did: null, needs: null, needsFallback: needsFallback(s.state), written: null }
   const min = s.catchupAt ? Math.max(0, Math.floor((now - s.catchupAt) / 60000)) : null
   const written = min === null ? null : min < 1 ? 'Written just now' : `Written ${min} min ago`
-  return { mode: 'filled', asked, did: c.did, needs: c.needs, written }
+  return { mode: 'filled', asked, did: c.did, needs: c.needs, needsFallback: needsFallback(s.state), written }
 }
 
 /** Swatches offered when colouring a world. */
@@ -194,3 +219,83 @@ export function moveId(ids: string[], id: string, dir: -1 | 1): string[] {
 
 /** Repos list with `repo` added once. */
 export const withRepo = (repos: string[], repo: string): string[] => (repos.includes(repo) ? repos : [...repos, repo])
+
+// ---- permission wording ----
+export function permissionAsk(c: Extract<Card, { kind: 'permission' }>): string {
+  switch (c.target?.type) {
+    case 'command': return 'Run this command?'
+    case 'file': return 'Edit this file?'
+    case 'url': return 'Open this address?'
+    case 'other': return `Allow ${c.tool}?`
+    default: return c.command ? 'Run this command?' : `Allow ${c.tool}?`
+  }
+}
+export function permissionWho(c: Extract<Card, { kind: 'permission' }>): string {
+  switch (c.target?.type) {
+    case 'file': return 'wants to edit a file'
+    case 'url': return 'wants to open an address'
+    case 'other': return `wants to use ${c.tool}`
+    default: return 'wants to run a command'
+  }
+}
+/** The line shown under the question: the target's value, else the command, else the raw input. */
+export function permissionDetail(c: Extract<Card, { kind: 'permission' }>): string {
+  if (c.target?.value) return c.target.value
+  if (c.command) return c.command
+  try { return JSON.stringify(c.input, null, 2) ?? '' } catch { return String(c.input) }
+}
+
+// ---- New session: which world to start in ----
+export type WorldChoice = { kind: 'world'; id: string } | { kind: 'pick' } | { kind: 'none' }
+/** Explicit world, else the filtered world (what the user is looking at), else the selected session's, else the only world, else ask. */
+export function defaultWorld(worlds: World[], opts: { explicit?: string; selectedWorldId?: string | null; filter: string }): WorldChoice {
+  const has = (id?: string | null) => (id && worlds.some((w) => w.id === id) ? id : null)
+  const id = has(opts.explicit) ?? has(opts.filter) ?? has(opts.selectedWorldId)
+  if (id) return { kind: 'world', id }
+  if (worlds.length === 1) return { kind: 'world', id: worlds[0].id }
+  return worlds.length ? { kind: 'pick' } : { kind: 'none' }
+}
+
+// ---- worlds panel ----
+export function deleteWorldText(name: string, n: number): string {
+  if (!n) return `Delete ${name}? It has no sessions. Nothing is stopped.`
+  return `Delete ${name}? Its ${n} ${n === 1 ? 'session moves' : 'sessions move'} to Unsorted and ${n === 1 ? 'keeps' : 'keep'} running. Nothing is stopped.`
+}
+
+// ---- unmanaged sessions (drawn as ghosts) ----
+export const ghostId = (pid: number): string => `ghost:${pid}`
+export function ghostSession(u: Unmanaged): Session {
+  const repo = u.repo ?? u.cwd
+  return {
+    id: ghostId(u.pid), worldId: u.worldId, repo, repoName: baseName(repo), cwd: u.cwd, branch: null, worktree: false,
+    tmux: null, state: 'idle', waitingSince: null, task: null, now: 'Running in a plain terminal', log: [], helpers: [], card: null,
+    startedAt: u.since, updatedAt: u.since, ghost: u,
+  }
+}
+
+// ---- recent sessions ----
+export function filterHistory(list: HistorySession[], q: string): HistorySession[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return list
+  return list.filter((h) => {
+    const hay = [h.repo ?? '', h.cwd ?? '', h.lastPrompt ?? '', h.sessionId].join(' ').toLowerCase()
+    return words.every((w) => hay.includes(w))
+  })
+}
+export function ageText(ms: number, now: number): string {
+  const min = Math.max(0, Math.floor((now - ms) / 60000))
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.floor(min / 60)
+  if (h < 48) return `${h} h ago`
+  return `${Math.floor(h / 24)} days ago`
+}
+
+export type ResumeResult = { kind: 'ok'; tmuxSession: string | null } | { kind: 'running'; pid: number | null } | { kind: 'error'; message: string }
+/** Reads the answer of POST /api/sessions/resume. 409 means the session is still open somewhere else. */
+export function resumeOutcome(status: number, body: unknown): ResumeResult {
+  const b = (body ?? {}) as { tmuxSession?: unknown; pid?: unknown }
+  if (status >= 200 && status < 300) return { kind: 'ok', tmuxSession: typeof b.tmuxSession === 'string' ? b.tmuxSession : null }
+  if (status === 409) return { kind: 'running', pid: typeof b.pid === 'number' ? b.pid : null }
+  return { kind: 'error', message: errorText(status, body) }
+}

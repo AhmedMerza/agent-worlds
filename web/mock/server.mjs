@@ -23,7 +23,8 @@ const mkSession = (id, worldId, over) => ({
   now: 'Working', log: [{ t: now() - 2 * MIN, text: 'Read a file' }, { t: now() - MIN, text: 'Edited a file' }],
   helpers: [], card: null, catchup: null, catchupRunning: false, catchupAt: null, context: null, conflicts: [], startedAt: now() - 30 * MIN, updatedAt: now(), ...over,
 })
-const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, input: { command: cmd }, risky, seenCount: 0, live: true })
+const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, target: { type: 'command', value: cmd }, input: { command: cmd }, risky, seenCount: 0, live: true })
+const permOf = (tool, type, value) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool, command: null, target: { type, value }, input: {}, risky: null, seenCount: 0, live: true })
 const sessions = new Map(Object.entries({
   'repo-a': mkSession('repo-a', 'web', { branch: 'feat/filter', worktree: true, context: { used: 24000, limit: 200000, pct: 12 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
     conflicts: [{ withId: 'repo-b', reason: 'both edit the table component' }, { withId: 'repo-e', reason: 'same API client' }],
@@ -37,8 +38,23 @@ const sessions = new Map(Object.entries({
   'repo-g': mkSession('repo-g', 'mobile', { state: 'idle', now: 'Ready for a new task', context: { used: 5000, limit: 200000, pct: 3 } }),
   'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: { ...perm('npm run lint'), seenCount: 5 } }),
   'repo-j': mkSession('repo-j', 'tools', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting (terminal only)', card: { ...perm('rm -rf build'), live: false } }),
+  'repo-q': mkSession('repo-q', 'web', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting to edit a file', card: permOf('Edit', 'file', '/work/repo-q/src/app.ts') }),
+  'repo-r': mkSession('repo-r', 'mobile', { state: 'waiting', waitingSince: now() - 5 * MIN, now: 'Waiting to open an address', card: permOf('WebFetch', 'url', 'https://example.com/docs') }),
+  'repo-s': mkSession('repo-s', 'mobile', { state: 'waiting', waitingSince: now() - 6 * MIN, now: 'Waiting', card: permOf('Grep', 'other', 'TODO') }),
   'repo-i': mkSession('repo-i', null, { tmux: null, now: 'Running outside tmux' }),
 }))
+
+// ---- import: processes running outside Agent Worlds, and past sessions ----
+let unmanaged = process.env.MOCK_EMPTY ? [] : [
+  { pid: 4121, cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', sessionId: 'sess-k', inTmux: false, since: now() - 12 * MIN },
+  { pid: 5230, cwd: '/work/repo-m', repo: null, worldId: null, sessionId: null, inTmux: true, since: now() - 3 * MIN },
+]
+const history = [
+  { sessionId: 'sess-k', cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', lastPrompt: 'Refactor the checkout form validation', lastActivity: now() - 12 * MIN, running: true, managed: false },
+  { sessionId: 'sess-n', cwd: '/work/repo-n', repo: '/work/repo-n', worldId: 'mobile', lastPrompt: 'Add dark mode to the settings screen', lastActivity: now() - 3 * 60 * MIN, running: false, managed: false },
+  { sessionId: 'sess-p', cwd: '/work/repo-p', repo: '/work/repo-p', worldId: 'tools', lastPrompt: 'Write a script that prunes old build artifacts', lastActivity: now() - 30 * 60 * MIN, running: false, managed: false },
+  { sessionId: 'repo-a', cwd: '/work/repo-a', repo: '/work/repo-a', worldId: 'web', lastPrompt: 'Add a filter to the table', lastActivity: now() - 4 * MIN, running: true, managed: true },
+]
 
 // ---- demo mode (MOCK_DEMO=1 | worlds): deterministic data for recording the README media ----
 // 1 = two worlds with five sessions; "worlds" = no worlds yet, same sessions (their repos live in /tmp/demo/*).
@@ -51,7 +67,7 @@ if (DEMO) {
     { id: 'web', name: 'Web', color: '#47b4a7', repos: [`${DEMO_DIR}/repo-a`, `${DEMO_DIR}/repo-b`, `${DEMO_DIR}/repo-c`] },
     { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: [`${DEMO_DIR}/repo-d`, `${DEMO_DIR}/repo-e`] },
   ]
-  sessions.clear()
+  sessions.clear(); unmanaged = []
   const add = (id, world, i, over) => sessions.set(id, mkSession(id, w(world), { repo: `${DEMO_DIR}/${id}`, cwd: `${DEMO_DIR}/${id}`, startedAt: now() - (60 - i) * MIN, ...over }))
   add('repo-a', 'web', 1, { task: 'Add a status filter to the orders table', branch: 'feat/orders-filter', worktree: true, context: { used: 36000, limit: 200000, pct: 18 }, now: 'Editing the orders table',
     helpers: [{ id: 'h1', task: 'Find the orders endpoint', state: 'working', startedAt: now() }], demo: { did: 'Added the filter dropdown and wired it to the orders API.', needs: '' } })
@@ -112,6 +128,7 @@ function regroup() {
     if (s.worldId !== id) { s.worldId = id; upsert(s) }
   }
 }
+const pushUnmanaged = () => broadcast({ type: 'unmanaged', unmanaged })
 const pushWorlds = () => { regroup(); broadcast({ type: 'worlds', worlds }) }
 let wseq = 1
 // ---- state transitions ----
@@ -135,14 +152,30 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
-  if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()] })
+  if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
+  if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
+  if (req.method === 'POST' && url.pathname === '/api/sessions/resume') {
+    const b = await readBody(req)
+    const h = history.find((x) => x.sessionId === b.sessionId)
+    if (!h) return json(404, { error: 'No transcript for that session.' })
+    if (h.running && !b.force) return json(409, { error: 'that session is still running', pid: unmanaged.find((u) => u.sessionId === h.sessionId)?.pid ?? null })
+    unmanaged = unmanaged.filter((u) => u.sessionId !== h.sessionId); pushUnmanaged()
+    h.running = true; h.managed = true
+    const id = h.sessionId, tmux = `aw-${id}`
+    const s = mkSession(id, h.worldId, { repoName: path.basename(h.repo), repo: h.repo, cwd: h.cwd, task: h.lastPrompt, state: 'starting', now: 'Starting', tmux: { session: tmux, pane: '%9' } })
+    sessions.set(`starting:${tmux}`, { ...s, id: `starting:${tmux}` }); upsert(sessions.get(`starting:${tmux}`))
+    setTimeout(() => { sessions.delete(`starting:${tmux}`); broadcast({ type: 'session-removed', id: `starting:${tmux}` }); sessions.set(id, { ...s, state: 'idle', now: 'Resumed' }); upsert(sessions.get(id)) }, 2500)
+    return json(201, { tmuxSession: tmux })
+  }
   if (req.method === 'POST' && url.pathname === '/api/sessions') {
     const b = await readBody(req)
-    if (!b.task || !b.repo) return json(400, { message: 'Task and repo are required.' })
+    if (!b.repo) return json(400, { message: 'Task and repo are required.' })
     if (/bad/.test(b.task)) return json(500, { message: 'Could not start tmux: no server running.' })
     const id = `repo-new-${sessions.size}`
-    const s = mkSession(id, b.worldId, { repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
-    sessions.set(id, s); upsert(s)
+    const s = mkSession(id, b.worldId, { state: 'starting', now: 'Starting', repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
+    const sid = `starting:${s.tmux.session}`
+    sessions.set(sid, { ...s, id: sid }); upsert(sessions.get(sid))
+    setTimeout(() => { sessions.delete(sid); broadcast({ type: 'session-removed', id: sid }); sessions.set(id, { ...s, state: 'working', now: 'Working' }); upsert(sessions.get(id)) }, 2500)
     return json(201, { id, tmuxSession: s.tmux.session })
   }
   const dm = url.pathname.match(/^\/api\/demo\/(ask|done)$/)
@@ -224,7 +257,7 @@ server.on('upgrade', (req, socket) => {
     socket.on('close', () => wsClients.delete(socket))
     socket.on('error', () => wsClients.delete(socket))
     onFrames(socket, () => {})
-    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()] })))
+    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()], unmanaged })))
     return
   }
   // /pty: echo terminal (imitates the Claude prompt with a slash-command menu; MOCK_ECHO=1 for a plain echo)

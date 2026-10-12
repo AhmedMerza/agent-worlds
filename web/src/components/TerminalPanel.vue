@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { LABEL, catchupView } from '../logic'
+import { LABEL, catchupView, isLeaveTerminalKey } from '../logic'
 import { state, selected, groups, termFocusTick, requestCatchup } from '../store'
 
 const s = computed(() => selected.value)
@@ -13,6 +13,8 @@ const root = ref<HTMLElement | null>(null)
 const host = ref<HTMLElement | null>(null)
 const link = ref<'connecting' | 'live' | 'closed'>('connecting')
 const hasTmux = computed(() => !!s.value?.tmux)
+const termFocused = ref(false)
+const showCatchup = computed(() => !!s.value && !s.value.ghost && s.value.state !== 'starting')
 const attachId = computed(() => (hasTmux.value ? s.value!.id : null))
 
 let term: Terminal | null = null
@@ -63,6 +65,13 @@ async function reattach(id: string | null) {
     fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host.value)
+    // Ctrl+] hands the keyboard back to the page (Esc still goes to Claude). Returning false keeps it from reaching Claude.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && isLeaveTerminalKey(e)) { term?.blur(); return false }
+      return true
+    })
+    term.textarea?.addEventListener('focus', () => { termFocused.value = true })
+    term.textarea?.addEventListener('blur', () => { termFocused.value = false })
     term.onData((d) => { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d })) })
     ro = new ResizeObserver(refit)
     ro.observe(host.value)
@@ -89,15 +98,16 @@ watch(termFocusTick, async () => {
       <template v-if="s">
         <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ world?.name }} · {{ LABEL[s.state] }}
         <span v-if="s.context"> · {{ s.context.pct }}% context</span>
-        <span v-if="hasTmux" class="term-state">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
+        <span v-if="hasTmux && termFocused" class="term-paused">Shortcuts paused · Ctrl+] to leave</span>
+        <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
       </template>
       <template v-else>No session selected</template>
     </div>
-    <dl v-if="s && cu" class="catch">
+    <dl v-if="s && cu && showCatchup" class="catch">
       <template v-if="cu.asked"><dt>You asked</dt><dd>{{ cu.asked }}</dd></template>
       <template v-if="cu.mode === 'filled'">
         <template v-if="cu.did"><dt>It did</dt><dd>{{ cu.did }}</dd></template>
-        <dt>It needs</dt><dd :class="['needs', { none: !cu.needs }]">{{ cu.needs || 'Nothing right now. It is working.' }}</dd>
+        <dt>It needs</dt><dd :class="['needs', { none: !cu.needs }]">{{ cu.needs || cu.needsFallback }}</dd>
         <span class="tag">Catch-up written by Haiku</span>
       </template>
       <p v-if="cu.mode === 'running'" class="catch-run" role="status">Haiku is reading the transcript…</p>
@@ -107,7 +117,8 @@ watch(termFocusTick, async () => {
         <span class="why">(C)</span>
       </p>
     </dl>
-    <p v-if="s && !hasTmux" class="term-view">This session is not running inside tmux, so it is view-only.</p>
+    <p v-if="s?.ghost" class="term-view">This Claude is running in a plain terminal outside Agent Worlds, so there is no terminal here. Quit it there, then move it in from the panel on the right.</p>
+    <p v-else-if="s && !hasTmux" class="term-view">This session did not start in tmux, so there is no live terminal. It is view-only here: its status shows, and its cards can still be answered from the inbox.</p>
     <div v-show="hasTmux" ref="host" class="term-body" />
   </section>
 </template>

@@ -8,9 +8,10 @@ import HelpOverlay from './components/HelpOverlay.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import WorldsPanel from './components/WorldsPanel.vue'
 import PutInWorldDialog from './components/PutInWorldDialog.vue'
+import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
 import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui } from './store'
-import { routeKey, isTypingTarget, isControlTarget } from './logic'
+import { routeKey, isTypingTarget, isControlTarget, defaultWorld } from './logic'
 
 const help = ref(false)
 const worldsPanel = ref<InstanceType<typeof WorldsPanel> | null>(null)
@@ -25,11 +26,11 @@ watch(termFocusTick, () => { if (phone.value) tab.value = 'term' })
 const tabs = computed<[Tab, string][]>(() => [['inbox', 'Inbox'], ['rooms', 'Rooms'], ['term', 'Terminal']])
 
 function openNewTask(worldId?: string) {
-  const g = groups.value.find((x) => x.sessions.includes(selected.value!))
-  const id = worldId ?? g?.world.id
-  const w = state.worlds.find((x) => x.id === id)
-  if (!w) { showToast('Select a session in a world first. Unsorted sessions have no world to start a session in.'); return }
-  newTaskWorld.value = w.id
+  const g = selected.value ? groups.value.find((x) => x.sessions.includes(selected.value!)) : undefined
+  const c = defaultWorld(state.worlds, { explicit: worldId, selectedWorldId: g?.world.id, filter: state.filter })
+  if (c.kind === 'world') newTaskWorld.value = c.id
+  else if (c.kind === 'pick') newTaskWorld.value = ''
+  else ui.worldsOpen = true // no worlds yet: creating one is the next step
 }
 async function onNotify() {
   const r = await toggleNotifications()
@@ -42,7 +43,7 @@ const count = (st: string) => sessionList.value.filter((s) => s.state === st).le
 function onKey(e: KeyboardEvent) {
   const a = routeKey({
     key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
-    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.worldsOpen || ui.putSession !== null,
+    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.putSession !== null,
   })
   if (!a) return
   e.preventDefault()
@@ -52,9 +53,11 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'new-task') openNewTask()
   else if (a.kind === 'catchup') { if (selected.value && !selected.value.catchupRunning) requestCatchup(selected.value.id) }
   else if (a.kind === 'worlds') ui.worldsOpen = true
+  else if (a.kind === 'recent') ui.recentOpen = true
+  else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
   else if (a.kind === 'mute') { toggleMute(); showToast(prefs.muted ? 'Sounds muted.' : 'Sounds on.') }
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return
-  else { help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.putSession = null }
+  else { help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.putSession = null }
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -86,6 +89,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
         <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
       </nav>
       <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Worlds</button>
+      <button class="hdr-btn" @click="ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
       <button class="hdr-btn" :aria-pressed="prefs.muted" :title="'Sounds for new requests (M)'" @click="toggleMute">{{ prefs.muted ? 'Sound off' : 'Sound on' }}</button>
       <button v-if="notifySupported" class="hdr-btn" :aria-pressed="prefs.notify" @click="onNotify">{{ prefs.notify ? 'Notifications on' : 'Enable notifications' }}</button>
       <button class="hdr-btn" aria-label="Keyboard shortcuts" @click="help = true"><kbd>?</kbd> Shortcuts</button>
@@ -115,7 +119,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
     <HelpOverlay v-if="help" @close="help = false" />
     <WorldsPanel v-if="ui.worldsOpen" ref="worldsPanel" @close="ui.worldsOpen = false" />
     <PutInWorldDialog v-if="ui.putSession" :session-id="ui.putSession" @close="ui.putSession = null" @open-worlds="ui.worldsOpen = true" />
-    <NewTaskDialog v-if="newTaskWorld" :world-id="newTaskWorld" @close="newTaskWorld = null" />
+    <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
+    <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>
   </div>
 </template>

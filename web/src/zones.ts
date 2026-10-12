@@ -12,7 +12,7 @@ const ROW_H: Record<Zone, number> = { lounge: 66, desks: 98, help: 66 }
 const FIRST_TOP: Record<Zone, number> = { lounge: 76, desks: 68, help: 76 }
 export const WALK_MS = 1000
 
-export const zoneOf = (state: SessionState): Zone => (state === 'working' ? 'desks' : state === 'idle' ? 'lounge' : 'help')
+export const zoneOf = (state: SessionState): Zone => (state === 'working' ? 'desks' : state === 'idle' || state === 'starting' ? 'lounge' : 'help')
 export const capacity = (zone: Zone): number => MAX_COLS[zone] * MAX_ROWS[zone]
 
 /** Sessions per zone, in a stable order (start time, then id) so slots never shuffle when states change. */
@@ -51,6 +51,9 @@ export function retarget(w: Walker | undefined, target: Pos, now: number, reduce
   const cur = walkPos(w.from, w.to, now - w.start, reduced)
   return { from: { x: cur.x, top: cur.top }, to: target, start: now }
 }
+
+/** A newcomer starts outside the left wall and walks in through the door to its slot. */
+export const doorWalker = (to: Pos, now: number): Walker => ({ from: { x: -16, top: to.top }, to, start: now })
 
 /** Room height that fits the busiest zone (never shorter than a small room). */
 export function roomHeight(sessions: Session[]): number {
