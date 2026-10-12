@@ -44,8 +44,15 @@ worktrees of those repos are recognised automatically):
 ```
 
 Set `AGENT_WORLDS_HOME` to use a different directory than `~/.config/agent-worlds`.
-`extraHosts` lists extra `host:port` origins allowed to call the server (for example
-`"localhost:5190"` when running the web UI's dev server).
+
+Optional keys:
+
+| key | default | meaning |
+|---|---|---|
+| `listen` | `["127.0.0.1"]` | addresses to bind. Add a private VPN address (e.g. a Tailscale `100.x.y.z`) to reach it from your phone. |
+| `extraHosts` | `[]` | extra `host:port` origins allowed to call the server, e.g. `"localhost:5190"` when running the web UI's Vite dev server |
+| `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
+| `claudeBin` | `claude` | the Claude Code binary used for new sessions and catch-up summaries |
 
 ## Add the hooks
 
@@ -89,6 +96,38 @@ This creates a tmux session `aw-<repo>-<id>` running `claude` in that directory.
 Sessions that are not inside tmux still show up, but the terminal view and the
 "type into session" box need tmux.
 
+## Features
+
+- **Needs-you inbox**: permission requests, questions and finished turns from every session.
+- **Always allow**: on a permission card, "In <repo>" adds the rule to
+  `<repo>/.claude/settings.local.json`, "In the <world> world" to every repo of that world,
+  "Everywhere" to your user settings. Rules use Claude Code's permission syntax (Claude's own
+  suggestion when it offers one, e.g. `Bash(npm run lint *)`; otherwise the exact command or
+  `Edit(//abs/path)`). Existing content of those files is kept; a file that is not valid JSON
+  is never touched. "Everywhere" is refused for risky requests (pushes, database changes,
+  deploys, recursive deletes, writes outside the project, ...).
+- **Catch-up** (on request): a short "you asked / it did / it needs" summary of a session,
+  made by `claude -p --model haiku` from the transcript. It runs with `AGENT_WORLDS_DISABLE=1`,
+  in restricted mode in an empty temp directory, at most two at a time.
+- **Context**: how full each session's context window is, from its transcript.
+- **Review** when a turn finishes: changed files (uncommitted changes plus commits ahead of
+  the default branch, untracked files included), the diff (up to 200 KB) and the last test
+  run's result.
+- **Conflicts**: sessions in the same folder or on the same branch, running tests in the same
+  repo at once (shared database), or working on the same issue number.
+- **New task**: start a session from the browser, optionally in a new git worktree
+  (`<repo>-worktrees/<branch>`, branch `aw/<task>-<id>` unless you name one).
+- **Keyboard shortcuts**: press `?` in the app.
+
+## Install as an app
+
+The web UI is a PWA: in Chrome or Edge use "Install app", on iOS Safari "Add to Home Screen".
+The manifest and icons are served without the token so the browser can read them; everything
+else still needs it. Phones only offer installation over **https** (or on localhost), so a
+plain `http://100.x.y.z:4317` address works in the browser but will not install. Put the
+server behind an https proxy on your private network (for example `tailscale serve`) if you
+want the installed app on a phone.
+
 ## How answers reach Claude
 
 - **Permissions**: the `PermissionRequest` hook is held open until you click allow or
@@ -103,6 +142,9 @@ Sessions that are not inside tmux still show up, but the terminal view and the
 
 - The server binds `127.0.0.1` by default. Do not expose it on a network: the terminal
   view is a full shell as your user, and allowing a permission runs commands on your machine.
+  If you add an address to `listen` for phone use, make it one only you can reach (a private
+  VPN such as Tailscale), never a LAN or public address. Anyone holding the token on that
+  network has your shell.
 - Every HTTP route and both websockets require the token (cookie `aw_token` or header
   `X-AW-Token`). The token is in `~/.config/agent-worlds/token` (mode 0600); delete it and
   restart to rotate.

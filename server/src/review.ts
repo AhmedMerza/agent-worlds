@@ -59,7 +59,10 @@ export const TEST_RE = /\b(phpunit|artisan\s+test|pest|vitest|jest|npm\s+(run\s+
 /** One line that best summarises a test run's output. */
 export function testLine(output: string): string {
   const lines = output.split('\n').map((l) => l.replace(/\x1b\[[0-9;]*m/g, '').trim()).filter(Boolean).slice(-40);
-  const hit = [...lines].reverse().find((l) => /\b(pass(ed|es)?|fail(ed|ures?)?|tests?|errors?|ok)\b/i.test(l));
+  const rev = [...lines].reverse();
+  // Prefer a totals line ("Tests: 3 passed", "12 passed, 1 failed", "ℹ tests 2"), else any pass/fail line.
+  const hit = rev.find((l) => /\b\d+\s+(passed|failed)\b|\b(tests?|passed|failed)\b:?\s+\d+/i.test(l))
+    ?? rev.find((l) => /\b(pass(ed|es)?|fail(ed|ures?)?|tests?|errors?|ok)\b/i.test(l));
   const line = hit ?? lines.at(-1) ?? '';
   return line.length > 200 ? line.slice(0, 199) + '…' : line;
 }

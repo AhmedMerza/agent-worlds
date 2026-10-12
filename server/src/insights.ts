@@ -13,7 +13,7 @@ const CONTEXT_THROTTLE_MS = 5_000;
 const SCHEMA = JSON.stringify({
   type: 'object',
   properties: {
-    did: { type: 'string', description: 'What the assistant actually did, 1-2 plain sentences.' },
+    did: { type: 'string', description: 'What the assistant did in the session, 1-2 plain sentences starting with a verb (e.g. "Added ..."). Never describe the act of summarising.' },
     needs: { type: 'string', description: 'What it needs from the user now, one sentence; empty string if nothing.' },
   },
   required: ['did', 'needs'],
