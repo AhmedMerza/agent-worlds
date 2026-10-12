@@ -3,7 +3,7 @@ import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
 
-export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string };
+export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
 
 function run(cmd: string, args: string[], timeout = 3000): Promise<string | null> {
   return new Promise((done) => {
@@ -17,13 +17,29 @@ export async function repoInfo(cwd: string): Promise<RepoInfo> {
   if (!out) return { repo: cwd, branch: null, worktree: false, top: cwd };
   const [top, common] = out.trim().split('\n');
   const repo = basename(common) === '.git' ? dirname(common) : common;
-  return { repo, branch: await branchOf(cwd), worktree: top !== repo, top };
+  const head = (await run('git', ['-C', cwd, 'rev-parse', '-q', '--verify', 'HEAD']))?.trim() || null;
+  return { repo, branch: await branchOf(cwd), worktree: top !== repo, top, head };
 }
 
 export async function branchOf(cwd: string): Promise<string | null> {
   const b = await run('git', ['-C', cwd, 'branch', '--show-current']);
   return b && b.trim() ? b.trim() : null;
 }
+
+/**
+ * The ref a new worktree branch starts from: the repo's default branch (origin/HEAD, else main,
+ * else master), never whatever the main checkout happens to have checked out. HEAD only when the
+ * repo has none of those.
+ */
+export async function defaultStart(repo: string): Promise<string> {
+  const remote = (await run('git', ['-C', repo, 'symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD']))?.trim();
+  for (const ref of [remote, 'main', 'master']) {
+    if (ref && (await run('git', ['-C', repo, 'rev-parse', '-q', '--verify', ref + '^{commit}'])) !== null) return ref;
+  }
+  return 'HEAD';
+}
+
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
 
 export const PANE_RE = /^%\d{1,6}$/;
 
@@ -57,9 +73,9 @@ const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'
 
 /**
  * Start `claude` in a new detached tmux session, optionally in a fresh worktree
- * (<repo>-worktrees/<branch>, new branch). Everything goes through argv; nothing touches a shell.
+ * (<repo>-worktrees/<branch>, new branch forked from the repo's default branch, see defaultStart). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string; permissionMode?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null }> {
   const id = randomBytes(2).toString('hex');
   let dir = opts.repo;
   let branch: string | null = null;
@@ -67,7 +83,7 @@ export async function createSession(opts: { repo: string; task?: string; worktre
     branch = opts.branch || `aw/${slug(opts.task || 'session', 32)}-${id}`;
     if ((await run('git', ['check-ref-format', '--branch', branch])) === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
     dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));
-    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, '--', dir]);
+    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, dir, await defaultStart(opts.repo)]);
     if (err !== null) throw new Error(`git worktree add failed: ${err}`);
   }
   const name = `${opts.prefix ?? 'aw-'}${slug(basename(opts.repo))}-${id}`;
@@ -77,7 +93,8 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   const env = opts.home ? ['-e', `AGENT_WORLDS_HOME=${opts.home}`] : [];
   const settings = opts.home ? ['--settings', join(opts.home, 'hooks.json')] : [];
   const resume = opts.resume ? ['--resume', opts.resume] : [];
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...resume, ...settings, ...(task ? ['--', task] : [])]);
+  const mode = opts.permissionMode ? ['--permission-mode', opts.permissionMode] : [];
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...resume, ...mode, ...settings, ...(task ? ['--', task] : [])]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.

@@ -12,6 +12,7 @@ import * as sys from './sys.ts';
 import { Worlds } from './worlds.ts';
 import { history, findTranscript, scanClaude, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { readHead } from './transcript.ts';
+import { readFileSync } from 'node:fs';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -209,6 +210,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
     }
+    if (method === 'GET' && url.pathname === '/api/claude-defaults') {
+      let permissionMode: string | null = null;
+      try { const m = JSON.parse(readFileSync(cfg.userSettingsPath, 'utf8'))?.permissions?.defaultMode; if (typeof m === 'string') permissionMode = m; } catch { /* no settings file */ }
+      return send(res, 200, { permissionMode });
+    }
     if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), unmanaged });
     if (method === 'GET' && url.pathname === '/api/history') {
       const n = Number(url.searchParams.get('limit') ?? 50);
@@ -228,6 +234,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (typeof b.sessionId !== 'string' || !SESSION_ID_RE.test(b.sessionId)) return send(res, 400, { error: 'sessionId is required' });
       if (b.worldId !== undefined && b.worldId !== null && !cfg.worlds.some((w) => w.id === b.worldId)) return send(res, 400, { error: 'unknown worldId' });
       if (b.worktree === true) return send(res, 400, { error: 'resume in a worktree is not supported' });
+      if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       const file = findTranscript(cfg.claudeProjectsDir, b.sessionId);
       if (!file) return send(res, 404, { error: 'no transcript for that session' });
       const cwd = (await readHead(file, 256 * 1024)).find((e) => typeof e.cwd === 'string')?.cwd as string | undefined;
@@ -239,7 +246,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
       }
       try {
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
@@ -269,8 +276,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.task !== undefined && (typeof b.task !== 'string' || b.task.length > 10000)) return send(res, 400, { error: 'task must be a string up to 10000 chars' });
       if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
       if (b.branch !== undefined && b.branch !== '' && (typeof b.branch !== 'string' || !b.worktree)) return send(res, 400, { error: 'branch must be a string and needs worktree: true' });
+      if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       try {
-        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
+        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: (b.task as string) || null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
