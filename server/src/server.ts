@@ -47,6 +47,18 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.end(text);
 }
 
+const BAD_TOKEN_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Worlds: link not valid</title>
+<body style="font:16px/1.5 system-ui,sans-serif;max-width:34em;margin:4em auto;padding:0 1em">
+<h1>This link no longer works</h1>
+<p>The link comes from an older install, or the access token has changed.</p>
+<p>On the machine running the server, run <code>agent-worlds open</code> (or <code>agent-worlds url</code>) to get a fresh link.</p>
+</body>`;
+
+function sendHtml(res: ServerResponse, status: number, html: string) {
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(html);
+}
+
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((ok, fail) => {
     const chunks: Buffer[] = [];
@@ -163,8 +175,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
 
     if (!hostOk(req)) return send(res, 421, { error: 'unknown host; add it to extraHosts in the config' });
     if (url.pathname === '/' && url.searchParams.has('token')) {
-      if (!same(url.searchParams.get('token'), token)) return send(res, 401, 'bad token\n');
-      res.writeHead(302, { 'set-cookie': `aw_token=${token}; HttpOnly; SameSite=Strict; Path=/`, location: '/' });
+      if (!same(url.searchParams.get('token'), token)) return sendHtml(res, 401, BAD_TOKEN_PAGE);
+      const secure = (req.socket as { encrypted?: boolean }).encrypted || req.headers['x-forwarded-proto'] === 'https';
+      res.writeHead(302, { 'set-cookie': `aw_token=${token}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/${secure ? '; Secure' : ''}`, location: '/' });
       return res.end();
     }
     if (!originOk(req)) return send(res, 403, { error: 'origin not allowed' });

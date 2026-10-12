@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync, statSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, statSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,4 +104,21 @@ test('cli: init writes a generic example config, url prints the tokened URL', as
   assert.match(hooks.hooks.Stop[0].hooks[0].command, /\/bin\/aw-hook$/);
   assert.equal((await cli(['new', 'nope', '/tmp'])).code, 1);
   assert.equal((await cli(['bogus'])).code, 1);
+});
+
+test('cli: open runs the platform opener with the URL; prints it when there is none', async () => {
+  const home = tmp(), bin = tmp(), log = join(tmp(), 'argv');
+  const run = (path: string) => new Promise<{ code: number; out: string }>((ok) =>
+    execFile(join(BIN, 'agent-worlds'), ['open'], { env: { ...process.env, AGENT_WORLDS_HOME: home, PATH: path } }, (err, out) =>
+      ok({ code: err ? (err.code as number) : 0, out: String(out) })));
+  const bare = tmp(); // only what bin/agent-worlds needs, so no real opener can be found
+  for (const c of ['bash', 'readlink', 'dirname']) symlinkSync(`/usr/bin/${c}`, join(bare, c));
+  symlinkSync(process.execPath, join(bare, 'node'));
+  for (const name of ['xdg-open', 'open']) writeFileSync(join(bin, name), `#!/bin/sh\necho "$@" > ${log}\n`, { mode: 0o755 });
+  const ok = await run(`${bin}:${bare}`);
+  assert.equal(ok.code, 0);
+  assert.match(readFileSync(log, 'utf8'), /^http:\/\/127\.0\.0\.1:4317\/\?token=[0-9a-f]{64}$/m);
+  const none = await run(bare);
+  assert.equal(none.code, 0);
+  assert.match(none.out, /^http:\/\/127\.0\.0\.1:4317\/\?token=[0-9a-f]{64}\n/);
 });
