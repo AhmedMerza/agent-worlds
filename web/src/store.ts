@@ -1,6 +1,7 @@
 import { reactive, computed, ref } from 'vue'
 import type { ServerMessage, Session, World } from './types'
-import { groupSessions, queue, screenOrder, nextNeedingYou } from './logic'
+import { alertNeedsYou } from './notify'
+import { groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
 
 export interface StoreState {
   worlds: World[]
@@ -21,7 +22,9 @@ export const newState = (): StoreState => ({
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
-export function applyMessage(st: StoreState, msg: ServerMessage): void {
+/** Returns the session that has just started needing the user (for alerts), if any. */
+export function applyMessage(st: StoreState, msg: ServerMessage): Session | null {
+  let alert: Session | null = null
   switch (msg.type) {
     case 'snapshot':
       st.worlds = msg.worlds
@@ -31,6 +34,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): void {
       st.loaded = true
       break
     case 'session':
+      if (startsNeedingYou(st.sessions[msg.session.id], msg.session)) alert = msg.session
       if (!st.sessions[msg.session.id]) st.order.push(msg.session.id)
       st.sessions[msg.session.id] = msg.session
       break
@@ -47,6 +51,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): void {
     const list = st.order.map((i) => st.sessions[i])
     st.selectedId = (queue(list)[0] ?? list[0])?.id ?? null
   }
+  return alert
 }
 
 export const state = reactive<StoreState>(newState())
@@ -70,7 +75,7 @@ export const selectNext = (): boolean => {
   select(n.id)
   return true
 }
-export const showToast = (text: string): void => applyMessage(state, { type: 'toast', text })
+export const showToast = (text: string): void => { applyMessage(state, { type: 'toast', text }) }
 
 // ---- actions (REST) ----
 async function post(path: string, body?: unknown): Promise<boolean> {
@@ -89,8 +94,21 @@ async function post(path: string, body?: unknown): Promise<boolean> {
   }
 }
 const base = (id: string) => `/api/sessions/${encodeURIComponent(id)}`
-export const decidePermission = (id: string, requestId: string, decision: 'allow' | 'deny') =>
-  post(`${base(id)}/permission`, { requestId, decision, scope: 'once' })
+export type Scope = 'once' | 'repo' | 'world' | 'all'
+export const decidePermission = (id: string, requestId: string, decision: 'allow' | 'deny', scope: Scope = 'once') =>
+  post(`${base(id)}/permission`, { requestId, decision, scope })
+export const sendInput = (id: string, text: string) => post(`${base(id)}/input`, { text })
+export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string }
+/** Returns null on success, else a message to show the user. */
+export async function createSession(body: NewTask): Promise<string | null> {
+  try {
+    const r = await fetch('/api/sessions', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (r.ok) return null
+    let msg = `Request failed (${r.status}).`
+    try { const j = await r.json(); msg = j.message ?? j.error ?? msg } catch { /* not json */ }
+    return msg
+  } catch { return 'Could not reach the server.' }
+}
 export const answerQuestions = (id: string, requestId: string, answers: Record<string, string>) =>
   post(`${base(id)}/answer`, { requestId, answers })
 export const acknowledge = (id: string) => post(`${base(id)}/ack`)
@@ -106,7 +124,10 @@ export function connect(): void {
   ws = new WebSocket(`${proto}://${location.host}/ws`)
   ws.onopen = () => { retry = 0; state.connected = true }
   ws.onmessage = (e) => {
-    try { applyMessage(state, JSON.parse(String(e.data)) as ServerMessage) } catch { /* ignore a malformed frame */ }
+    let m: ServerMessage
+    try { m = JSON.parse(String(e.data)) as ServerMessage } catch { return /* ignore a malformed frame */ }
+    const a = applyMessage(state, m)
+    if (a) alertNeedsYou(a, groups.value.findIndex((g) => g.sessions.some((x) => x.id === a.id)), groups.value.find((g) => g.sessions.some((x) => x.id === a.id))?.world.name ?? '')
   }
   ws.onclose = () => {
     state.connected = false

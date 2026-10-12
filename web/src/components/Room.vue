@@ -2,10 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, layout, W, K, type Hit } from '../canvas'
-import { LABEL, NEEDS_YOU } from '../logic'
+import { LABEL, NEEDS_YOU, roomConflicts, UNSORTED } from '../logic'
 import { state, select } from '../store'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
+defineEmits<{ 'new-task': [worldId: string] }>()
+const conflictN = computed(() => { const c = roomConflicts(props.group.sessions); return c.links.length + c.badges.length })
+const canCreate = computed(() => props.group.world.id !== UNSORTED.id)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const size = computed(() => layout(props.group.sessions.length))
@@ -43,6 +46,8 @@ const onMove = (e: MouseEvent) => { canvas.value!.style.cursor = at(e) ? 'pointe
     <header>
       <h2>{{ group.world.name }}</h2>
       <span class="meta">{{ group.sessions.length }} {{ group.sessions.length === 1 ? 'session' : 'sessions' }} · {{ working }} working<template v-if="needN"> · {{ needN }} need you</template></span>
+      <span v-if="conflictN" class="warn" :title="'Sessions in this room may be working on the same thing'">⚠ {{ conflictN }}</span>
+      <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New task</button>
     </header>
     <canvas ref="canvas" :width="W * K" :height="size.H * K" :aria-label="`${group.world.name} room`" @click="onClick" @mousemove="onMove" />
     <div class="chips">

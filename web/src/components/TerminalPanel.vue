@@ -95,8 +95,10 @@ watch(termFocusTick, async () => {
     <dl v-if="s?.catchup" class="catch">
       <dt>You asked</dt><dd>{{ s.catchup.asked }}</dd>
       <dt>It did</dt><dd>{{ s.catchup.did }}</dd>
-      <dt>It needs</dt><dd :class="['needs', { none: !s.catchup.needs }]">{{ s.catchup.needs || 'Nothing right now.' }}</dd>
+      <dt>It needs</dt><dd :class="['needs', { none: !s.catchup.needs }]">{{ s.catchup.needs || 'Nothing right now. It is working.' }}</dd>
+      <span class="tag">Catch-up written by Haiku</span>
     </dl>
+    <p v-else-if="s && (s.state === 'done' || s.state === 'waiting')" class="catch-wait">Writing catch-up…</p>
     <p v-if="s && !hasTmux" class="term-view">This session is not running inside tmux, so it is view-only.</p>
     <div v-show="hasTmux" ref="host" class="term-body" />
   </section>

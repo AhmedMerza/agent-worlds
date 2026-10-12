@@ -5,10 +5,33 @@ import Inbox from './components/Inbox.vue'
 import Detail from './components/Detail.vue'
 import TerminalPanel from './components/TerminalPanel.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext } from './store'
+import NewTaskDialog from './components/NewTaskDialog.vue'
+import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick } from './store'
 import { routeKey, isTypingTarget, isControlTarget } from './logic'
 
 const help = ref(false)
+const newTaskWorld = ref<string | null>(null)
+type Tab = 'inbox' | 'rooms' | 'term'
+const tab = ref<Tab>('inbox')
+const mq = matchMedia('(max-width: 699px)')
+const phone = ref(mq.matches)
+const onMq = () => { phone.value = mq.matches }
+const showTab = (t: Tab) => !phone.value || tab.value === t
+watch(termFocusTick, () => { if (phone.value) tab.value = 'term' })
+const tabs = computed<[Tab, string][]>(() => [['inbox', 'Inbox'], ['rooms', 'Rooms'], ['term', 'Terminal']])
+
+function openNewTask(worldId?: string) {
+  const g = groups.value.find((x) => x.sessions.includes(selected.value!))
+  const id = worldId ?? g?.world.id
+  const w = state.worlds.find((x) => x.id === id)
+  if (!w) { showToast('Select a session in a world first. Unsorted sessions have no world to start a task in.'); return }
+  newTaskWorld.value = w.id
+}
+async function onNotify() {
+  const r = await toggleNotifications()
+  if (r === 'denied') showToast('Notifications are blocked. Allow them in the browser site settings.')
+}
 const shown = computed(() => groups.value.filter((g) => state.filter === 'all' || g.world.id === state.filter))
 const numbers = computed(() => Object.fromEntries(screenSessions.value.slice(0, 9).map((s, i) => [s.id, i + 1])))
 const count = (st: string) => sessionList.value.filter((s) => s.state === st).length
@@ -16,14 +39,16 @@ const count = (st: string) => sessionList.value.filter((s) => s.state === st).le
 function onKey(e: KeyboardEvent) {
   const a = routeKey({
     key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
-    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value,
+    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null,
   })
   if (!a) return
   e.preventDefault()
   if (a.kind === 'next') selectNext()
   else if (a.kind === 'jump') { const s = screenSessions.value[a.index]; if (s) select(s.id) }
   else if (a.kind === 'help') help.value = !help.value
-  else help.value = false
+  else if (a.kind === 'new-task') openNewTask()
+  else if (a.kind === 'mute') { toggleMute(); showToast(prefs.muted ? 'Sounds muted.' : 'Sounds on.') }
+  else { help.value = false; newTaskWorld.value = null }
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -36,8 +61,8 @@ watch(() => state.toast?.n, () => {
 // If the filtered world disappears, show everything again.
 watch(groups, (g) => { if (state.filter !== 'all' && !g.some((x) => x.world.id === state.filter)) state.filter = 'all' })
 
-onMounted(() => { connect(); startClock(); window.addEventListener('keydown', onKey) })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+onMounted(() => { connect(); startClock(); window.addEventListener('keydown', onKey); mq.addEventListener('change', onMq) })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeEventListener('change', onMq) })
 </script>
 
 <template>
@@ -54,24 +79,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All worlds</button>
         <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
       </nav>
+      <button class="hdr-btn" :aria-pressed="prefs.muted" :title="'Sounds for new requests (M)'" @click="toggleMute">{{ prefs.muted ? 'Sound off' : 'Sound on' }}</button>
+      <button v-if="notifySupported" class="hdr-btn" :aria-pressed="prefs.notify" @click="onNotify">{{ prefs.notify ? 'Notifications on' : 'Enable notifications' }}</button>
       <button class="hdr-btn" aria-label="Keyboard shortcuts" @click="help = true"><kbd>?</kbd> Shortcuts</button>
     </header>
     <div v-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
-    <div v-else class="layout">
+    <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
+      <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'inbox' && needsYou.length" class="count">{{ needsYou.length }}</span></button>
+    </nav>
+    <div v-if="state.loaded" class="layout">
       <div class="main-col">
-        <section :class="['worlds', { single: state.filter !== 'all' || shown.length === 1 }]" aria-label="Worlds">
+        <section v-show="showTab('rooms')" :class="['worlds', { single: state.filter !== 'all' || shown.length === 1 }]" aria-label="Worlds">
           <p v-if="!groups.length" class="empty">No worlds yet. Add one to the config file.</p>
-          <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" />
+          <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
         </section>
-        <TerminalPanel />
+        <TerminalPanel v-show="showTab('term')" />
       </div>
       <aside>
-        <Inbox />
-        <Detail />
+        <Inbox v-show="showTab('inbox')" />
+        <Detail v-show="showTab('term')" />
       </aside>
     </div>
     <HelpOverlay v-if="help" @close="help = false" />
+    <NewTaskDialog v-if="newTaskWorld" :world-id="newTaskWorld" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>
   </div>
 </template>

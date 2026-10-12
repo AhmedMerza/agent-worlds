@@ -12,9 +12,9 @@ const MIN = 60000
 const now = () => Date.now()
 
 const worlds = [
-  { id: 'web', name: 'Web', color: '#47b4a7', repos: [] },
-  { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: [] },
-  { id: 'tools', name: 'Tools', color: '#9c88df', repos: [] },
+  { id: 'web', name: 'Web', color: '#47b4a7', repos: ['/work/repo-a', '/work/repo-b', '/work/repo-c', '/work/repo-d'] },
+  { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: ['/work/repo-e', '/work/repo-f', '/work/repo-g'] },
+  { id: 'tools', name: 'Tools', color: '#9c88df', repos: ['/work/repo-h'] },
 ]
 const mkSession = (id, worldId, over) => ({
   id, worldId, repo: `/work/${id}`, repoName: id, cwd: `/work/${id}`, branch: 'main', worktree: false,
@@ -25,15 +25,16 @@ const mkSession = (id, worldId, over) => ({
 const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, input: { command: cmd }, risky, seenCount: 0 })
 const sessions = new Map(Object.entries({
   'repo-a': mkSession('repo-a', 'web', { branch: 'feat/filter', worktree: true, context: { used: 24000, limit: 200000, pct: 12 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
+    conflicts: [{ withId: 'repo-b', reason: 'both edit the table component' }, { withId: 'repo-e', reason: 'same API client' }],
     catchup: { asked: 'Add a filter to the table', did: 'Wired the dropdown to the API', needs: '' } }),
   'repo-b': mkSession('repo-b', 'web', { state: 'waiting', waitingSince: now() - 3 * MIN, now: 'Waiting for you to allow a command', card: perm('npm run migrate -- --force', 'changes a database'), context: { used: 70000, limit: 200000, pct: 35 } }),
   'repo-c': mkSession('repo-c', 'web', { state: 'waiting', waitingSince: now() - 14 * MIN, now: 'Waiting for your answer',
     card: { kind: 'question', requestId: crypto.randomUUID(), questions: [{ question: 'Where should the new categories go?', header: 'Parent', multiSelect: false, options: [{ label: 'Under Restaurants', description: 'Nested one level' }, { label: 'New top-level category', description: '' }, { label: 'Leave unassigned', description: '' }] }] } }),
-  'repo-d': mkSession('repo-d', 'web', { state: 'done', waitingSince: now() - 8 * MIN, now: 'Finished', card: { kind: 'done', summary: 'Fixed the badge count. All 12 tests pass.', review: null }, context: { used: 140000, limit: 200000, pct: 70 } }),
-  'repo-e': mkSession('repo-e', 'mobile', { state: 'error', waitingSince: now() - 26 * MIN, now: 'Stopped after failing tests', card: { kind: 'error', summary: '3 of 41 tests fail in the sync suite.' }, context: { used: 170000, limit: 200000, pct: 85 } }),
-  'repo-f': mkSession('repo-f', 'mobile', { helpers: [1, 2, 3, 4, 5].map((n) => ({ id: `h${n}`, task: `Helper ${n}`, state: n % 2 ? 'working' : 'done', startedAt: now() })) }),
+  'repo-d': mkSession('repo-d', 'web', { state: 'done', waitingSince: now() - 8 * MIN, now: 'Finished', card: { kind: 'done', summary: 'Fixed the badge count. All 12 tests pass.', review: { files: [{ path: 'src/badge.ts', added: 6, deleted: 3 }, { path: 'src/cart.ts', added: 4, deleted: 9 }], tests: { command: 'npm test', ok: true, line: '12 passed, 0 failed' }, diff: ['@@ src/badge.ts @@', '-const n = cache.count', '+const n = fresh.count', ...Array.from({ length: 450 }, (_, i) => (i % 3 ? ` context ${i}` : `+added line ${i}`))].join('\n') } }, context: { used: 140000, limit: 200000, pct: 70 } }),
+  'repo-e': mkSession('repo-e', 'mobile', { conflicts: [{ withId: 'repo-f', reason: 'both touch sync' }], state: 'error', waitingSince: now() - 26 * MIN, now: 'Stopped after failing tests', card: { kind: 'error', summary: '3 of 41 tests fail in the sync suite.' }, context: { used: 170000, limit: 200000, pct: 85 } }),
+  'repo-f': mkSession('repo-f', 'mobile', { conflicts: [{ withId: 'repo-e', reason: 'both touch sync' }], helpers: [1, 2, 3, 4, 5].map((n) => ({ id: `h${n}`, task: `Helper ${n}`, state: n % 2 ? 'working' : 'done', startedAt: now() })) }),
   'repo-g': mkSession('repo-g', 'mobile', { state: 'idle', now: 'Ready for a new task', context: { used: 5000, limit: 200000, pct: 3 } }),
-  'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: perm('npm run lint') }),
+  'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: { ...perm('npm run lint'), seenCount: 5 } }),
   'repo-i': mkSession('repo-i', null, { tmux: null, now: 'Running outside tmux' }),
 }))
 
@@ -91,6 +92,15 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()] })
+  if (req.method === 'POST' && url.pathname === '/api/sessions') {
+    const b = await readBody(req)
+    if (!b.task || !b.repo) return json(400, { message: 'Task and repo are required.' })
+    if (/bad/.test(b.task)) return json(500, { message: 'Could not start tmux: no server running.' })
+    const id = `repo-new-${sessions.size}`
+    const s = mkSession(id, b.worldId, { repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
+    sessions.set(id, s); upsert(s)
+    return json(201, { id })
+  }
   const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack)$/)
   if (req.method === 'POST' && m) {
     const s = sessions.get(decodeURIComponent(m[1]))
@@ -99,7 +109,7 @@ const server = http.createServer(async (req, res) => {
     if (m[2] === 'permission') {
       if (s.card?.requestId !== body.requestId) return json(409, { error: 'stale request' })
       resume(s, body.decision === 'allow' ? 'Running the command' : 'Looking for another way')
-      broadcast({ type: 'toast', text: body.decision === 'allow' ? `Allowed once. ${s.id} is running.` : `Denied. ${s.id} was told no.` })
+      broadcast({ type: 'toast', text: body.decision === 'allow' ? `Allowed (${body.scope}). ${s.id} is running.` : `Denied. ${s.id} was told no.` })
     } else if (m[2] === 'answer') {
       if (s.card?.requestId !== body.requestId) return json(409, { error: 'stale request' })
       resume(s, 'Continuing with your answer')

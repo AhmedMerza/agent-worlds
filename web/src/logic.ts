@@ -1,4 +1,4 @@
-import type { Session, SessionState, World, RoomGroup } from './types'
+import type { Session, SessionState, World, RoomGroup, Card } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
@@ -57,7 +57,8 @@ export interface KeyInfo {
   overlayOpen: boolean
 }
 export type KeyAction =
-  | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' } | null
+  | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' }
+  | { kind: 'new-task' } | { kind: 'mute' } | null
 
 /** Decides what a keypress means. Never claims a key while the user is typing (or in the terminal). */
 export function routeKey(k: KeyInfo): KeyAction {
@@ -66,6 +67,8 @@ export function routeKey(k: KeyInfo): KeyAction {
   if (k.typing) return null
   if (k.key === ' ') return k.onControl ? null : { kind: 'next' }
   if (k.key === '?') return { kind: 'help' }
+  if (k.key === 'n' || k.key === 'N') return { kind: 'new-task' }
+  if (k.key === 'm' || k.key === 'M') return { kind: 'mute' }
   if (/^[1-9]$/.test(k.key)) return { kind: 'jump', index: Number(k.key) - 1 }
   return null
 }
@@ -96,3 +99,47 @@ export function buildAnswers(
   }
   return out
 }
+
+/** Which "Always allow" scopes are usable for a permission card. `Everywhere` is refused for risky commands. */
+export function scopeAvailability(c: Extract<Card, { kind: 'permission' }>): { repo: boolean; world: boolean; all: boolean; allReason: string | null } {
+  return { repo: true, world: true, all: !c.risky, allReason: c.risky ? `Not offered: this command ${c.risky}.` : null }
+}
+export const showLearnNudge = (c: Extract<Card, { kind: 'permission' }>): boolean => c.seenCount >= 3
+
+/** Conflicts of one room: dashed links between sessions in the room, and badges for ones whose partner is elsewhere. */
+export function roomConflicts(sessions: Session[]): { links: { a: string; b: string; reason: string }[]; badges: string[] } {
+  const ids = new Set(sessions.map((s) => s.id))
+  const seen = new Set<string>()
+  const links: { a: string; b: string; reason: string }[] = []
+  const badges = new Set<string>()
+  for (const s of sessions) {
+    for (const c of s.conflicts ?? []) {
+      if (ids.has(c.withId) && c.withId !== s.id) {
+        const key = [s.id, c.withId].sort().join('|')
+        if (!seen.has(key)) { seen.add(key); links.push({ a: s.id, b: c.withId, reason: c.reason }) }
+      } else badges.add(s.id)
+    }
+  }
+  return { links, badges: [...badges] }
+}
+
+/** Should a change from `prev` to `next` alert the user? Only the moment a session starts needing them. */
+export function startsNeedingYou(prev: Session | undefined, next: Session): boolean {
+  if (!NEEDS_YOU.includes(next.state) || !next.card) return false
+  if (!prev) return true
+  return prev.state !== next.state || !prev.card || cardId(prev.card) !== cardId(next.card)
+}
+const cardId = (c: Card): string => (c.kind === 'permission' || c.kind === 'question' ? c.requestId : c.kind)
+
+/** Caps rendered diff lines; `hidden` is how many were left out. */
+export function capDiff(diff: string, max = 400, all = false): { lines: string[]; hidden: number } {
+  const lines = diff.split('\n')
+  if (all || lines.length <= max) return { lines, hidden: 0 }
+  return { lines: lines.slice(0, max), hidden: lines.length - max }
+}
+export const diffClass = (l: string): string => (l.startsWith('@@') ? 'h' : l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : '')
+
+/** 0 none, 1 getting heavy (>=50), 2 nearly full (>=80). */
+export const ctxLevel = (pct: number): 0 | 1 | 2 => (pct >= 80 ? 2 : pct >= 50 ? 1 : 0)
+
+export const baseName = (p: string): string => p.replace(/\/+$/, '').split('/').pop() || p

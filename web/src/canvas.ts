@@ -1,5 +1,5 @@
 import type { RoomGroup, Session, SessionState } from './types'
-import { tiredLevel, waitMinutes, ctxColor } from './logic'
+import { tiredLevel, waitMinutes, ctxColor, roomConflicts } from './logic'
 
 export const W = 480
 export const K = 2
@@ -197,10 +197,34 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   ctx.fillStyle = '#e8d7a0'; ctx.fillRect(W - 30, 14, 10, 10)
   ctx.fillStyle = '#3d6b45'; ctx.fillRect(6, 30, 12, 14); ctx.fillStyle = '#5c3b2a'; ctx.fillRect(8, 42, 8, 8)
   const hits: Hit[] = []
+  const pos = new Map<string, { x: number; y: number }>()
   o.group.sessions.forEach((s, i) => {
     const col = i % cols, row = Math.floor(i / cols)
-    drawStation(ctx, s, Math.round((col + 0.5) * W / cols), FIRST_DESK + row * ROW_H, o, hits)
+    const x = Math.round((col + 0.5) * W / cols), y = FIRST_DESK + row * ROW_H
+    pos.set(s.id, { x, y })
+    drawStation(ctx, s, x, y, o, hits)
   })
+  const { links, badges } = roomConflicts(o.group.sessions)
+  const warn = STATE_COLOR.waiting
+  for (const l of links) {
+    const a = pos.get(l.a)!, b = pos.get(l.b)!
+    const x1 = a.x, y1 = a.y - 34, x2 = b.x, y2 = b.y - 34
+    const n = Math.max(2, Math.round(Math.hypot(x2 - x1, y2 - y1) / 5))
+    const off = o.reduced ? 0 : (o.t / 120) % 2
+    for (let i = 0; i < n; i++) {
+      if ((i + Math.floor(off)) % 2) continue
+      const t = i / n
+      ctx.fillStyle = warn; ctx.fillRect(Math.round(x1 + (x2 - x1) * t), Math.round(y1 + (y2 - y1) * t - Math.sin(t * Math.PI) * 14), 2, 2)
+    }
+    const mx = Math.round((x1 + x2) / 2), my = Math.round((y1 + y2) / 2 - 16)
+    ctx.fillStyle = warn; ctx.fillRect(mx - 5, my - 5, 11, 11)
+    ctx.fillStyle = '#14110b'; ctx.font = '600 9px "Pixelify Sans", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', mx, my + 1)
+  }
+  for (const id of badges) {
+    const p = pos.get(id)!
+    ctx.fillStyle = warn; ctx.fillRect(p.x + 18, p.y - 40, 11, 11)
+    ctx.fillStyle = '#14110b'; ctx.font = '600 9px "Pixelify Sans", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', p.x + 23, p.y - 39)
+  }
   return hits
 }
 

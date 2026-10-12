@@ -46,3 +46,13 @@ describe('backoffMs', () => {
     expect([0, 1, 2, 10].map(backoffMs)).toEqual([500, 1000, 2000, 15000])
   })
 })
+
+describe('applyMessage alerts', () => {
+  it('returns the session that just started needing you, only for upserts', () => {
+    const st = newState()
+    expect(applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('a')] })).toBeNull()
+    const w = mk('a', { state: 'waiting', card: perm, waitingSince: 1 })
+    expect(applyMessage(st, { type: 'session', session: w })?.id).toBe('a')
+    expect(applyMessage(st, { type: 'session', session: { ...w, now: 'x' } })).toBeNull()
+  })
+})
