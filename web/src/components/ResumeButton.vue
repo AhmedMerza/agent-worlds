@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { resumeSession } from '../store'
+import { modeField, type ModeChoice } from '../logic'
 
-const props = defineProps<{ sessionId: string; label?: string; primary?: boolean }>()
+const props = defineProps<{ sessionId: string; label?: string; primary?: boolean; mode?: ModeChoice }>()
 const emit = defineEmits<{ started: [] }>()
 const busy = ref(false)
 const error = ref('')
@@ -12,7 +13,7 @@ const running = ref<{ pid: number | null } | null>(null)
 async function go(force: boolean) {
   if (busy.value) return
   busy.value = true; error.value = ''
-  const r = await resumeSession(props.sessionId, force)
+  const r = await resumeSession(props.sessionId, force, modeField(props.mode ?? 'claude').permissionMode)
   busy.value = false
   if (r.kind === 'ok') { running.value = null; emit('started') }
   else if (r.kind === 'running') running.value = { pid: r.pid }

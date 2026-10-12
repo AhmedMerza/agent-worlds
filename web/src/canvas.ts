@@ -1,12 +1,18 @@
 import type { RoomGroup, Session, SessionState } from './types'
 import { tiredLevel, waitMinutes, ctxColor, roomConflicts } from './logic'
-import { ROOM_W, ROOM_H, FLOOR_TOP, ZONE_X, assignZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, type Zone, type Walker } from './zones'
+import { ROOM_W, ROOM_H, FLOOR_TOP, WALK_MS, ZONE_X, assignZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, pauseWalker, type Zone, type Walker } from './zones'
 
 export const W = ROOM_W
 const WALL_H = 48
 
 export interface Hit { id: string; x: number; y: number; w: number; h: number }
-export interface DrawOpts { group: RoomGroup; selectedId: string | null; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; k: number; h: number }
+export interface DrawOpts { group: RoomGroup; selectedId: string | null; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; k: number; h: number
+  /** Session under the pointer: its walk is held still. */
+  hoverId?: string | null
+  /** ms since the previous frame (used to hold a walk). */
+  dt?: number
+  /** Ghosts left out of the scene by the cap; drawn as "+N" in the lounge. */
+  moreGhosts?: number }
 export const H = ROOM_H
 
 export const STATE_COLOR: Record<SessionState, string> = {
@@ -158,17 +164,13 @@ function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: n
       ctx.fillText('z', x + 10, top - 2 - ((tt / 400 | 0) % 3)); ctx.fillText('z', x + 15, top - 8 - ((tt / 400 | 0) % 3))
     }
     label(ctx, s.repoName, x, top + 42, slotWidth('lounge', n) - 2)
-    if (s.ghost) {
-      ctx.fillStyle = '#8a92a0'; ctx.font = '600 7px "Pixelify Sans", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText('plain terminal', x, top + 51)
-    }
   } else {
     const m = waitMinutes(s, o.now), tired = tiredLevel(m)
     const lift = s.state === 'waiting' && !tired && !moving ? (Math.floor(tt / 450) % 2) * 2 : 0
     const sy = top + (tired === 2 ? 6 : tired * 2)
     hb = { x: x - 12, y: sy, w: 24, h: 36 }
     drawSprite(ctx, x - 12, sy - lift, 3, pal(l), step, tired === 2 && !moving)
-    const glyph = s.state === 'waiting' ? (s.card?.kind === 'question' ? '?' : '!') : s.state === 'done' ? '✓' : '×'
+    const glyph = s.state === 'waiting' ? (s.card?.kind === 'question' || s.card?.kind === 'asking' ? '?' : '!') : s.state === 'done' ? '✓' : '×'
     bubble(ctx, x, sy, glyph, STATE_COLOR[s.state], lift)
     ctx.fillStyle = m >= 20 ? STATE_COLOR.error : m >= 10 ? STATE_COLOR.waiting : '#ece6d9'
     ctx.font = '600 8px "Pixelify Sans", monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
@@ -250,15 +252,17 @@ function paintRoom(ctx: CanvasRenderingContext2D, o: DrawOpts, wall: string, tri
       if (i >= cap) return
       const target = slotPos(zone, i, list.length)
       const w = retarget(o.walkers.get(s.id) ?? (s.state === 'starting' && !o.reduced ? doorWalker(target, o.t) : undefined), target, o.t, o.reduced)
+      if (o.hoverId === s.id && o.dt && o.t - w.start < WALK_MS) pauseWalker(w, o.dt)
       o.walkers.set(s.id, w)
       const p = walkPos(w.from, w.to, o.t - w.start, o.reduced)
       placed.push({ s, zone, x: Math.round(p.x), top: Math.round(p.top), dest: w.to, moving: p.moving, n: list.length })
     })
-    if (list.length > cap) {
+    const extra = zone === 'lounge' ? (o.moreGhosts ?? 0) : 0
+    if (list.length + extra > cap || extra) {
       const [x0, x1] = ZONE_X[zone]
       ctx.fillStyle = '#ece6d9'; ctx.fillRect(x1 - 26, o.h - 16, 22, 11)
       ctx.fillStyle = '#14110b'; ctx.font = '600 8px "Pixelify Sans", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText('+' + (list.length - cap), x1 - 15, o.h - 10)
+      ctx.fillText('+' + (Math.max(0, list.length - cap) + extra), x1 - 15, o.h - 10)
       void x0
     }
   }
@@ -292,4 +296,4 @@ function paintRoom(ctx: CanvasRenderingContext2D, o: DrawOpts, wall: string, tri
 
 /** Finds the session under a point given in room coordinates. */
 export const hitTest = (hits: Hit[], px: number, py: number): Hit | undefined =>
-  hits.find((h) => px >= h.x - 5 && px <= h.x + h.w + 5 && py >= h.y - 18 && py <= h.y + h.h + 24)
+  hits.find((h) => px >= h.x - 9 && px <= h.x + h.w + 9 && py >= h.y - 20 && py <= h.y + h.h + 26)

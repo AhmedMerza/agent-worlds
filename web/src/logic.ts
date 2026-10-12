@@ -1,8 +1,8 @@
-import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession } from './types'
+import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
-const CARD_RANK: Record<string, number> = { permission: 0, question: 1, error: 2, done: 3 }
+const CARD_RANK: Record<string, number> = { permission: 0, question: 1, asking: 1, error: 2, done: 3 }
 
 export const LABEL: Record<SessionState, string> = {
   starting: 'Starting', working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
@@ -40,12 +40,14 @@ export function groupSessions(worlds: World[], sessions: Session[]): RoomGroup[]
   return groups
 }
 
-/** On-screen order used for the 1-9 keys. */
-export const screenOrder = (groups: RoomGroup[]): Session[] => groups.flatMap((g) => g.sessions)
+/** On-screen order used for the 1-9 keys. Ghosts (other Claude sessions) never get a number. */
+export const screenOrder = (groups: RoomGroup[]): Session[] => groups.flatMap((g) => g.sessions.filter((s) => !s.ghost))
 
-/** Next session in the queue after `currentId`, wrapping; null when the queue is empty. */
-export function nextNeedingYou(q: Session[], currentId: string | null): Session | null {
+/** Next session in the queue after `currentId`, wrapping; null when the queue is empty.
+ *  When the app picked the current selection by itself, the first Space takes the head of the queue instead of skipping it. */
+export function nextNeedingYou(q: Session[], currentId: string | null, autoSelected = false): Session | null {
   if (!q.length) return null
+  if (autoSelected) return q[0]
   const i = q.findIndex((s) => s.id === currentId)
   return q[(i + 1) % q.length]
 }
@@ -144,6 +146,79 @@ export function startsNeedingYou(prev: Session | undefined, next: Session): bool
 }
 const cardId = (c: Card): string => (c.kind === 'permission' || c.kind === 'question' ? c.requestId : c.kind)
 
+/** Header split: waiting = it cannot go on without an answer; review = finished work (done or error). */
+export function needSplit(q: Session[]): { waiting: number; review: number } {
+  let waiting = 0, review = 0
+  for (const s of q) { if (s.card?.kind === 'done' || s.card?.kind === 'error') review++; else waiting++ }
+  return { waiting, review }
+}
+
+/** Order of the inbox. Unfrozen: the queue order. Frozen (pointer over it): cards keep their place, gone ones drop out, new ones go last. */
+export function inboxOrder(prev: string[], next: string[], frozen: boolean): string[] {
+  if (!frozen) return next
+  const now = new Set(next), had = new Set(prev)
+  return [...prev.filter((k) => now.has(k)), ...next.filter((k) => !had.has(k))]
+}
+
+// ---- review block ----
+export interface ReviewView { changed: Review['files']; commits: Review['commits']; uncommitted: Review['files']; canCommit: boolean; canMr: boolean }
+/** What the review offers. Commit only when something is uncommitted; Open MR only when commits exist. */
+export function reviewView(r: Review): ReviewView {
+  const commits = r.commits ?? [], uncommitted = r.uncommitted ?? []
+  return { changed: r.files ?? [], commits, uncommitted, canCommit: uncommitted.length > 0, canMr: commits.length > 0 }
+}
+
+// ---- ghosts (other Claude sessions on this computer) ----
+export const MAX_GHOSTS_DRAWN = 6
+export function splitGhosts(sessions: Session[]): { real: Session[]; ghosts: Session[] } {
+  return { real: sessions.filter((s) => !s.ghost), ghosts: sessions.filter((s) => s.ghost) }
+}
+/** The sessions the room scene draws: all real ones, at most `cap` ghosts; `hidden` is how many ghosts were left out. */
+export function drawnSessions(sessions: Session[], cap = MAX_GHOSTS_DRAWN): { sessions: Session[]; hidden: number } {
+  const { real, ghosts } = splitGhosts(sessions)
+  return { sessions: [...real, ...ghosts.slice(0, cap)], hidden: Math.max(0, ghosts.length - cap) }
+}
+export const ghostChipText = (n: number): string => `${n} other Claude ${n === 1 ? 'session' : 'sessions'} on this computer`
+
+// ---- "Now" without tool names ----
+const TOOL_VERBS: [string, string][] = [
+  ['AskUserQuestion', 'Asking you a question'], ['Bash', 'Running a command'],
+  ['Edit|Write|MultiEdit|NotebookEdit', 'Editing files'], ['Read|Grep|Glob', 'Reading files'], ['Agent|Task', 'Working with helpers'],
+]
+/** A "Now" line that is just a tool name (optionally "Using Bash…") becomes what the tool does. Other text is left alone. */
+export function nowText(text: string): string {
+  for (const [tools, verb] of TOOL_VERBS) if (new RegExp(`^(?:(?:Using|Running|Calling)\\s+)?(?:${tools})(?:\\.\\.\\.|…)?$`).test(text.trim())) return verb
+  return text
+}
+
+// ---- permission mode ----
+export type ModeChoice = 'claude' | PermissionMode
+export const MODE_NAMES: Record<string, string> = {
+  default: 'ask before every action', acceptEdits: 'auto-accept edits', plan: 'plan only', auto: 'auto', bypassPermissions: 'no permission checks',
+}
+export const MODE_HELP: Record<ModeChoice, string> = {
+  claude: 'Uses whatever your own Claude Code is set to.',
+  default: 'Claude asks you in the inbox before each edit or command.',
+  acceptEdits: 'File edits go through without asking; commands still ask.',
+  plan: 'Claude only plans and shows you the plan; it changes nothing.',
+  auto: 'Claude decides what is safe and asks only when it is unsure.',
+  bypassPermissions: 'Nothing is checked. Only for throwaway folders.',
+}
+export function modeOptions(claudeDefault: string | null): { value: ModeChoice; label: string }[] {
+  return [
+    { value: 'claude', label: `Your Claude default (${claudeDefault ? MODE_NAMES[claudeDefault] ?? claudeDefault : 'not set'})` },
+    { value: 'default', label: 'Ask before every action' },
+    { value: 'acceptEdits', label: 'Auto-accept edits' },
+    { value: 'plan', label: 'Plan only' },
+    { value: 'auto', label: 'Auto' },
+  ]
+}
+/** The request field: nothing at all for "Your Claude default". */
+export const modeField = (c: ModeChoice): { permissionMode?: PermissionMode } => (c === 'claude' ? {} : { permissionMode: c })
+
+// ---- touch ----
+export const isTouch = (): boolean => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+
 /** Caps rendered diff lines; `hidden` is how many were left out. */
 export function capDiff(diff: string, max = 400, all = false): { lines: string[]; hidden: number } {
   const lines = diff.split('\n')
@@ -186,18 +261,25 @@ export interface CatchupView {
   needs: string | null
   /** Shown when `needs` is empty. */
   needsFallback: string
+  /** The session needed you again after this was written. */
+  stale: boolean
   /** "Written 3 min ago" when filled. */
   written: string | null
 }
 /** What the catch-up area shows. Catch-up is manual: without it only the task ("You asked") is known. */
+const NOTHING = /^\W*(?:none|nothing|n\/a|nil|no)?\W*$/i
+/** "", "none", "Nothing." and the like mean catch-up has no answer. */
+export const meaningful = (t: string | null | undefined): string | null => (t && !NOTHING.test(t.trim()) ? t.trim() : null)
 export function catchupView(s: Session, now: number): CatchupView {
   const c = s.catchup ?? null
   const asked = c?.asked ?? s.task ?? null
-  if (s.catchupRunning) return { mode: 'running', asked, did: null, needs: null, needsFallback: needsFallback(s.state), written: null }
-  if (!c) return { mode: 'empty', asked, did: null, needs: null, needsFallback: needsFallback(s.state), written: null }
+  const fb = needsFallback(s.state)
+  if (s.catchupRunning) return { mode: 'running', asked, did: null, needs: null, needsFallback: fb, stale: false, written: null }
+  if (!c) return { mode: 'empty', asked, did: null, needs: null, needsFallback: fb, stale: false, written: null }
   const min = s.catchupAt ? Math.max(0, Math.floor((now - s.catchupAt) / 60000)) : null
   const written = min === null ? null : min < 1 ? 'Written just now' : `Written ${min} min ago`
-  return { mode: 'filled', asked, did: c.did, needs: c.needs, needsFallback: needsFallback(s.state), written }
+  const stale = !!s.catchupStale
+  return { mode: 'filled', asked, did: c.did, needs: stale ? null : meaningful(c.needs), needsFallback: fb, stale, written }
 }
 
 /** Swatches offered when colouring a world. */

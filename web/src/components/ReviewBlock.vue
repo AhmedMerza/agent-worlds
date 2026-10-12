@@ -1,24 +1,38 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Review } from '../types'
-import { capDiff, diffClass } from '../logic'
-import { sendInput, acknowledge } from '../store'
+import { capDiff, diffClass, reviewView } from '../logic'
+import { askClaude, acknowledge } from '../store'
 
-const props = defineProps<{ id: string; review: Review }>()
+const props = defineProps<{ id: string; name: string; branch: string | null; review: Review }>()
 const all = ref(false)
 const diff = computed(() => capDiff(props.review.diff, 400, all.value))
-const cmds: [string, string][] = [['Commit', '/commit'], ['Open MR', '/mr-create'], ['/ship-check', '/ship-check']]
+const v = computed(() => reviewView(props.review))
 </script>
 
 <template>
-  <ul class="files"><li v-for="f in review.files" :key="f.path"><span>{{ f.path }}</span><b class="add">+{{ f.added }}</b><b class="del">−{{ f.deleted }}</b></li></ul>
+  <div v-if="v.changed.length" class="rv">
+    <span class="lbl">Changed since this session started</span>
+    <ul class="files"><li v-for="f in v.changed" :key="f.path"><span>{{ f.path }}</span><b class="add">+{{ f.added }}</b><b class="del">−{{ f.deleted }}</b></li></ul>
+  </div>
+  <p v-else-if="!v.commits.length && !v.uncommitted.length && !review.diff" class="why">No files changed since this session started.</p>
+  <div v-if="v.commits.length" class="rv">
+    <span class="lbl">{{ v.commits.length }} {{ v.commits.length === 1 ? 'commit' : 'commits' }} on {{ branch ?? 'this branch' }}</span>
+    <ul class="commits"><li v-for="c in v.commits" :key="c.sha"><code>{{ c.sha.slice(0, 7) }}</code> {{ c.subject }}</li></ul>
+  </div>
+  <div v-if="v.uncommitted.length" class="rv">
+    <span class="lbl">Not committed yet ({{ v.uncommitted.length }})</span>
+    <ul class="files"><li v-for="f in v.uncommitted" :key="f.path"><span>{{ f.path }}</span><b class="add">+{{ f.added }}</b><b class="del">−{{ f.deleted }}</b></li></ul>
+  </div>
   <p v-if="review.tests" :class="['why', 'review-tests', { bad: !review.tests.ok }]">Tests {{ review.tests.ok ? 'passed' : 'failed' }}: {{ review.tests.line }}</p>
   <details v-if="review.diff"><summary>View the diff</summary>
     <pre class="diff"><span v-for="(l, i) in diff.lines" :key="i" :class="diffClass(l)">{{ l }}{{ '\n' }}</span></pre>
     <button v-if="diff.hidden" class="linkbtn" @click="all = true">Show all ({{ diff.hidden }} more lines)</button>
   </details>
   <div class="actions">
-    <button v-for="[label, text] in cmds" :key="text" :class="['btn', { go: text === '/commit' }]" @click="sendInput(id, text)">{{ label }}</button>
-    <button class="btn" @click="acknowledge(id)">Done, no action</button>
+    <button v-if="v.canCommit" class="btn go" @click="askClaude(id, name, '/commit')">Ask Claude to commit</button>
+    <button v-if="v.canMr" class="btn" @click="askClaude(id, name, '/mr-create')">Open MR</button>
+    <button class="btn" @click="askClaude(id, name, '/ship-check')">/ship-check</button>
+    <button class="btn" @click="acknowledge(id)">Dismiss</button>
   </div>
 </template>

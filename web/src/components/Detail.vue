@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { LABEL, ctxColor, ctxLevel, UNSORTED } from '../logic'
-import { selected, groups, focusTerminal, sendInput, showToast, ui } from '../store'
+import { LABEL, ctxColor, ctxLevel, UNSORTED, nowText, isTouch } from '../logic'
+import { selected, groups, focusTerminal, askClaude, showToast, ui } from '../store'
 import ResumeButton from './ResumeButton.vue'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
+const touch = isTouch()
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
 
 const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))
@@ -37,15 +38,17 @@ async function copyAttach() {
       <p v-if="s.state === 'starting'" class="why">Claude may be asking to trust this folder. Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ LABEL[s.state] }}</span></div>
       <p class="path">{{ world?.name }} · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</p>
-      <p v-if="s.task" class="now"><span class="lbl">Task</span>{{ s.task }}</p>
-      <p class="now"><span class="lbl">Now</span>{{ s.now }}</p>
+      <p class="path" :title="s.cwd">{{ s.cwd }}</p>
+      <p v-if="s.task" class="now"><span class="lbl">Task (first prompt)</span>{{ s.task }}</p>
+      <p v-if="s.lastPrompt && s.lastPrompt !== s.task" class="now"><span class="lbl">Last message you sent</span>{{ s.lastPrompt }}</p>
+      <p class="now"><span class="lbl">Now</span>{{ nowText(s.now) }}</p>
       <div v-if="s.context">
         <span class="lbl">Context {{ s.context.pct }}% full</span>
         <div class="meter"><i :style="{ width: Math.min(100, s.context.pct) + '%', background: ctxColor(s.context.pct) }" /></div>
         <template v-if="level === 2"><p class="why">Nearly full. Every reply now re-reads all of it. Save the plan and clear before the next task.</p>
-          <div class="actions"><button class="btn" @click="sendInput(s.id, '/handover-save')">/handover-save</button><button class="btn primary" @click="sendInput(s.id, '/clear')">/clear</button></div></template>
+          <div class="actions"><button class="btn" @click="askClaude(s.id, s.repoName, '/handover-save')">/handover-save</button><button class="btn primary" @click="askClaude(s.id, s.repoName, '/clear')">/clear</button></div></template>
         <template v-else-if="level === 1"><p class="why">Getting heavy. Check whether it is still worth keeping.</p>
-          <div class="actions"><button class="btn" @click="sendInput(s.id, '/checkpoint')">/checkpoint</button></div></template>
+          <div class="actions"><button class="btn" @click="askClaude(s.id, s.repoName, '/checkpoint')">/checkpoint</button></div></template>
       </div>
       <p v-for="c in s.conflicts ?? []" :key="c.withId" class="conflicts">⚠ Overlaps with {{ c.withId }}: {{ c.reason }}</p>
       <div v-if="s.helpers.length">
@@ -56,7 +59,7 @@ async function copyAttach() {
         <span class="lbl">Recent steps</span>
         <ol><li v-for="l in s.log.slice(-6)" :key="l.t + l.text">{{ l.text }}</li></ol>
       </div>
-      <div v-if="s.tmux" class="attach-cmd">
+      <div v-if="s.tmux && !touch" class="attach-cmd">
         <code>{{ attachText }}</code><button class="btn" @click="copyAttach">Copy</button>
         <span class="why">Or run <code>agent-worlds attach</code> to pick one, e.g. from Ghostty.</span>
       </div>
