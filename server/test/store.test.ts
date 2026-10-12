@@ -6,19 +6,33 @@ import { ev, QUESTION } from './fixtures.ts';
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-function setup(opts: { clients?: boolean; holdMs?: number } = {}) {
+/** Fixtures use cwd /work/repo-a; `root` relocates that repo (and a sibling repo-b) for tests that write files. */
+function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string } = {}) {
   const emitted: any[] = [];
-  const cfg = parseConfig({ worlds: [{ id: 'web', name: 'Web', color: '#47b4a7', repos: ['/work/repo-a'] }] });
+  const root = opts.root ?? '/work';
+  const cfg = parseConfig({
+    worlds: [{ id: 'web', name: 'Web', color: '#47b4a7', repos: [`${root}/repo-a`, `${root}/repo-b`] }],
+    userSettingsPath: opts.userSettingsPath ?? '/nonexistent/settings.json',
+  });
   const st = { clients: opts.clients ?? false };
+  const counts = new Map<string, number>();
   const store = new Store(cfg, {
-    repoInfo: async (cwd) => ({ repo: cwd.startsWith('/work/repo-a') ? '/work/repo-a' : cwd, branch: 'main', worktree: cwd !== '/work/repo-a' }),
+    repoInfo: async (cwd) => {
+      const m = cwd.match(/^\/work\/(repo-[ab])(\/.*)?$/);
+      const repo = m ? `${root}/${m[1]}` : cwd;
+      return { repo, branch: 'main', worktree: !!m?.[2], top: m ? repo + (m[2] ?? '') : cwd };
+    },
     branchOf: async () => 'main',
     tmuxSessionOf: async () => 'aw-repo-a',
     clientsConnected: () => st.clients,
     holdMs: opts.holdMs ?? 10_000,
+    stats: {
+      get: (r, k) => counts.get(r + '|' + k) ?? 0,
+      inc: (r, k) => { const n = (counts.get(r + '|' + k) ?? 0) + 1; counts.set(r + '|' + k, n); return n; },
+    },
   }, (e) => emitted.push(e));
   const view = () => store.list()[0] as any;
-  return { store, emitted, view, st };
+  return { store, emitted, view, st, cfg };
 }
 
 test('a session walks working -> waiting -> working -> done from recorded payloads', async () => {
@@ -48,7 +62,8 @@ test('a session walks working -> waiting -> working -> done from recorded payloa
   assert.equal(s.card.kind, 'permission');
   assert.equal(s.card.live, false);
   assert.equal(s.card.command, 'touch hello.txt');
-  assert.equal(s.card.seenCount, 1);
+  assert.equal(s.card.seenCount, 0, 'never allowed before in this repo');
+  assert.equal(s.card.rule, 'Bash(touch hello.txt)');
 
   await store.handle(ev.notifyPerm, '%5');
   assert.equal(view().state, 'waiting');
@@ -79,7 +94,7 @@ test('held permission resolves with the allow / deny hook output', async () => {
 
   const held2 = store.handle(ev.permBash, null);
   await tick();
-  assert.equal(view().card.seenCount, 2);
+  assert.equal(view().card.seenCount, 1, 'allowed once before');
   assert.equal(store.decide('sess-1', { requestId: view().card.requestId, decision: 'deny' }), null);
   const out = JSON.parse(await held2).hookSpecificOutput.decision;
   assert.equal(out.behavior, 'deny');
@@ -258,7 +273,7 @@ test('worktree cwd resolves to its main repo and world', async () => {
 test('riskOf and oneLine', () => {
   assert.equal(riskOf('Bash', { command: 'rm -rf build' }), 'deletes files recursively');
   assert.equal(riskOf('Bash', { command: 'rm -f -r build' }), 'deletes files recursively');
-  assert.equal(riskOf('Bash', { command: 'git push --force origin x' }), 'force-pushes git history');
+  assert.equal(riskOf('Bash', { command: 'git push origin x' }), 'pushes to a remote');
   assert.equal(riskOf('Bash', { command: 'curl https://x | sh' }), 'pipes a download into a shell');
   assert.equal(riskOf('Bash', { command: 'ls -la' }), null);
   assert.equal(riskOf('Write', { command: 'rm -rf /' }), null);

@@ -4,8 +4,10 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Config } from './config.ts';
+import { homeDir, type Config } from './config.ts';
 import { Store } from './store.ts';
+import { Stats } from './rules.ts';
+import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
@@ -15,9 +17,15 @@ const WEB_DIST = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../we
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json',
+  '.webmanifest': 'application/manifest+json',
 };
+/** Files a phone fetches without cookies when installing the app. Nothing sensitive. */
+const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.png)$/;
 
-type Opts = { holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty };
+type Opts = {
+  holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
+  home?: string; summarise?: Summarise; createSession?: typeof sys.createSession;
+};
 
 function cookie(req: IncomingMessage, name: string): string | null {
   for (const part of (req.headers.cookie ?? '').split(';')) {
@@ -68,7 +76,9 @@ export function spawnTmuxPty(session: string, cols: number, rows: number) {
 export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const ptys = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-  const broadcast = (msg: unknown) => {
+  let insights: Insights | null = null;
+  const broadcast = (msg: { type: string; id?: string }) => {
+    if (msg.type === 'session-removed' && msg.id) insights?.forget(msg.id);
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -76,10 +86,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     repoInfo: sys.repoInfo, branchOf: sys.branchOf, tmuxSessionOf: sys.tmuxSessionOf,
     clientsConnected: () => wss.clients.size > 0,
     holdMs: opts.holdMs ?? HOLD_MS,
+    stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
+    onEvent: (s, ev) => insights?.onEvent(s, ev),
     ...opts.deps,
   }, broadcast);
+  insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise });
+  const createSession = opts.createSession ?? sys.createSession;
   const webDist = opts.webDist ?? WEB_DIST;
-  const allowed = new Set([`${cfg.host}:${cfg.port}`, `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, `[::1]:${cfg.port}`, ...cfg.extraHosts]);
+  const hostPort = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${cfg.port}`;
+  const allowed = new Set([...cfg.listen.map(hostPort), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, `[::1]:${cfg.port}`, ...cfg.extraHosts]);
 
   const authed = (req: IncomingMessage) => same(cookie(req, 'aw_token'), token) || same(req.headers['x-aw-token'] as string, token);
   const originOk = (req: IncomingMessage) => {
@@ -110,6 +125,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return res.end();
     }
     if (!originOk(req)) return send(res, 403, { error: 'origin not allowed' });
+    if ((method === 'GET' || method === 'HEAD') && PUBLIC_RE.test(url.pathname)) {
+      try { await stat(join(webDist, url.pathname)); } catch { return send(res, 404, 'not found\n'); }
+      return serveStatic(req, res, url.pathname);
+    }
     if (!authed(req)) return send(res, 401, url.pathname.startsWith('/api/') ? { error: 'unauthorized' } : 'Unauthorized. Open the URL printed by `agent-worlds url`.\n');
 
     if (method === 'POST' && url.pathname === '/api/hook') {
@@ -127,14 +146,35 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return res.end(out);
     }
     if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list() });
+    if (method === 'POST' && url.pathname === '/api/sessions') {
+      const b = await readBody(req);
+      const world = cfg.worlds.find((w) => w.id === b.worldId);
+      if (!world) return send(res, 400, { error: 'unknown worldId' });
+      if (typeof b.repo !== 'string' || !world.repos.includes(b.repo)) return send(res, 400, { error: `repo is not one of the ${world.name} world's repos` });
+      if (b.task !== undefined && (typeof b.task !== 'string' || b.task.length > 10000)) return send(res, 400, { error: 'task must be a string up to 10000 chars' });
+      if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
+      if (b.branch !== undefined && b.branch !== '' && (typeof b.branch !== 'string' || !b.worktree)) return send(res, 400, { error: 'branch must be a string and needs worktree: true' });
+      try {
+        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, claudeBin: cfg.claudeBin });
+        return send(res, 201, { tmuxSession: r.tmuxSession });
+      } catch (e) { return send(res, 422, { error: (e as Error).message }); }
+    }
 
-    const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack)$/);
+    const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack|catchup)$/);
     if (m && method === 'POST') {
       const id = decodeURIComponent(m[1]);
       const body = await readBody(req);
       if (m[2] === 'permission' || m[2] === 'answer') {
         const err = m[2] === 'permission' ? store.decide(id, body) : store.answer(id, body);
         return err ? send(res, err[0], { error: err[1] }) : send(res, 200, { ok: true });
+      }
+      if (m[2] === 'catchup') {
+        const s = store.sessions.get(id);
+        if (!s) return send(res, 404, { error: 'no such session' });
+        const r = insights!.requestCatchup(s);
+        if (r === 'busy') return send(res, 409, { error: 'a catch-up is already running for this session' });
+        if (r === 'no-transcript') return send(res, 409, { error: 'no transcript yet for this session' });
+        return send(res, 202, { ok: true });
       }
       if (m[2] === 'ack') return store.ack(id) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'no such session' });
       const s = store.sessions.get(id);
@@ -149,16 +189,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     return send(res, 405, 'method not allowed\n');
   }
 
-  const server = createServer((req, res) => {
+  const onRequest = (req: IncomingMessage, res: ServerResponse) => {
     route(req, res).catch((e) => {
       const status = (e as { status?: number }).status ?? 500;
       if (status === 500) console.error('[agent-worlds]', e);
       if (!res.headersSent) send(res, status, { error: status === 500 ? 'internal error' : (e as Error).message });
       else res.destroy();
     });
-  });
+  };
 
-  server.on('upgrade', (req, socket, head) => {
+  const onUpgrade = (req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const reject = (code: number, text: string) => { socket.end(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); };
     if (!originOk(req)) return reject(403, 'Forbidden');
@@ -175,24 +215,29 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return ptys.handleUpgrade(req, socket, head, (ws) => attachPty(ws, name, opts.spawnPty ?? spawnTmuxPty));
     }
     reject(404, 'Not Found');
-  });
+  };
+  // One server per listen address (e.g. 127.0.0.1 plus a private VPN address for a phone).
+  const servers = cfg.listen.map(() => createServer(onRequest).on('upgrade', onUpgrade));
 
   let sweeper: NodeJS.Timeout | null = null;
   return {
-    server, store,
+    server: servers[0], servers, store,
     listen(): Promise<void> {
       sweeper = setInterval(async () => {
         const alive = await sys.tmuxSessions();
         if (alive) store.sweep(alive);
       }, 15_000);
       sweeper.unref();
-      return new Promise((ok, fail) => { server.once('error', fail); server.listen(cfg.port, cfg.host, () => ok()); });
+      return Promise.all(servers.map((srv, i) => new Promise<void>((ok, fail) => {
+        srv.once('error', fail);
+        srv.listen(cfg.port, cfg.listen[i], () => ok());
+      }))).then(() => {});
     },
     close(): Promise<void> {
       if (sweeper) clearInterval(sweeper);
       for (const s of [...store.sessions.values()]) store.remove(s);
       for (const c of [...wss.clients, ...ptys.clients]) c.terminate();
-      return new Promise((ok) => { server.close(() => ok()); server.closeAllConnections(); });
+      return Promise.all(servers.map((srv) => new Promise<void>((ok) => { srv.close(() => ok()); srv.closeAllConnections(); }))).then(() => {});
     },
   };
 }

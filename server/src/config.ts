@@ -4,9 +4,15 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 export type World = { id: string; name: string; color: string; repos: string[] };
-export type Config = { port: number; host: string; extraHosts: string[]; worlds: World[] };
+export type Config = {
+  port: number; host: string; listen: string[]; extraHosts: string[]; worlds: World[];
+  userSettingsPath: string; claudeBin: string;
+};
 
-export const DEFAULTS: Config = { port: 4317, host: '127.0.0.1', extraHosts: [], worlds: [] };
+export const DEFAULTS: Config = {
+  port: 4317, host: '127.0.0.1', listen: ['127.0.0.1'], extraHosts: [], worlds: [],
+  userSettingsPath: join(homedir(), '.claude', 'settings.json'), claudeBin: 'claude',
+};
 
 export function homeDir(): string {
   return process.env.AGENT_WORLDS_HOME || join(homedir(), '.config', 'agent-worlds');
@@ -21,14 +27,25 @@ export function parseConfig(raw: unknown): Config {
   if (!raw || typeof raw !== 'object') throw new Error('config must be a JSON object');
   const r = raw as Record<string, unknown>;
   const cfg: Config = { ...DEFAULTS, worlds: [], extraHosts: [] };
+  const str = (k: string) => {
+    if (r[k] === undefined) return undefined;
+    if (typeof r[k] !== 'string' || !r[k]) throw new Error(`${k} must be a non-empty string`);
+    return r[k] as string;
+  };
   if (r.port !== undefined) {
     if (!Number.isInteger(r.port) || (r.port as number) < 1 || (r.port as number) > 65535) throw new Error('port must be an integer 1-65535');
     cfg.port = r.port as number;
   }
-  if (r.host !== undefined) {
-    if (typeof r.host !== 'string' || !r.host) throw new Error('host must be a string');
-    cfg.host = r.host;
+  cfg.host = str('host') ?? cfg.host;
+  cfg.listen = [cfg.host];
+  if (r.listen !== undefined) {
+    if (!Array.isArray(r.listen) || !r.listen.length || r.listen.some((h) => typeof h !== 'string' || !h)) throw new Error('listen must be a non-empty array of addresses');
+    cfg.listen = r.listen as string[];
+    cfg.host = cfg.listen[0];
   }
+  const usp = str('userSettingsPath');
+  if (usp) cfg.userSettingsPath = resolve(usp.replace(/^~(?=\/)/, homedir()));
+  cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
   if (r.extraHosts !== undefined) {
     if (!Array.isArray(r.extraHosts) || r.extraHosts.some((h) => typeof h !== 'string')) throw new Error('extraHosts must be an array of strings');
     cfg.extraHosts = r.extraHosts as string[];

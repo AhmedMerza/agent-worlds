@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import type { Config } from './config.ts';
 import type { RepoInfo } from './sys.ts';
+import type { Review } from './review.ts';
+import { TEST_RE, testLine } from './review.ts';
+import { riskOf, ruleFor, ruleText, addAllowRule, type Rule } from './rules.ts';
+import { computeConflicts, type Conflict } from './conflicts.ts';
+
+export { riskOf };
 
 type State = 'working' | 'waiting' | 'done' | 'error' | 'idle';
 type Helper = { id: string; task: string; state: 'working' | 'done'; startedAt: number };
 type Question = { question: string; header: string; multiSelect: boolean; options: { label: string; description: string }[] };
 type Card =
   | null
-  | { kind: 'done'; summary: string | null; review: null }
+  | { kind: 'done'; summary: string | null; review: Review | null }
   | { kind: 'error'; summary: string };
 
 type Pending = {
@@ -17,23 +23,36 @@ type Pending = {
   tool: string;
   input: Record<string, unknown>;
   key: string;
+  rule: Rule;
+  risky: string | null;
   seenCount: number;
   live: boolean;
   resolve: ((body: string) => void) | null;
   timer: NodeJS.Timeout | null;
 };
 
-type Session = {
+export type Session = {
   id: string; worldId: string | null; repo: string; repoName: string; cwd: string;
   branch: string | null; worktree: boolean; tmux: { session: string | null; pane: string } | null;
   state: State; waitingSince: number | null; task: string | null; now: string;
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];
   card: Card;
+  catchup: { asked: string; did: string; needs: string } | null;
+  catchupAt: number | null;
+  catchupRunning: boolean;
+  context: { used: number; limit: number; pct: number } | null;
+  conflicts: Conflict[];
   startedAt: number; updatedAt: number;
+  // internal, never sent to clients
   pending: Pending[];
-  seen: Map<string, number>;
+  top: string;
+  model: string | null;
+  transcriptPath: string | null;
+  tests: Review['tests'];
+  testing: Set<string>;
 };
+const INTERNAL = ['pending', 'top', 'model', 'transcriptPath', 'tests', 'testing'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -41,6 +60,9 @@ export type Deps = {
   tmuxSessionOf: (pane: string) => Promise<string | null>;
   clientsConnected: () => boolean;
   holdMs: number;
+  stats: { get(repo: string, rule: string): number; inc(repo: string, rule: string): number };
+  /** Called after every handled event, for derived data (catch-up, context, review). */
+  onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
 };
 
@@ -55,23 +77,6 @@ export const oneLine = (s: unknown, max = 160): string | null => {
   if (!line) return null;
   return line.length > max ? line.slice(0, max - 1) + '…' : line;
 };
-
-const RISKS: [RegExp, string][] = [
-  [/\brm\s+(-{1,2}[\w-]+\s+)*(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(\s|$)/, 'deletes files recursively'],
-  [/\bgit\s+push\b[^;&|]*(\s--force\b|\s-f\b|\s--force-with-lease\b)/, 'force-pushes git history'],
-  [/\bgit\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+--\s|restore\b)/, 'discards local changes'],
-  [/\bsudo\b/, 'runs as root'],
-  [/\b(drop|truncate)\s+(table|database|schema)\b/i, 'drops data'],
-  [/\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z)?sh\b/, 'pipes a download into a shell'],
-  [/\b(mkfs|dd\s+if=)|>\s*\/dev\/sd/, 'writes to a disk device'],
-  [/\bchmod\s+(-R\s+)?777\b/, 'makes files world-writable'],
-];
-
-export function riskOf(tool: string, input: Record<string, unknown>): string | null {
-  if (tool !== 'Bash' || typeof input.command !== 'string') return null;
-  for (const [re, why] of RISKS) if (re.test(input.command)) return why;
-  return null;
-}
 
 function describe(tool: string, input: Record<string, unknown>): string {
   const arg = input.command ?? input.description ?? input.file_path ?? input.pattern ?? input.url ?? input.query ?? input.prompt;
@@ -118,27 +123,31 @@ export class Store {
   }
 
   view(s: Session) {
-    const { pending, seen, ...pub } = s;
-    const p = pending[0];
+    const pub: Record<string, unknown> = { ...s };
+    for (const k of INTERNAL) delete pub[k];
+    const p = s.pending[0];
     let card: unknown = s.card;
     if (p && p.kind === 'permission') {
-      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), input: p.input, risky: riskOf(p.tool, p.input), seenCount: p.seenCount, live: p.live };
+      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, seenCount: p.seenCount, live: p.live };
     } else if (p) {
       card = { kind: 'question', requestId: p.requestId, questions: questionsOf(p.input), live: p.live };
     }
-    return {
-      ...pub,
-      helpers: s.helpers.map(({ id, task, state, startedAt }) => ({ id, task, state, startedAt })),
-      card,
-      catchup: null, context: null, conflicts: [],
-    };
+    return { ...pub, helpers: s.helpers.map(({ id, task, state, startedAt }) => ({ id, task, state, startedAt })), card };
   }
 
   list() { return [...this.sessions.values()].map((s) => this.view(s)); }
 
-  private push(s: Session) {
+  /** Broadcast a changed session, plus any other session whose conflicts changed with it. */
+  push(s: Session) {
     s.updatedAt = this.now();
-    this.emit({ type: 'session', session: this.view(s) });
+    const changed = new Set<Session>([s]);
+    const all = [...this.sessions.values()];
+    const next = computeConflicts(all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0 })));
+    for (const x of all) {
+      const c = next.get(x.id) ?? [];
+      if (JSON.stringify(c) !== JSON.stringify(x.conflicts)) { x.conflicts = c; changed.add(x); }
+    }
+    for (const x of changed) if (this.sessions.has(x.id)) this.emit({ type: 'session', session: this.view(x) });
   }
 
   private log(s: Session, text: string) {
@@ -155,7 +164,9 @@ export class Store {
       id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null,
       state: 'idle', waitingSince: null, task: null, now: 'Started',
-      log: [], helpers: [], card: null, startedAt: t, updatedAt: t, pending: [], seen: new Map(),
+      log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, context: null, conflicts: [],
+      startedAt: t, updatedAt: t,
+      pending: [], top: info.top ?? cwd, model: null, transcriptPath: null, tests: null, testing: new Set(),
     };
     this.sessions.set(id, s);
     return s;
@@ -198,6 +209,7 @@ export class Store {
         if (s.tmux?.pane === pane && name) { s.tmux.session = name; if (this.sessions.has(s.id)) this.push(s); }
       });
     }
+    if (typeof p.transcript_path === 'string' && p.transcript_path.startsWith('/')) s.transcriptPath = p.transcript_path;
     const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
     const input = (p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {}) as Record<string, unknown>;
     let reply: Promise<string> | string = '';
@@ -205,6 +217,7 @@ export class Store {
     switch (ev) {
       case 'SessionStart':
         s.now = 'Started';
+        if (typeof p.model === 'string') s.model = p.model;
         break;
       case 'UserPromptSubmit': {
         this.settleAll(s);
@@ -220,6 +233,7 @@ export class Store {
         this.log(s, s.now);
         s.card = null;
         this.afterPending(s, 'working');
+        if (tool === 'Bash' && typeof input.command === 'string' && TEST_RE.test(input.command) && typeof p.tool_use_id === 'string') s.testing.add(p.tool_use_id);
         if (SUBAGENT_TOOLS.has(tool)) {
           s.helpers.push({
             id: typeof p.tool_use_id === 'string' ? p.tool_use_id : randomUUID(),
@@ -236,6 +250,12 @@ export class Store {
         const match = s.pending.find((x) => x.key === key) ?? s.pending.find((x) => x.tool === tool);
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, 'working');
+        if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
+        if (tool === 'Bash' && typeof input.command === 'string' && TEST_RE.test(input.command)) {
+          const r = (p.tool_response ?? {}) as Record<string, unknown>;
+          const out = [r.stdout, r.stderr, p.error].filter((x) => typeof x === 'string').join('\n');
+          s.tests = { command: input.command, ok: ev === 'PostToolUse' && r.interrupted !== true, line: testLine(out) };
+        }
         if (SUBAGENT_TOOLS.has(tool)) {
           const h = s.helpers.find((x) => x.id === p.tool_use_id);
           if (h && !h.bg) h.state = 'done';
@@ -243,12 +263,12 @@ export class Store {
         break;
       }
       case 'PermissionRequest': {
-        const key = inputKey(tool, input);
-        const seenCount = (s.seen.get(key) ?? 0) + 1;
-        s.seen.set(key, seenCount);
+        const rule = ruleFor(tool, input, p.permission_suggestions);
         const pend: Pending = {
           requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
-          tool, input, key, seenCount, live: this.deps.clientsConnected(), resolve: null, timer: null,
+          tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
+          seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
+          live: this.deps.clientsConnected(), resolve: null, timer: null,
         };
         s.pending.push(pend);
         s.state = 'waiting';
@@ -285,12 +305,14 @@ export class Store {
       case 'Stop':
         this.settleAll(s);
         s.state = 'done'; s.waitingSince = null; s.now = 'Done';
+        s.testing.clear();
         s.card = { kind: 'done', summary: oneLine(p.last_assistant_message), review: null };
         break;
       case 'StopFailure': {
         this.settleAll(s);
         const msg = oneLine(p.error ?? p.error_message ?? p.message ?? p.last_assistant_message) ?? 'Stopped with an error';
         s.state = 'error'; s.waitingSince = null; s.now = msg;
+        s.testing.clear();
         s.card = { kind: 'error', summary: msg };
         this.log(s, `Error: ${msg}`);
         break;
@@ -310,6 +332,7 @@ export class Store {
         return '';
     }
     this.push(s);
+    try { this.deps.onEvent?.(s, ev, p); } catch (e) { console.error('[agent-worlds] onEvent failed', e); }
     return reply;
   }
 
@@ -317,6 +340,9 @@ export class Store {
     for (const p of [...s.pending]) this.settle(s, p, '{}');
     this.sessions.delete(s.id);
     this.emit({ type: 'session-removed', id: s.id });
+    // conflicts the removed session took part in go away
+    const other = this.sessions.values().next().value;
+    if (other) this.push(other);
   }
 
   private live(id: string, requestId: unknown): { s?: Session; p?: Pending; err?: [number, string] } {
@@ -328,16 +354,41 @@ export class Store {
     return { s, p };
   }
 
+  /** Settings files an "always allow" at this scope writes to. */
+  private settingsFiles(s: Session, scope: string): string[] | [number, string] {
+    if (scope === 'repo') return [join(s.repo, '.claude', 'settings.local.json')];
+    if (scope === 'world') {
+      const w = this.cfg.worlds.find((x) => x.id === s.worldId);
+      if (!w) return [400, 'this session is not in a world'];
+      return w.repos.map((r) => join(r, '.claude', 'settings.local.json'));
+    }
+    return [this.cfg.userSettingsPath];
+  }
+
   decide(id: string, body: Record<string, unknown>): [number, string] | null {
     if (body.decision !== 'allow' && body.decision !== 'deny') return [400, "decision must be 'allow' or 'deny'"];
-    if (body.scope !== undefined && !['once', 'repo', 'world', 'all'].includes(body.scope as string)) return [400, 'bad scope'];
+    const scope = body.scope ?? 'once';
+    if (!['once', 'repo', 'world', 'all'].includes(scope as string)) return [400, 'bad scope'];
     const { s, p, err } = this.live(id, body.requestId);
     if (err) return err;
     if (p!.kind !== 'permission') return [409, 'request is a question; use /answer'];
-    this.settle(s!, p!, hookOut(body.decision === 'allow'
-      ? { behavior: 'allow' }
-      : { behavior: 'deny', message: 'Denied by the user from Agent Worlds.' }));
-    this.log(s!, body.decision === 'allow' ? 'Allowed' : 'Denied');
+    if (body.decision === 'deny') {
+      this.settle(s!, p!, hookOut({ behavior: 'deny', message: 'Denied by the user from Agent Worlds.' }));
+      this.log(s!, 'Denied');
+    } else {
+      const rule = ruleText(p!.rule);
+      const decision: Record<string, unknown> = { behavior: 'allow' };
+      if (scope !== 'once') {
+        if (scope === 'all' && p!.risky) return [400, `not allowed everywhere: this ${p!.risky}`];
+        const files = this.settingsFiles(s!, scope as string);
+        if (typeof files[0] === 'number') return files as [number, string];
+        try { for (const f of files as string[]) addAllowRule(f, rule); } catch (e) { return [500, (e as Error).message]; }
+        decision.updatedPermissions = [{ type: 'addRules', rules: [p!.rule], behavior: 'allow', destination: 'session' }];
+      }
+      this.deps.stats.inc(s!.repo, rule);
+      this.settle(s!, p!, hookOut(decision));
+      this.log(s!, scope === 'once' ? 'Allowed' : `Always allowed (${scope}): ${rule}`);
+    }
     this.afterPending(s!, 'working');
     this.push(s!);
     return null;

@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
-import { dirname, basename } from 'node:path';
+import { dirname, basename, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
-export type RepoInfo = { repo: string; branch: string | null; worktree: boolean };
+export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string };
 
 function run(cmd: string, args: string[], timeout = 3000): Promise<string | null> {
   return new Promise((done) => {
@@ -12,10 +13,10 @@ function run(cmd: string, args: string[], timeout = 3000): Promise<string | null
 /** Main repo path (worktrees resolved to the repo they belong to), branch, and whether cwd is a linked worktree. */
 export async function repoInfo(cwd: string): Promise<RepoInfo> {
   const out = await run('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir']);
-  if (!out) return { repo: cwd, branch: null, worktree: false };
+  if (!out) return { repo: cwd, branch: null, worktree: false, top: cwd };
   const [top, common] = out.trim().split('\n');
   const repo = basename(common) === '.git' ? dirname(common) : common;
-  return { repo, branch: await branchOf(cwd), worktree: top !== repo };
+  return { repo, branch: await branchOf(cwd), worktree: top !== repo, top };
 }
 
 export async function branchOf(cwd: string): Promise<string | null> {
@@ -47,4 +48,35 @@ export async function typeInto(pane: string, text: string): Promise<boolean> {
   if (!PANE_RE.test(pane)) return false;
   if (text && (await run('tmux', ['send-keys', '-t', pane, '-l', '--', text])) === null) return false;
   return (await run('tmux', ['send-keys', '-t', pane, 'Enter'])) !== null;
+}
+
+const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '') || 'task';
+
+/**
+ * Start `claude` in a new detached tmux session, optionally in a fresh worktree
+ * (<repo>-worktrees/<branch>, new branch). Everything goes through argv; nothing touches a shell.
+ */
+export async function createSession(opts: { repo: string; task: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null }> {
+  const id = randomBytes(2).toString('hex');
+  let dir = opts.repo;
+  let branch: string | null = null;
+  if (opts.worktree) {
+    branch = opts.branch || `aw/${slug(opts.task || 'task', 32)}-${id}`;
+    if ((await run('git', ['check-ref-format', '--branch', branch])) === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
+    dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));
+    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, '--', dir]);
+    if (err !== null) throw new Error(`git worktree add failed: ${err}`);
+  }
+  const name = `${opts.prefix ?? 'aw-'}${slug(basename(opts.repo))}-${id}`;
+  const task = opts.task.trim();
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, opts.claudeBin ?? 'claude', ...(task ? ['--', task] : [])]);
+  if (err !== null) throw new Error(`tmux failed: ${err}`);
+  return { tmuxSession: name, dir, branch };
+}
+
+/** null on success, else the trimmed stderr. */
+function runErr(cmd: string, args: string[]): Promise<string | null> {
+  return new Promise((done) => {
+    execFile(cmd, args, { timeout: 30_000 }, (err, _o, stderr) => done(err ? (String(stderr).trim() || err.message).slice(0, 500) : null));
+  });
 }

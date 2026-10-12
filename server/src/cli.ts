@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
-import { basename, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type Config } from './config.ts';
 import { startServer } from './server.ts';
+import { createSession } from './sys.ts';
 
 const HOOK = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-hook');
 
@@ -69,13 +68,10 @@ async function main(argv: string[]) {
       if (!cfg.worlds.some((w) => w.id === worldId)) die(`unknown world "${worldId}" (known: ${cfg.worlds.map((w) => w.id).join(', ') || 'none'})`);
       const dir = resolve(repoPath);
       if (!existsSync(dir) || !statSync(dir).isDirectory()) die(`not a directory: ${dir}`);
-      const name = `aw-${basename(dir).toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 24)}-${randomBytes(2).toString('hex')}`;
-      const prompt = task.join(' ').trim();
-      const args = ['new-session', '-d', '-s', name, '-c', dir, 'claude', ...(prompt ? [prompt] : [])];
-      execFile('tmux', args, (err, _o, stderr) => {
-        if (err) die(`tmux failed: ${String(stderr).trim() || err.message}`);
-        console.log(name);
-      });
+      try {
+        const r = await createSession({ repo: dir, task: task.join(' '), worktree: false, claudeBin: cfg.claudeBin });
+        console.log(r.tmuxSession);
+      } catch (e) { die((e as Error).message); }
       return;
     }
     case 'init': {
