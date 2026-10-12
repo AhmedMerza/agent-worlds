@@ -64,8 +64,46 @@ session). Type to it directly; the catch-up box above it tells you where it stan
 
 ![Selecting a session, asking for a catch-up, then typing a slash command in the live terminal](docs/media/terminal.gif)
 
-Sessions that are not inside tmux still show up and their cards still work, but the terminal
-is view-only for them.
+Sessions that are not inside tmux still show up and their cards still work, but they have no
+live terminal (see [Sessions started outside tmux](#sessions-started-outside-tmux)).
+
+### Existing sessions and Resume
+
+Agent Worlds also knows about Claude sessions you started before it, or outside it.
+
+- **Recent sessions** (header button or `R`) lists sessions from `~/.claude/projects`, newest
+  first, with the repo, your last prompt and how long ago. Search narrows the list.
+- **Resume here** runs `claude --resume <id>` in a new tmux session, in the session's original
+  folder, with its full conversation. If that session still looks open somewhere else, you are
+  asked first; **Resume anyway** goes ahead.
+- A Claude running in a plain terminal appears as a faded **ghost** with a dashed outline and
+  the label "plain terminal", in its world's lounge (or Unsorted). Select it and quit that
+  terminal's Claude, then **Move into Agent Worlds** to take it over.
+- Process detection reads `/proc`, so it is **Linux only**. Elsewhere there are no ghosts, but
+  Recent sessions and Resume work.
+
+![The Recent sessions dialog](docs/media/recent-sessions.png)
+
+### Terminal and browser together
+
+Every session is a tmux session named `aw-<repo>-<id>`, so you can use it from a terminal as
+well as the browser, at the same time.
+
+```sh
+bin/agent-worlds ls        # list Agent Worlds tmux sessions
+bin/agent-worlds attach    # pick one and attach (asks which when there is more than one)
+```
+
+`attach [name]` attaches the current terminal, and inside tmux it switches your client instead
+of nesting. This is the way to use a terminal such as Ghostty. The panel also shows the plain
+`tmux attach -t <name>` command with a copy button. The window size follows whichever client
+typed last.
+
+### Sessions started outside tmux
+
+A session you started by hand in a plain terminal (with the hooks installed) still shows up: its
+state, rooms and inbox cards all work. It has no live terminal in the browser, only a note that
+it is view-only; answer its cards from the inbox, or in the terminal it runs in.
 
 ### Start sessions from the app
 
@@ -104,11 +142,13 @@ From the repository folder:
 (cd server && npm install)
 (cd web && npm install && npm run build)
 bin/agent-worlds start    # keep this running, e.g. in its own tmux window
-bin/agent-worlds url      # in another shell: prints http://127.0.0.1:4317/?token=...
+bin/agent-worlds open     # in another shell: opens the app in your browser, already logged in
 ```
 
-Open the printed URL (it stores the token in a cookie and redirects to the app), then press
-**`W`** to create your first world and add its repos. Put `bin/agent-worlds` on your PATH if you
+`open` launches your browser with the login link (it uses `xdg-open`, or `open` on macOS) and
+prints the link if it finds no opener. `bin/agent-worlds url` just prints it
+(`http://127.0.0.1:4317/?token=...`). The link stores the token in a cookie and redirects to the
+app. Then press **`W`** to create your first world and add its repos. Put `bin/agent-worlds` on your PATH if you
 like: `ln -s "$PWD/bin/agent-worlds" ~/.local/bin/`.
 
 Click **+ New session** in a room, or from a shell:
@@ -176,16 +216,19 @@ flowchart LR
 
 ## Keyboard shortcuts
 
-Press `?` in the app for this list. Shortcuts pause while you type in the terminal or a field.
+Press `?` in the app for this list. Shortcuts pause while you type in the terminal or a field; the terminal header says
+"Shortcuts paused" while it has focus.
 
 | Key | Action |
 |---|---|
 | `Space` | jump to the next session that needs you |
 | `1` - `9` | select the session with that number (the small number on its chip) |
 | `N` | new session in the selected session's world |
+| `R` | open Recent sessions (resume an earlier session) |
 | `C` | catch me up on the selected session |
 | `W` | open the Worlds panel |
 | `M` | mute or unmute the alert sound |
+| `Ctrl` + `]` | leave the terminal and get the shortcuts back (`Esc` still goes to Claude) |
 | `?` | show the shortcuts |
 | `Esc` | close the dialog or panel |
 
@@ -222,11 +265,14 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
   is a full shell as your user, and allowing a permission runs commands on your machine. If you
   add an address to `listen` for phone use, make it one only you can reach (a private VPN such
   as Tailscale), never a LAN or public address. Anyone holding the token on that network has your shell.
+- **Why a token on localhost?** Anyone else logged in to the same machine can reach `127.0.0.1`,
+  and the terminal is a shell as you.
 - Every HTTP route and both websockets require the token (cookie `aw_token` or header
-  `X-AW-Token`). The token is in `~/.config/agent-worlds/token` (mode 0600); delete it and
-  restart to rotate. The PWA manifest and icons are the only files served without it.
-- Requests that carry an `Origin` header must come from the server's own host:port or an
-  `extraHosts` entry.
+  `X-AW-Token`). The login cookie lasts a year, so you only enter the token again after clearing
+  cookies or changing it. The token is in `~/.config/agent-worlds/token` (mode 0600); delete it
+  and restart to rotate. The PWA manifest and icons are the only files served without it.
+- Requests that carry an `Origin` header, and the `Host` of every request, must be the server's
+  own host:port or an `extraHosts` entry (otherwise 421 "unknown host").
 - Session state is in memory only. After a restart, a session reappears on its next hook event.
 
 ## Troubleshooting
@@ -239,10 +285,21 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
 - **A card says "Answer this in the terminal".** That request is no longer held by the server
   (no browser was open when it arrived, or the hold timed out). Click **Open its terminal** and
   answer Claude's own prompt.
-- **A new session sits at a "trust this folder" prompt.** That is Claude Code asking about an
-  unfamiliar folder; answer it in the terminal panel once.
+- **A new session seems stuck.** Claude may be asking to trust the folder. The session shows as
+  "starting" until its first event; answer the question in its terminal panel once.
 - **The terminal says the session is view-only.** The session is not running inside tmux. Cards
   still work; start it in tmux (or from the app) for a live terminal.
+- **No permission cards appear.** Your Claude default permission mode is `auto` or bypass, so
+  Claude never asks. `acceptEdits` mode also gives no cards for file edits. Agent Worlds only
+  sees what Claude asks.
+- **"unknown host" (421).** The server only answers its own address. Add the `host:port` you
+  are using (for example a tunnel under another name) to `extraHosts` in the config and
+  restart.
+- **An old link says it no longer works.** The token changed. Run `bin/agent-worlds open` on the
+  machine running the server for a fresh link.
+- **"Always allow: In <repo>" and worktrees.** The rule is written to the main repo's
+  `.claude/settings.local.json`. Claude Code 2.1.211 or newer applies it in that repo's
+  worktrees too.
 - **My phone does not offer "Install app".** Browsers only offer installation over https or on
   localhost, so a plain `http://100.x.y.z:4317` address works in the browser but will not
   install. Put the server behind an https proxy on your private network (for example
