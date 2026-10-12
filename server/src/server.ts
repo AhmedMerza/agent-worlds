@@ -9,6 +9,7 @@ import { Store } from './store.ts';
 import { Stats } from './rules.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
+import { Worlds } from './worlds.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -24,7 +25,7 @@ const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.
 
 type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
-  home?: string; summarise?: Summarise; createSession?: typeof sys.createSession;
+  home?: string; summarise?: Summarise; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -77,7 +78,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const ptys = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   let insights: Insights | null = null;
-  const broadcast = (msg: { type: string; id?: string }) => {
+  const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
     if (msg.type === 'session-removed' && msg.id) insights?.forget(msg.id);
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
@@ -92,6 +93,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
   const createSession = opts.createSession ?? sys.createSession;
+  const worlds = new Worlds(cfg, join(opts.home ?? homeDir(), 'config.json'), opts.resolveRepo);
+  const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
   const hostPort = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${cfg.port}`;
   const allowed = new Set([...cfg.listen.map(hostPort), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, `[::1]:${cfg.port}`, ...cfg.extraHosts]);
@@ -146,6 +149,23 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return res.end(out);
     }
     if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list() });
+    if (url.pathname === '/api/fs' && method === 'GET') {
+      const [code, body] = worlds.list(url.searchParams.get('path'));
+      return send(res, code, body);
+    }
+    if (url.pathname === '/api/worlds' || url.pathname.startsWith('/api/worlds/')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/worlds/'.length));
+      const body = method === 'POST' || method === 'PATCH' ? await readBody(req) : {};
+      let r: [number, Record<string, unknown>] | null = null;
+      if (url.pathname === '/api/worlds' && method === 'GET') r = [200, { worlds: cfg.worlds }];
+      else if (url.pathname === '/api/worlds' && method === 'POST') r = await worlds.create(body);
+      else if (url.pathname === '/api/worlds/order' && method === 'POST') r = await worlds.order(body);
+      else if (id && method === 'PATCH') r = await worlds.update(id, body);
+      else if (id && method === 'DELETE') r = await worlds.remove(id);
+      if (!r) return send(res, 405, { error: 'method not allowed' });
+      if (r[0] < 300 && method !== 'GET') worldsChanged();
+      return send(res, r[0], r[1]);
+    }
     if (method === 'POST' && url.pathname === '/api/sessions') {
       const b = await readBody(req);
       const world = cfg.worlds.find((w) => w.id === b.worldId);

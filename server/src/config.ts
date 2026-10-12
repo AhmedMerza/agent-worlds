@@ -109,9 +109,5 @@ export const EXAMPLE_CONFIG = {
   port: 4317,
   host: '127.0.0.1',
   extraHosts: [],
-  worlds: [
-    { id: 'web', name: 'Web', color: '#47b4a7', repos: ['/path/to/repo-a', '/path/to/repo-b'] },
-    { id: 'mobile', name: 'Mobile', color: '#e0a03a', repos: ['/path/to/repo-c'] },
-    { id: 'tools', name: 'Tools', color: '#8a7bd8', repos: ['/path/to/repo-d'] },
-  ],
+  worlds: [],
 };

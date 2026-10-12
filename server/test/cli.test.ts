@@ -97,7 +97,7 @@ test('cli: init writes a generic example config, url prints the tokened URL', as
   assert.ok(existsSync(join(home, 'config.json')));
   assert.equal((await cli(['init'])).code, 1, 'refuses to overwrite');
   const cfg = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
-  assert.deepEqual(cfg.worlds.map((w: any) => w.name), ['Web', 'Mobile', 'Tools']);
+  assert.deepEqual(cfg.worlds, [], 'no example worlds: they are made in the GUI');
   const url = (await cli(['url'])).out.trim();
   assert.match(url, /^http:\/\/127\.0\.0\.1:4317\/\?token=[0-9a-f]{64}$/);
   const hooks = JSON.parse((await cli(['hooks', '--print'])).out);

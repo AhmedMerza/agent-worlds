@@ -22,23 +22,27 @@ cd ../web && npm install && npm run build
 
 Optionally put `bin/agent-worlds` on your PATH, e.g. `ln -s "$PWD/bin/agent-worlds" ~/.local/bin/`.
 
-## Configure worlds
+## Worlds
+
+Worlds are managed in the app: press `W` to create, rename, recolour, reorder or delete a
+world and to pick its repos with the folder browser. Nothing is fixed; a fresh install has
+no worlds and every session shows up under "Unsorted" until its repo belongs to one.
+Deleting a world never stops its sessions, they just become unsorted.
+
+Each repo belongs to at most one world. Pick the repo's top folder; a worktree counts as its
+main repo. Changes are saved to `~/.config/agent-worlds/config.json`.
+
+Editing that file by hand is optional (restart the server afterwards):
 
 ```sh
-bin/agent-worlds init      # writes ~/.config/agent-worlds/config.json
+bin/agent-worlds init      # writes a config with no worlds
 ```
-
-Edit the file and point each world at your repos (absolute paths to the main checkout;
-worktrees of those repos are recognised automatically):
 
 ```json
 {
   "port": 4317,
-  "host": "127.0.0.1",
-  "extraHosts": [],
   "worlds": [
-    { "id": "web",    "name": "Web",    "color": "#47b4a7", "repos": ["/home/me/code/repo-a", "/home/me/code/repo-b"] },
-    { "id": "mobile", "name": "Mobile", "color": "#e0a03a", "repos": ["/home/me/code/repo-c"] }
+    { "id": "web", "name": "Web", "color": "#47b4a7", "repos": ["/home/me/code/repo-a", "/home/me/code/repo-b"] }
   ]
 }
 ```

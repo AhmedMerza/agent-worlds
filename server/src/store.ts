@@ -424,6 +424,14 @@ export class Store {
     return true;
   }
 
+  /** After worlds change: re-derive every session's world and broadcast the ones that moved. */
+  recomputeWorlds() {
+    for (const s of this.sessions.values()) {
+      const w = this.worldOf(s.repo, s.cwd);
+      if (w !== s.worldId) { s.worldId = w; this.push(s); }
+    }
+  }
+
   /** Drop sessions whose tmux session has gone away. */
   sweep(alive: string[]) {
     for (const s of [...this.sessions.values()]) if (s.tmux?.session && !alive.includes(s.tmux.session)) this.remove(s);
