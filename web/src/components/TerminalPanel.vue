@@ -3,11 +3,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { LABEL } from '../logic'
-import { selected, groups, termFocusTick } from '../store'
+import { LABEL, catchupView } from '../logic'
+import { state, selected, groups, termFocusTick, requestCatchup } from '../store'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
+const cu = computed(() => (s.value ? catchupView(s.value, state.now) : null))
 const root = ref<HTMLElement | null>(null)
 const host = ref<HTMLElement | null>(null)
 const link = ref<'connecting' | 'live' | 'closed'>('connecting')
@@ -92,13 +93,20 @@ watch(termFocusTick, async () => {
       </template>
       <template v-else>No session selected</template>
     </div>
-    <dl v-if="s?.catchup" class="catch">
-      <dt>You asked</dt><dd>{{ s.catchup.asked }}</dd>
-      <dt>It did</dt><dd>{{ s.catchup.did }}</dd>
-      <dt>It needs</dt><dd :class="['needs', { none: !s.catchup.needs }]">{{ s.catchup.needs || 'Nothing right now. It is working.' }}</dd>
-      <span class="tag">Catch-up written by Haiku</span>
+    <dl v-if="s && cu" class="catch">
+      <template v-if="cu.asked"><dt>You asked</dt><dd>{{ cu.asked }}</dd></template>
+      <template v-if="cu.mode === 'filled'">
+        <template v-if="cu.did"><dt>It did</dt><dd>{{ cu.did }}</dd></template>
+        <dt>It needs</dt><dd :class="['needs', { none: !cu.needs }]">{{ cu.needs || 'Nothing right now. It is working.' }}</dd>
+        <span class="tag">Catch-up written by Haiku</span>
+      </template>
+      <p v-if="cu.mode === 'running'" class="catch-run" role="status">Haiku is reading the transcript…</p>
+      <p v-else class="catch-act">
+        <span v-if="cu.written" class="why">{{ cu.written }} ·</span>
+        <button class="btn" @click="requestCatchup(s.id)">{{ cu.mode === 'filled' ? 'Refresh' : 'Catch me up' }}</button>
+        <span class="why">(C)</span>
+      </p>
     </dl>
-    <p v-else-if="s && (s.state === 'done' || s.state === 'waiting')" class="catch-wait">Writing catch-up…</p>
     <p v-if="s && !hasTmux" class="term-view">This session is not running inside tmux, so it is view-only.</p>
     <div v-show="hasTmux" ref="host" class="term-body" />
   </section>

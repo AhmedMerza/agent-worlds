@@ -20,13 +20,13 @@ const mkSession = (id, worldId, over) => ({
   id, worldId, repo: `/work/${id}`, repoName: id, cwd: `/work/${id}`, branch: 'main', worktree: false,
   tmux: { session: `aw-${id}`, pane: '%1' }, state: 'working', waitingSince: null, task: `Task for ${id}`,
   now: 'Working', log: [{ t: now() - 2 * MIN, text: 'Read a file' }, { t: now() - MIN, text: 'Edited a file' }],
-  helpers: [], card: null, catchup: null, context: null, conflicts: [], startedAt: now() - 30 * MIN, updatedAt: now(), ...over,
+  helpers: [], card: null, catchup: null, catchupRunning: false, catchupAt: null, context: null, conflicts: [], startedAt: now() - 30 * MIN, updatedAt: now(), ...over,
 })
 const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, input: { command: cmd }, risky, seenCount: 0, live: true })
 const sessions = new Map(Object.entries({
   'repo-a': mkSession('repo-a', 'web', { branch: 'feat/filter', worktree: true, context: { used: 24000, limit: 200000, pct: 12 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
     conflicts: [{ withId: 'repo-b', reason: 'both edit the table component' }, { withId: 'repo-e', reason: 'same API client' }],
-    catchup: { asked: 'Add a filter to the table', did: 'Wired the dropdown to the API', needs: '' } }),
+    catchupAt: now() - 4 * MIN, catchup: { asked: 'Add a filter to the table', did: 'Wired the dropdown to the API', needs: '' } }),
   'repo-b': mkSession('repo-b', 'web', { state: 'waiting', waitingSince: now() - 3 * MIN, now: 'Waiting for you to allow a command', card: perm('npm run migrate -- --force', 'changes a database'), context: { used: 70000, limit: 200000, pct: 35 } }),
   'repo-c': mkSession('repo-c', 'web', { state: 'waiting', waitingSince: now() - 14 * MIN, now: 'Waiting for your answer',
     card: { kind: 'question', requestId: crypto.randomUUID(), live: true, questions: [{ question: 'Where should the new categories go?', header: 'Parent', multiSelect: false, options: [{ label: 'Under Restaurants', description: 'Nested one level' }, { label: 'New top-level category', description: '' }, { label: 'Leave unassigned', description: '' }] }] } }),
@@ -102,11 +102,17 @@ const server = http.createServer(async (req, res) => {
     sessions.set(id, s); upsert(s)
     return json(201, { id, tmuxSession: s.tmux.session })
   }
-  const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack)$/)
+  const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack|catchup)$/)
   if (req.method === 'POST' && m) {
     const s = sessions.get(decodeURIComponent(m[1]))
     if (!s) return json(404, { error: 'no such session' })
     const body = await readBody(req)
+    if (m[2] === 'catchup') {
+      if (s.catchupRunning) return json(409, { error: 'Catch-up is already running.' })
+      s.catchupRunning = true; upsert(s)
+      setTimeout(() => { s.catchupRunning = false; s.catchupAt = now(); s.catchup = { asked: s.task, did: `Worked on ${s.id}. (mock summary)`, needs: s.card ? 'Your decision on the open request' : '' }; upsert(s) }, 1500)
+      res.writeHead(202, { 'Content-Type': 'application/json' }); return res.end('{"ok":true}')
+    }
     if (m[2] === 'permission') {
       if (s.card?.requestId !== body.requestId || s.card.live === false) return json(409, { error: 'That request is no longer live. Answer it in the terminal.' })
       resume(s, body.decision === 'allow' ? 'Running the command' : 'Looking for another way')

@@ -138,6 +138,7 @@ export async function createSession(body: NewTask): Promise<string | null> {
 }
 export const answerQuestions = (id: string, requestId: string, answers: Record<string, string>) =>
   post(`${base(id)}/answer`, { requestId, answers })
+export const requestCatchup = (id: string) => post(`${base(id)}/catchup`)
 export const acknowledge = (id: string) => post(`${base(id)}/ack`)
 
 // ---- websocket with backoff ----

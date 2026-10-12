@@ -58,7 +58,7 @@ export interface KeyInfo {
 }
 export type KeyAction =
   | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' }
-  | { kind: 'new-task' } | { kind: 'mute' } | null
+  | { kind: 'new-task' } | { kind: 'mute' } | { kind: 'catchup' } | null
 
 /** Decides what a keypress means. Never claims a key while the user is typing (or in the terminal). */
 export function routeKey(k: KeyInfo): KeyAction {
@@ -69,6 +69,7 @@ export function routeKey(k: KeyInfo): KeyAction {
   if (k.key === '?') return { kind: 'help' }
   if (k.key === 'n' || k.key === 'N') return { kind: 'new-task' }
   if (k.key === 'm' || k.key === 'M') return { kind: 'mute' }
+  if (k.key === 'c' || k.key === 'C') return { kind: 'catchup' }
   if (/^[1-9]$/.test(k.key)) return { kind: 'jump', index: Number(k.key) - 1 }
   return null
 }
@@ -152,4 +153,23 @@ export function errorText(status: number, body: unknown): string {
   const b = (body ?? {}) as { error?: unknown; message?: unknown }
   const t = typeof b.error === 'string' ? b.error : typeof b.message === 'string' ? b.message : ''
   return t || `Request failed (${status}).`
+}
+
+export interface CatchupView {
+  mode: 'running' | 'filled' | 'empty'
+  asked: string | null
+  did: string | null
+  needs: string | null
+  /** "Written 3 min ago" when filled. */
+  written: string | null
+}
+/** What the catch-up area shows. Catch-up is manual: without it only the task ("You asked") is known. */
+export function catchupView(s: Session, now: number): CatchupView {
+  const c = s.catchup ?? null
+  const asked = c?.asked ?? s.task ?? null
+  if (s.catchupRunning) return { mode: 'running', asked, did: null, needs: null, written: null }
+  if (!c) return { mode: 'empty', asked, did: null, needs: null, written: null }
+  const min = s.catchupAt ? Math.max(0, Math.floor((now - s.catchupAt) / 60000)) : null
+  const written = min === null ? null : min < 1 ? 'Written just now' : `Written ${min} min ago`
+  return { mode: 'filled', asked, did: c.did, needs: c.needs, written }
 }

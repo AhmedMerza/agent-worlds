@@ -33,7 +33,9 @@ export interface Session {
   log: LogLine[]
   helpers: Helper[]
   card: Card | null
-  catchup?: { asked: string; did: string; needs: string } | null
+  catchup?: { asked: string; did: string | null; needs: string | null } | null
+  catchupRunning?: boolean
+  catchupAt?: number | null
   context?: { used: number; limit: number; pct: number } | null
   conflicts?: { withId: string; reason: string }[]
   startedAt: number

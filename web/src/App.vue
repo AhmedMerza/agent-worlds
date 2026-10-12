@@ -7,7 +7,7 @@ import TerminalPanel from './components/TerminalPanel.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick } from './store'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup } from './store'
 import { routeKey, isTypingTarget, isControlTarget } from './logic'
 
 const help = ref(false)
@@ -47,6 +47,7 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'jump') { const s = screenSessions.value[a.index]; if (s) select(s.id) }
   else if (a.kind === 'help') help.value = !help.value
   else if (a.kind === 'new-task') openNewTask()
+  else if (a.kind === 'catchup') { if (selected.value && !selected.value.catchupRunning) requestCatchup(selected.value.id) }
   else if (a.kind === 'mute') { toggleMute(); showToast(prefs.muted ? 'Sounds muted.' : 'Sounds on.') }
   else { help.value = false; newTaskWorld.value = null }
 }
