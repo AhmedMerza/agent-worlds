@@ -1,0 +1,21 @@
+const { open, record, move, sleep } = require('./rec.cjs')
+;(async () => {
+  const { b, p, errs } = await open(1440, 800)
+  await p.goto('' + (process.env.MOCK_URL || 'http://127.0.0.1:4322') + '/'); await p.waitForSelector('canvas'); await sleep(1500)
+  const dlg = p.locator('[role=dialog][aria-label=Worlds]')
+  const click = async (loc, wait = 900) => { await move(p, loc); await sleep(250); await loc.click(); await sleep(wait) }
+  await record(p, { x: 0, y: 0, width: 1440, height: 640 }, 'worlds.gif', async () => {
+    await sleep(1500)
+    await p.locator('body').click({ position: { x: 5, y: 5 } }); await p.keyboard.press('w'); await sleep(1000)
+    await click(dlg.getByLabel('New world name'), 300)
+    await p.keyboard.type('Web', { delay: 140 }); await sleep(400)
+    await click(dlg.getByRole('button', { name: 'New world' }), 1000)
+    await click(dlg.getByRole('button', { name: 'Add repo' }), 1300)
+    await click(dlg.locator('.fs li.repo', { hasText: 'repo-a' }).getByRole('button', { name: 'Add' }), 1100)
+    await click(dlg.getByRole('button', { name: 'Add repo' }), 1000)
+    await click(dlg.locator('.fs li.repo', { hasText: 'repo-b' }).getByRole('button', { name: 'Add' }), 1100)
+    await click(dlg.locator('.swatch').nth(3), 900)
+    await click(dlg.getByRole('button', { name: 'Close' }), 2200)
+  })
+  console.log('errors', JSON.stringify(errs)); await b.close()
+})()
