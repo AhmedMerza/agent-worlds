@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { statSync } from 'node:fs';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string };
 
@@ -25,6 +26,8 @@ export async function branchOf(cwd: string): Promise<string | null> {
 }
 
 export const PANE_RE = /^%\d{1,6}$/;
+
+export const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 export async function tmuxSessionOf(pane: string): Promise<string | null> {
   if (!PANE_RE.test(pane)) return null;
@@ -56,7 +59,7 @@ const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'
  * Start `claude` in a new detached tmux session, optionally in a fresh worktree
  * (<repo>-worktrees/<branch>, new branch). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null }> {
   const id = randomBytes(2).toString('hex');
   let dir = opts.repo;
   let branch: string | null = null;
@@ -73,8 +76,13 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   // user never installed the hooks globally.
   const env = opts.home ? ['-e', `AGENT_WORLDS_HOME=${opts.home}`] : [];
   const settings = opts.home ? ['--settings', join(opts.home, 'hooks.json')] : [];
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...settings, ...(task ? ['--', task] : [])]);
+  const resume = opts.resume ? ['--resume', opts.resume] : [];
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...resume, ...settings, ...(task ? ['--', task] : [])]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
+  // Several clients (a desktop terminal and the browser) may attach at once: size the window to
+  // whichever client was used last instead of shrinking it to the smallest one.
+  await run('tmux', ['set-option', '-w', '-t', `=${name}:`, 'window-size', 'latest']);
+  await run('tmux', ['set-option', '-w', '-t', `=${name}:`, 'aggressive-resize', 'on']);
   return { tmuxSession: name, dir, branch };
 }
 

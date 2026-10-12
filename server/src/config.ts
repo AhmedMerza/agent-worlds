@@ -6,12 +6,13 @@ import { join, resolve } from 'node:path';
 export type World = { id: string; name: string; color: string; repos: string[] };
 export type Config = {
   port: number; host: string; listen: string[]; extraHosts: string[]; worlds: World[];
-  userSettingsPath: string; claudeBin: string; contextLimit: number;
+  userSettingsPath: string; claudeBin: string; contextLimit: number; claudeProjectsDir: string;
 };
 
 export const DEFAULTS: Config = {
   port: 4317, host: '127.0.0.1', listen: ['127.0.0.1'], extraHosts: [], worlds: [],
   userSettingsPath: join(homedir(), '.claude', 'settings.json'), claudeBin: 'claude', contextLimit: 1_000_000,
+  claudeProjectsDir: join(homedir(), '.claude', 'projects'),
 };
 
 export function homeDir(): string {
@@ -46,6 +47,8 @@ export function parseConfig(raw: unknown): Config {
   const usp = str('userSettingsPath');
   if (usp) cfg.userSettingsPath = resolve(usp.replace(/^~(?=\/)/, homedir()));
   cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
+  const cpd = str('claudeProjectsDir');
+  if (cpd) cfg.claudeProjectsDir = resolve(cpd.replace(/^~(?=\/)/, homedir()));
   if (r.contextLimit !== undefined) {
     if (!Number.isInteger(r.contextLimit) || (r.contextLimit as number) < 1000) throw new Error('contextLimit must be an integer >= 1000');
     cfg.contextLimit = r.contextLimit as number;

@@ -14,6 +14,7 @@ import { parseConfig } from '../src/config.ts';
 import { createSession } from '../src/sys.ts';
 import { startServer } from '../src/server.ts';
 import { ev } from './fixtures.ts';
+import { createServer as createNetServer } from 'node:net';
 
 const tmp = (p = 'awtest-') => realpathSync(mkdtempSync(join(tmpdir(), p)));
 const tick = () => new Promise((r) => setImmediate(r));
@@ -403,7 +404,9 @@ test('POST /api/sessions validates, PWA files are public, multiple listen addres
   writeFileSync(join(dist, 'manifest.webmanifest'), '{"name":"x"}');
   writeFileSync(join(dist, 'icon-192.png'), 'png');
   const calls: any[] = [];
-  const cfg = { ...parseConfig({ listen: ['127.0.0.1', '127.0.0.2'], worlds: [{ id: 'web', name: 'Web', repos: [`${root}/repo-a`] }] }), port: 4321 };
+  // a free port (the fixed test slot may be busy with another run)
+  const port = await new Promise<number>((ok) => { const s = createNetServer().listen(0, '127.0.0.1', () => { const p = (s.address() as any).port; s.close(() => ok(p)); }); });
+  const cfg = { ...parseConfig({ listen: ['127.0.0.1', '127.0.0.2'], worlds: [{ id: 'web', name: 'Web', repos: [`${root}/repo-a`] }] }), port };
   const app = startServer(cfg, 'k'.repeat(64), {
     webDist: dist, home: root,
     createSession: async (o) => { calls.push(o); if (o.branch === 'boom') throw new Error('git worktree add failed: nope'); return { tmuxSession: 'aw-x-1', dir: o.repo, branch: null }; },
@@ -411,7 +414,7 @@ test('POST /api/sessions validates, PWA files are public, multiple listen addres
   await app.listen();
   try {
     const H = { 'x-aw-token': 'k'.repeat(64), 'content-type': 'application/json' };
-    const post = (b: unknown) => fetch('http://127.0.0.1:4321/api/sessions', { method: 'POST', headers: H, body: JSON.stringify(b) });
+    const post = (b: unknown) => fetch(`http://127.0.0.1:${port}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify(b) });
     assert.equal((await post({ worldId: 'nope', repo: `${root}/repo-a` })).status, 400);
     assert.equal((await post({ worldId: 'web', repo: '/etc' })).status, 400);
     assert.equal((await post({ worldId: 'web', repo: `${root}/repo-a`, task: 5 })).status, 400);
@@ -423,22 +426,22 @@ test('POST /api/sessions validates, PWA files are public, multiple listen addres
     const bad = await post({ worldId: 'web', repo: `${root}/repo-a`, worktree: true, branch: 'boom' });
     assert.equal(bad.status, 422);
     assert.match((await bad.json()).error, /worktree add failed/);
-    const st = await (await fetch('http://127.0.0.1:4321/api/state', { headers: H })).json() as any;
+    const st = await (await fetch(`http://127.0.0.1:${port}/api/state`, { headers: H })).json() as any;
     assert.deepEqual(st.worlds[0].repos, [`${root}/repo-a`]);
 
-    const m = await fetch('http://127.0.0.1:4321/manifest.webmanifest');
+    const m = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`);
     assert.equal(m.status, 200);
     assert.equal(m.headers.get('content-type'), 'application/manifest+json');
-    assert.equal((await fetch('http://127.0.0.1:4321/icon-192.png')).status, 200);
-    assert.equal((await fetch('http://127.0.0.1:4321/icon-512.png')).status, 404);
-    assert.equal((await fetch('http://127.0.0.1:4321/index.html')).status, 401, 'the app itself stays authed');
-    assert.equal((await fetch('http://127.0.0.1:4321/api/state')).status, 401);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/icon-192.png`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/icon-512.png`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/index.html`)).status, 401, 'the app itself stays authed');
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/state`)).status, 401);
 
-    assert.equal((await fetch('http://127.0.0.2:4321/api/state', { headers: H })).status, 200, 'second listen address works');
-    assert.equal((await fetch('http://127.0.0.2:4321/api/state', { headers: { ...H, origin: 'http://127.0.0.2:4321' } })).status, 200, 'its origin is allowed');
+    assert.equal((await fetch(`http://127.0.0.2:${port}/api/state`, { headers: H })).status, 200, 'second listen address works');
+    assert.equal((await fetch(`http://127.0.0.2:${port}/api/state`, { headers: { ...H, origin: `http://127.0.0.2:${port}` } })).status, 200, 'its origin is allowed');
 
     // catch-up endpoint
-    assert.equal((await fetch('http://127.0.0.1:4321/api/sessions/nope/catchup', { method: 'POST', headers: H })).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/nope/catchup`, { method: 'POST', headers: H })).status, 404);
   } finally { await app.close(); }
 });
 
