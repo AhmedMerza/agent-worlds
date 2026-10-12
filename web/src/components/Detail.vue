@@ -2,15 +2,16 @@
 import { computed } from 'vue'
 import { LABEL, ctxColor, ctxLevel, UNSORTED } from '../logic'
 import { selected, groups, focusTerminal, sendInput, showToast, ui } from '../store'
+import ResumeButton from './ResumeButton.vue'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
 
+const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))
 async function copyAttach() {
-  const t = s.value?.tmux
-  if (!t) return
-  const text = `tmux attach -t ${t.session}`
+  const text = attachText.value
+  if (!text) return
   try { await navigator.clipboard.writeText(text); showToast('Copied: ' + text); return } catch { /* fall back below */ }
   const ta = document.createElement('textarea')
   ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
@@ -25,7 +26,15 @@ async function copyAttach() {
 <template>
   <section class="panel" aria-live="polite" :style="{ '--tint': world?.color ?? '#8a92a0' }">
     <p v-if="!s" class="empty">Select a session.</p>
+    <div v-else-if="s.ghost" class="detail">
+      <div class="d-head"><h3>{{ s.repoName }}</h3><span class="pill">Plain terminal</span></div>
+      <p class="path">{{ world?.name }} · {{ s.cwd }}</p>
+      <p class="now">Running outside Agent Worlds (pid {{ s.ghost.pid }}). Quit it there, then move it into Agent Worlds to get its card, status and a live terminal here.</p>
+      <template v-if="s.ghost.sessionId"><ResumeButton :session-id="s.ghost.sessionId" label="Move into Agent Worlds" primary /></template>
+      <p v-else class="why">Which conversation this is could not be told, so it cannot be moved automatically. Use Recent sessions (R) to pick it.</p>
+    </div>
     <div v-else class="detail">
+      <p v-if="s.state === 'starting'" class="why">Claude may be asking to trust this folder. Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ LABEL[s.state] }}</span></div>
       <p class="path">{{ world?.name }} · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</p>
       <p v-if="s.task" class="now"><span class="lbl">Task</span>{{ s.task }}</p>
@@ -47,9 +56,12 @@ async function copyAttach() {
         <span class="lbl">Recent steps</span>
         <ol><li v-for="l in s.log.slice(-6)" :key="l.t + l.text">{{ l.text }}</li></ol>
       </div>
+      <div v-if="s.tmux" class="attach-cmd">
+        <code>{{ attachText }}</code><button class="btn" @click="copyAttach">Copy</button>
+        <span class="why">Or run <code>agent-worlds attach</code> to pick one, e.g. from Ghostty.</span>
+      </div>
       <div class="actions">
         <button class="btn" @click="focusTerminal">Open in terminal</button>
-        <button v-if="s.tmux" class="btn" @click="copyAttach">Copy attach command</button>
         <button v-if="world?.id === UNSORTED.id" class="btn" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
       </div>
     </div>

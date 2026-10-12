@@ -1,7 +1,7 @@
 import { reactive, computed, ref } from 'vue'
-import type { ServerMessage, Session, World, FsListing } from './types'
+import type { ServerMessage, Session, World, FsListing, Unmanaged, HistorySession } from './types'
 import { alertNeedsYou } from './notify'
-import { errorText, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
+import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
 
 export interface StoreState {
   worlds: World[]
@@ -16,11 +16,13 @@ export interface StoreState {
   now: number
   /** A session we just asked the server to start; selected when its upsert arrives. */
   pending: { tmux: string; until: number } | null
+  /** Claude processes running outside Agent Worlds. */
+  unmanaged: Unmanaged[]
 }
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, order: [], loaded: false, connected: false,
-  selectedId: null, toast: null, filter: 'all', now: Date.now(), pending: null,
+  selectedId: null, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [],
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -42,7 +44,11 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.sessions = {}
       st.order = []
       for (const s of msg.sessions) { st.sessions[s.id] = s; st.order.push(s.id) }
+      st.unmanaged = msg.unmanaged ?? []
       st.loaded = true
+      break
+    case 'unmanaged':
+      st.unmanaged = msg.unmanaged
       break
     case 'session':
       if (claimPending(st, msg.session)) st.selectedId = msg.session.id
@@ -50,10 +56,14 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       if (!st.sessions[msg.session.id]) st.order.push(msg.session.id)
       st.sessions[msg.session.id] = msg.session
       break
-    case 'session-removed':
+    case 'session-removed': {
+      // A 'starting:<tmux>' placeholder is replaced by the real session on its first hook: keep following it.
+      const gone = st.sessions[msg.id]
+      if (st.selectedId === msg.id && gone?.state === 'starting' && gone.tmux) st.pending = { tmux: gone.tmux.session, until: Date.now() + 10000 }
       delete st.sessions[msg.id]
       st.order = st.order.filter((i) => i !== msg.id)
       break
+    }
     case 'worlds':
       st.worlds = msg.worlds
       break
@@ -62,7 +72,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       break
   }
   // Keep the selection valid: default to the oldest session needing you, else the first one.
-  if (!st.selectedId || !st.sessions[st.selectedId]) {
+  if (!st.selectedId || !(st.sessions[st.selectedId] || st.unmanaged.some((u) => ghostId(u.pid) === st.selectedId))) {
     const list = st.order.map((i) => st.sessions[i])
     st.selectedId = (queue(list)[0] ?? list[0])?.id ?? null
   }
@@ -71,14 +81,17 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
 
 export const state = reactive<StoreState>(newState())
 export const sessionList = computed(() => state.order.map((i) => state.sessions[i]))
-export const groups = computed(() => groupSessions(state.worlds, sessionList.value))
+export const ghosts = computed(() => state.unmanaged.map(ghostSession))
+/** Rooms hold the real sessions plus the ghosts of unmanaged ones. */
+export const groups = computed(() => groupSessions(state.worlds, [...sessionList.value, ...ghosts.value]))
 export const screenSessions = computed(() => screenOrder(groups.value))
 export const needsYou = computed(() => queue(sessionList.value))
-export const selected = computed(() => (state.selectedId ? state.sessions[state.selectedId] ?? null : null))
+const lookup = (id: string): Session | undefined => state.sessions[id] ?? ghosts.value.find((g) => g.id === id)
+export const selected = computed(() => (state.selectedId ? lookup(state.selectedId) ?? null : null))
 
 export const select = (id: string): void => {
   state.selectedId = id
-  const s = state.sessions[id]
+  const s = lookup(id)
   if (state.filter !== 'all' && s) {
     const g = groups.value.find((g) => g.sessions.includes(s))
     if (g && g.world.id !== state.filter) state.filter = g.world.id
@@ -135,18 +148,31 @@ export const decidePermission = (id: string, requestId: string, decision: 'allow
 export const sendInput = (id: string, text: string) => post(`${base(id)}/input`, { text })
 export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string }
 /** Returns null on success, else a message to show the user. */
+/** Selects the session running in tmux session `name` as soon as it shows up (or now, if it already has). */
+function followNew(name: unknown): void {
+  if (typeof name !== 'string') return
+  state.pending = { tmux: name, until: Date.now() + 60000 }
+  const known = Object.values(state.sessions).find((x) => x.tmux?.session === name)
+  if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
+}
+/** Opens a past session in a new tmux session here. `force` resumes even if it is still open elsewhere. */
+export async function resumeSession(sessionId: string, force = false): Promise<ResumeResult> {
+  try {
+    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { sessionId, force: true } : { sessionId }) })
+    let body: unknown = null
+    try { body = await r.json() } catch { /* empty body */ }
+    const res = resumeOutcome(r.status, body)
+    if (res.kind === 'ok') followNew(res.tmuxSession)
+    return res
+  } catch { return { kind: 'error', message: 'Could not reach the server.' } }
+}
+export const fetchHistory = () => api<{ sessions: HistorySession[] }>('GET', '/api/history?limit=200')
+
 export async function createSession(body: NewTask): Promise<string | null> {
   try {
     const r = await fetch('/api/sessions', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     if (r.ok) {
-      try {
-        const j = await r.json()
-        if (typeof j.tmuxSession === 'string') {
-          state.pending = { tmux: j.tmuxSession, until: Date.now() + 60000 }
-          const known = Object.values(state.sessions).find((x) => x.tmux?.session === j.tmuxSession)
-          if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
-        }
-      } catch { /* body optional */ }
+      try { followNew((await r.json()).tmuxSession) } catch { /* body optional */ }
       return null
     }
     let err: unknown = null
@@ -191,4 +217,4 @@ export const termFocusTick = ref(0)
 export const focusTerminal = (): void => { termFocusTick.value++ }
 
 /** Dialog state shared by the header, rooms and detail panel. */
-export const ui = reactive({ worldsOpen: false, putSession: null as string | null })
+export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false })

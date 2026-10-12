@@ -183,7 +183,7 @@ import { catchupView } from '../src/logic'
 describe('catchupView', () => {
   const T = 10 * 60000
   it('empty: only the task, plus the button', () => {
-    expect(catchupView(mk('a', { task: 'Do X' }), T)).toEqual({ mode: 'empty', asked: 'Do X', did: null, needs: null, written: null })
+    expect(catchupView(mk('a', { task: 'Do X' }), T)).toEqual({ mode: 'empty', asked: 'Do X', did: null, needs: null, needsFallback: 'Nothing right now. It is working.', written: null })
     expect(catchupView(mk('a'), T).asked).toBeNull()
   })
   it('running wins over a stale catch-up', () => {
@@ -192,7 +192,7 @@ describe('catchupView', () => {
   })
   it('filled: rows and age', () => {
     const s = mk('a', { catchup: { asked: 'q', did: 'd', needs: 'n' }, catchupAt: T - 3 * 60000 })
-    expect(catchupView(s, T)).toEqual({ mode: 'filled', asked: 'q', did: 'd', needs: 'n', written: 'Written 3 min ago' })
+    expect(catchupView(s, T)).toEqual({ mode: 'filled', asked: 'q', did: 'd', needs: 'n', needsFallback: 'Nothing right now. It is working.', written: 'Written 3 min ago' })
     expect(catchupView({ ...s, catchupAt: T - 1000 }, T).written).toBe('Written just now')
     expect(catchupView({ ...s, catchupAt: null }, T).written).toBeNull()
   })

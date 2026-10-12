@@ -23,7 +23,8 @@ const mkSession = (id, worldId, over) => ({
   now: 'Working', log: [{ t: now() - 2 * MIN, text: 'Read a file' }, { t: now() - MIN, text: 'Edited a file' }],
   helpers: [], card: null, catchup: null, catchupRunning: false, catchupAt: null, context: null, conflicts: [], startedAt: now() - 30 * MIN, updatedAt: now(), ...over,
 })
-const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, input: { command: cmd }, risky, seenCount: 0, live: true })
+const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, target: { type: 'command', value: cmd }, input: { command: cmd }, risky, seenCount: 0, live: true })
+const permOf = (tool, type, value) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool, command: null, target: { type, value }, input: {}, risky: null, seenCount: 0, live: true })
 const sessions = new Map(Object.entries({
   'repo-a': mkSession('repo-a', 'web', { branch: 'feat/filter', worktree: true, context: { used: 24000, limit: 200000, pct: 12 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
     conflicts: [{ withId: 'repo-b', reason: 'both edit the table component' }, { withId: 'repo-e', reason: 'same API client' }],
@@ -37,8 +38,54 @@ const sessions = new Map(Object.entries({
   'repo-g': mkSession('repo-g', 'mobile', { state: 'idle', now: 'Ready for a new task', context: { used: 5000, limit: 200000, pct: 3 } }),
   'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: { ...perm('npm run lint'), seenCount: 5 } }),
   'repo-j': mkSession('repo-j', 'tools', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting (terminal only)', card: { ...perm('rm -rf build'), live: false } }),
+  'repo-q': mkSession('repo-q', 'web', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting to edit a file', card: permOf('Edit', 'file', '/work/repo-q/src/app.ts') }),
+  'repo-r': mkSession('repo-r', 'mobile', { state: 'waiting', waitingSince: now() - 5 * MIN, now: 'Waiting to open an address', card: permOf('WebFetch', 'url', 'https://example.com/docs') }),
+  'repo-s': mkSession('repo-s', 'mobile', { state: 'waiting', waitingSince: now() - 6 * MIN, now: 'Waiting', card: permOf('Grep', 'other', 'TODO') }),
   'repo-i': mkSession('repo-i', null, { tmux: null, now: 'Running outside tmux' }),
 }))
+
+// ---- import: processes running outside Agent Worlds, and past sessions ----
+let unmanaged = process.env.MOCK_EMPTY ? [] : [
+  { pid: 4121, cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', sessionId: 'sess-k', inTmux: false, since: now() - 12 * MIN },
+  { pid: 5230, cwd: '/work/repo-m', repo: null, worldId: null, sessionId: null, inTmux: true, since: now() - 3 * MIN },
+]
+const history = [
+  { sessionId: 'sess-k', cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', lastPrompt: 'Refactor the checkout form validation', lastActivity: now() - 12 * MIN, running: true, managed: false },
+  { sessionId: 'sess-n', cwd: '/work/repo-n', repo: '/work/repo-n', worldId: 'mobile', lastPrompt: 'Add dark mode to the settings screen', lastActivity: now() - 3 * 60 * MIN, running: false, managed: false },
+  { sessionId: 'sess-p', cwd: '/work/repo-p', repo: '/work/repo-p', worldId: 'tools', lastPrompt: 'Write a script that prunes old build artifacts', lastActivity: now() - 30 * 60 * MIN, running: false, managed: false },
+  { sessionId: 'repo-a', cwd: '/work/repo-a', repo: '/work/repo-a', worldId: 'web', lastPrompt: 'Add a filter to the table', lastActivity: now() - 4 * MIN, running: true, managed: true },
+]
+
+// ---- demo mode (MOCK_DEMO=1 | worlds): deterministic data for recording the README media ----
+// 1 = two worlds with five sessions; "worlds" = no worlds yet, same sessions (their repos live in /tmp/demo/*).
+// Steps are driven from outside: POST /api/demo/ask (repo-b needs a permission) and /api/demo/done (repo-a finishes).
+const DEMO = process.env.MOCK_DEMO
+const DEMO_DIR = '/tmp/demo'
+if (DEMO) {
+  const w = (id) => (DEMO === 'worlds' ? null : id)
+  worlds = DEMO === 'worlds' ? [] : [
+    { id: 'web', name: 'Web', color: '#47b4a7', repos: [`${DEMO_DIR}/repo-a`, `${DEMO_DIR}/repo-b`, `${DEMO_DIR}/repo-c`] },
+    { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: [`${DEMO_DIR}/repo-d`, `${DEMO_DIR}/repo-e`] },
+  ]
+  sessions.clear(); unmanaged = []
+  const add = (id, world, i, over) => sessions.set(id, mkSession(id, w(world), { repo: `${DEMO_DIR}/${id}`, cwd: `${DEMO_DIR}/${id}`, startedAt: now() - (60 - i) * MIN, ...over }))
+  add('repo-a', 'web', 1, { task: 'Add a status filter to the orders table', branch: 'feat/orders-filter', worktree: true, context: { used: 36000, limit: 200000, pct: 18 }, now: 'Editing the orders table',
+    helpers: [{ id: 'h1', task: 'Find the orders endpoint', state: 'working', startedAt: now() }], demo: { did: 'Added the filter dropdown and wired it to the orders API.', needs: '' } })
+  add('repo-b', 'web', 2, { task: 'Write the migration for payment status', branch: 'feat/payment-status', context: { used: 68000, limit: 200000, pct: 34 }, now: 'Writing the migration', demo: { did: 'Wrote the migration and the model field.', needs: 'Your OK to run the migration' } })
+  add('repo-c', 'web', 3, { task: 'Update the deploy checklist', state: 'idle', now: 'Ready for a new task', context: { used: 16000, limit: 200000, pct: 8 }, demo: { did: 'Updated the checklist and stopped.', needs: '' } })
+  add('repo-d', 'mobile', 4, { task: 'Build the printer settings screen', branch: 'feat/printer-settings', context: { used: 122000, limit: 200000, pct: 61 }, now: 'Building the settings screen',
+    helpers: [{ id: 'h1', task: 'Read the settings screens', state: 'working', startedAt: now() }, { id: 'h2', task: 'Draft the labels', state: 'working', startedAt: now() }, { id: 'h3', task: 'Check permissions', state: 'done', startedAt: now() }], demo: { did: 'Created the settings page.', needs: '' } })
+  add('repo-e', 'mobile', 5, { task: 'Fix the cart badge count', branch: 'fix/cart-badge', context: { used: 44000, limit: 200000, pct: 22 }, now: 'Fixing the badge count', demo: { did: 'Switched the badge to the fresh cart count.', needs: '' } })
+}
+const demoStep = {
+  ask(s) { Object.assign(s, { state: 'waiting', waitingSince: now(), now: 'Waiting for you to allow a command', card: perm('npm run migrate -- --force', 'changes a database') }) },
+  done(s) {
+    Object.assign(s, { state: 'done', waitingSince: now(), now: 'Finished', card: { kind: 'done', summary: 'Added the status filter and wired it to the orders API. All 14 tests pass.', review: {
+      files: [{ path: 'src/orders/OrdersTable.vue', added: 31, deleted: 4 }, { path: 'src/orders/useOrders.ts', added: 12, deleted: 2 }, { path: 'tests/orders.test.ts', added: 40, deleted: 0 }],
+      tests: { command: 'npm test', ok: true, line: '14 passed, 0 failed' },
+      diff: ['@@ src/orders/OrdersTable.vue @@', '-  <th>Status</th>', '+  <th><StatusFilter v-model="status" /></th>', ' ', '@@ src/orders/useOrders.ts @@', '-export function useOrders() {', '+export function useOrders(status: Ref<string>) {', "+  const params = computed(() => ({ status: status.value }))"].join('\n') } } })
+  },
+}
 
 // ---- websocket plumbing (RFC 6455, text frames only) ----
 const wsClients = new Set()
@@ -81,6 +128,7 @@ function regroup() {
     if (s.worldId !== id) { s.worldId = id; upsert(s) }
   }
 }
+const pushUnmanaged = () => broadcast({ type: 'unmanaged', unmanaged })
 const pushWorlds = () => { regroup(); broadcast({ type: 'worlds', worlds }) }
 let wseq = 1
 // ---- state transitions ----
@@ -96,7 +144,7 @@ function tick() {
     Object.assign(s, { state: 'working', now: 'Picked up a new task' }); upsert(s)
   }
 }
-setInterval(tick, 9000)
+if (!DEMO && !process.env.MOCK_NOTICK) setInterval(tick, 9000)
 
 // ---- http ----
 const readBody = (req) => new Promise((res) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => { try { res(JSON.parse(d || '{}')) } catch { res({}) } }) })
@@ -104,18 +152,40 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
-  if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()] })
+  if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
+  if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
+  if (req.method === 'POST' && url.pathname === '/api/sessions/resume') {
+    const b = await readBody(req)
+    const h = history.find((x) => x.sessionId === b.sessionId)
+    if (!h) return json(404, { error: 'No transcript for that session.' })
+    if (h.running && !b.force) return json(409, { error: 'that session is still running', pid: unmanaged.find((u) => u.sessionId === h.sessionId)?.pid ?? null })
+    unmanaged = unmanaged.filter((u) => u.sessionId !== h.sessionId); pushUnmanaged()
+    h.running = true; h.managed = true
+    const id = h.sessionId, tmux = `aw-${id}`
+    const s = mkSession(id, h.worldId, { repoName: path.basename(h.repo), repo: h.repo, cwd: h.cwd, task: h.lastPrompt, state: 'starting', now: 'Starting', tmux: { session: tmux, pane: '%9' } })
+    sessions.set(`starting:${tmux}`, { ...s, id: `starting:${tmux}` }); upsert(sessions.get(`starting:${tmux}`))
+    setTimeout(() => { sessions.delete(`starting:${tmux}`); broadcast({ type: 'session-removed', id: `starting:${tmux}` }); sessions.set(id, { ...s, state: 'idle', now: 'Resumed' }); upsert(sessions.get(id)) }, 2500)
+    return json(201, { tmuxSession: tmux })
+  }
   if (req.method === 'POST' && url.pathname === '/api/sessions') {
     const b = await readBody(req)
-    if (!b.task || !b.repo) return json(400, { message: 'Task and repo are required.' })
+    if (!b.repo) return json(400, { message: 'Task and repo are required.' })
     if (/bad/.test(b.task)) return json(500, { message: 'Could not start tmux: no server running.' })
     const id = `repo-new-${sessions.size}`
-    const s = mkSession(id, b.worldId, { repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
-    sessions.set(id, s); upsert(s)
+    const s = mkSession(id, b.worldId, { state: 'starting', now: 'Starting', repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
+    const sid = `starting:${s.tmux.session}`
+    sessions.set(sid, { ...s, id: sid }); upsert(sessions.get(sid))
+    setTimeout(() => { sessions.delete(sid); broadcast({ type: 'session-removed', id: sid }); sessions.set(id, { ...s, state: 'working', now: 'Working' }); upsert(sessions.get(id)) }, 2500)
     return json(201, { id, tmuxSession: s.tmux.session })
   }
+  const dm = url.pathname.match(/^\/api\/demo\/(ask|done)$/)
+  if (DEMO && dm && req.method === 'POST') {
+    const s = sessions.get(dm[1] === 'ask' ? 'repo-b' : 'repo-a')
+    demoStep[dm[1]](s); upsert(s); return json(200, { ok: true })
+  }
   if (url.pathname === '/api/fs' && req.method === 'GET') {
-    const want = path.resolve(url.searchParams.get('path') || os.homedir())
+    const want = path.resolve(url.searchParams.get('path') || (DEMO ? DEMO_DIR : os.homedir()))
+    if (DEMO && !(want === DEMO_DIR || want.startsWith(DEMO_DIR + '/'))) return json(400, { error: 'Demo mode only browses /tmp/demo.' })
     try {
       const entries = fs.readdirSync(want, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => { const p = path.join(want, d.name); return { name: d.name, path: p, isRepo: fs.existsSync(path.join(p, '.git')) } })
       return json(200, { path: want, parent: want === '/' ? null : path.dirname(want), entries })
@@ -152,7 +222,7 @@ const server = http.createServer(async (req, res) => {
     if (m[2] === 'catchup') {
       if (s.catchupRunning) return json(409, { error: 'Catch-up is already running.' })
       s.catchupRunning = true; upsert(s)
-      setTimeout(() => { s.catchupRunning = false; s.catchupAt = now(); s.catchup = { asked: s.task, did: `Worked on ${s.id}. (mock summary)`, needs: s.card ? 'Your decision on the open request' : '' }; upsert(s) }, 1500)
+      setTimeout(() => { s.catchupRunning = false; s.catchupAt = now(); s.catchup = { asked: s.task, did: s.demo?.did ?? `Worked on ${s.id}. (mock summary)`, needs: s.demo ? s.demo.needs : (s.card ? 'Your decision on the open request' : '') }; upsert(s) }, 1500)
       res.writeHead(202, { 'Content-Type': 'application/json' }); return res.end('{"ok":true}')
     }
     if (m[2] === 'permission') {
@@ -187,17 +257,44 @@ server.on('upgrade', (req, socket) => {
     socket.on('close', () => wsClients.delete(socket))
     socket.on('error', () => wsClients.delete(socket))
     onFrames(socket, () => {})
-    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()] })))
+    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()], unmanaged })))
     return
   }
-  // /pty: echo terminal
+  // /pty: echo terminal (imitates the Claude prompt with a slash-command menu; MOCK_ECHO=1 for a plain echo)
   const id = url.searchParams.get('session') || '?'
   socket.on('error', () => {})
-  socket.write(frame(`\x1b[32mmock terminal for ${id}\x1b[0m\r\n$ `))
+  if (process.env.MOCK_ECHO) { // plain echo terminal
+    socket.write(frame(`\x1b[32mmock terminal for ${id}\x1b[0m\r\n$ `))
+    onFrames(socket, (text) => {
+      let m
+      try { m = JSON.parse(text) } catch { return }
+      if (m.t === 'in') socket.write(frame(String(m.d).replace(/\r/g, '\r\n$ ')))
+    })
+    return
+  }
+  const s = sessions.get(id)
+  const SKILLS = [['checkpoint', 'Is this session still worth keeping?'], ['clear', 'Clear the conversation'], ['commit', 'Commit with a good message'], ['compact', 'Summarise the context'], ['handover-save', 'Save the plan before /clear'], ['mr-create', 'Open a merge request'], ['ship-check', 'Final check before merging']]
+  const menu = (buf) => (buf.startsWith('/') && !buf.includes(' ') ? SKILLS.filter(([n]) => n.startsWith(buf.slice(1))) : [])
+  const render = (buf) => {
+    const items = menu(buf)
+    const list = items.map(([n, d], i) => `${i === 0 ? '\x1b[7m' : ''} /${n.padEnd(14)}\x1b[0m\x1b[2m ${d}\x1b[0m`).join('\r\n')
+    return `\r\x1b[J\x1b[1m>\x1b[0m ${buf}` + (items.length ? `\x1b7\r\n${list}\x1b8` : '')
+  }
+  let buf = ''
+  socket.write(frame(`\x1b[1m✻ Claude Code\x1b[0m \x1b[2m(demo)\x1b[0m\r\n\r\n\x1b[1m>\x1b[0m ${s?.task ?? ''}\r\n\r\n⏺ Reading the project files\r\n  \x1b[2m⎿ Read 4 files\x1b[0m\r\n⏺ ${s?.now ?? 'Working'}\r\n\r\n` + render('')))
   onFrames(socket, (text) => {
     let m
     try { m = JSON.parse(text) } catch { return }
-    if (m.t === 'in') socket.write(frame(String(m.d).replace(/\r/g, '\r\n$ ')))
+    if (m.t !== 'in') return
+    for (const ch of String(m.d)) {
+      if (ch === '\r') {
+        const line = buf; buf = ''
+        const reply = line.startsWith('/') ? `\x1b[2mRunning ${line.split(' ')[0]} ...\x1b[0m` : '⏺ On it. I will check the failing test first.'
+        socket.write(frame(`\r\x1b[J\x1b[1m>\x1b[0m ${line}\r\n\r\n${reply}\r\n\r\n` + render('')))
+      } else if (ch === '\x7f') { buf = buf.slice(0, -1); socket.write(frame(render(buf))) }
+      else if (ch === '\t') { const it = menu(buf)[0]; if (it) { buf = `/${it[0]} `; socket.write(frame(render(buf))) } }
+      else if (ch >= ' ') { buf += ch; socket.write(frame(render(buf))) }
+    }
   })
 })
 

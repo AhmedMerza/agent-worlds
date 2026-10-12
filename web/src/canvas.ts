@@ -1,6 +1,6 @@
 import type { RoomGroup, Session, SessionState } from './types'
 import { tiredLevel, waitMinutes, ctxColor, roomConflicts } from './logic'
-import { ROOM_W, ROOM_H, FLOOR_TOP, ZONE_X, assignZones, slotPos, slotWidth, capacity, retarget, walkPos, type Zone, type Walker } from './zones'
+import { ROOM_W, ROOM_H, FLOOR_TOP, ZONE_X, assignZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, type Zone, type Walker } from './zones'
 
 export const W = ROOM_W
 const WALL_H = 48
@@ -10,7 +10,7 @@ export interface DrawOpts { group: RoomGroup; selectedId: string | null; t: numb
 export const H = ROOM_H
 
 export const STATE_COLOR: Record<SessionState, string> = {
-  working: '#6aaef0', waiting: '#f2b84b', done: '#72cf98', error: '#ee705f', idle: '#8a92a0',
+  starting: '#b5bcc8', working: '#6aaef0', waiting: '#f2b84b', done: '#72cf98', error: '#ee705f', idle: '#8a92a0',
 }
 
 // ---- colour helpers ----
@@ -143,14 +143,25 @@ function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: n
     }
   } else if (zone === 'lounge') {
     hb = { x: x - 12, y: top, w: 24, h: 36 }
-    ctx.globalAlpha = 0.6
+    const starting = s.state === 'starting'
+    ctx.globalAlpha = s.ghost ? 0.3 : starting ? 1 : 0.6
     drawSprite(ctx, x - 12, top, 3, pal(l), step)
     ctx.globalAlpha = 1
-    if (!moving) {
+    if (s.ghost) { // dashed outline: there, but not ours
+      ctx.fillStyle = 'rgba(236,230,217,0.6)'
+      for (let d = 0; d < 36; d += 4) { ctx.fillRect(x - 14, top - 2 + d, 1, 2); ctx.fillRect(x + 13, top - 2 + d, 1, 2) }
+      for (let d = 0; d < 28; d += 4) { ctx.fillRect(x - 14 + d, top - 2, 2, 1); ctx.fillRect(x - 14 + d, top + 34, 2, 1) }
+    }
+    if (starting) bubble(ctx, x, top, '…', STATE_COLOR.starting, 0)
+    if (!moving && !s.ghost && !starting) {
       ctx.fillStyle = '#8a92a0'; ctx.font = '600 9px "Pixelify Sans", monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
       ctx.fillText('z', x + 10, top - 2 - ((tt / 400 | 0) % 3)); ctx.fillText('z', x + 15, top - 8 - ((tt / 400 | 0) % 3))
     }
     label(ctx, s.repoName, x, top + 42, slotWidth('lounge', n) - 2)
+    if (s.ghost) {
+      ctx.fillStyle = '#8a92a0'; ctx.font = '600 7px "Pixelify Sans", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText('plain terminal', x, top + 51)
+    }
   } else {
     const m = waitMinutes(s, o.now), tired = tiredLevel(m)
     const lift = s.state === 'waiting' && !tired && !moving ? (Math.floor(tt / 450) % 2) * 2 : 0
@@ -237,7 +248,8 @@ function paintRoom(ctx: CanvasRenderingContext2D, o: DrawOpts, wall: string, tri
     const list = zones[zone], cap = capacity(zone)
     list.forEach((s, i) => {
       if (i >= cap) return
-      const w = retarget(o.walkers.get(s.id), slotPos(zone, i, list.length), o.t, o.reduced)
+      const target = slotPos(zone, i, list.length)
+      const w = retarget(o.walkers.get(s.id) ?? (s.state === 'starting' && !o.reduced ? doorWalker(target, o.t) : undefined), target, o.t, o.reduced)
       o.walkers.set(s.id, w)
       const p = walkPos(w.from, w.to, o.t - w.start, o.reduced)
       placed.push({ s, zone, x: Math.round(p.x), top: Math.round(p.top), dest: w.to, moving: p.moving, n: list.length })

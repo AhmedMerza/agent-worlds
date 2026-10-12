@@ -1,5 +1,5 @@
 // Server contract (see team ledger "Contracts"). Fields marked v2/v3 may be null/empty until later rounds.
-export type SessionState = 'working' | 'waiting' | 'done' | 'error' | 'idle'
+export type SessionState = 'starting' | 'working' | 'waiting' | 'done' | 'error' | 'idle'
 
 export interface World { id: string; name: string; color: string; repos: string[] }
 export interface LogLine { t: number; text: string }
@@ -11,8 +11,10 @@ export interface Question { question: string; header?: string; multiSelect: bool
 export interface ReviewFile { path: string; added: number; deleted: number }
 export interface Review { files: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
 
+export interface PermissionTarget { type: 'command' | 'file' | 'url' | 'other'; value: string }
+
 export type Card =
-  | { kind: 'permission'; requestId: string; tool: string; command: string | null; input: unknown; risky: string | null; seenCount: number; live?: boolean }
+  | { kind: 'permission'; requestId: string; tool: string; command: string | null; target?: PermissionTarget; input: unknown; risky: string | null; seenCount: number; live?: boolean }
   | { kind: 'question'; requestId: string; questions: Question[]; live?: boolean }
   | { kind: 'done'; summary: string | null; review?: Review | null }
   | { kind: 'error'; summary: string }
@@ -40,10 +42,18 @@ export interface Session {
   conflicts?: { withId: string; reason: string }[]
   startedAt: number
   updatedAt: number
+  /** Set only on the drawn stand-in for a Claude running in a plain terminal (never sent by the server). */
+  ghost?: Unmanaged
 }
 
+/** A Claude process running outside Agent Worlds. */
+export interface Unmanaged { pid: number; cwd: string; repo: string | null; worldId: string | null; sessionId: string | null; inTmux: boolean; since: number }
+
+export interface HistorySession { sessionId: string; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean }
+
 export type ServerMessage =
-  | { type: 'snapshot'; worlds: World[]; sessions: Session[] }
+  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; unmanaged?: Unmanaged[] }
+  | { type: 'unmanaged'; unmanaged: Unmanaged[] }
   | { type: 'session'; session: Session }
   | { type: 'session-removed'; id: string }
   | { type: 'worlds'; worlds: World[] }

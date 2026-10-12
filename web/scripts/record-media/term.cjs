@@ -1,0 +1,20 @@
+const { open, record, move, sleep } = require('./rec.cjs')
+;(async () => {
+  const { b, p, errs } = await open(1440, 900)
+  await p.goto('' + (process.env.MOCK_URL || 'http://127.0.0.1:4322') + '/'); await p.waitForSelector('canvas'); await sleep(1500)
+  await record(p, { x: 0, y: 0, width: 1440, height: 900 }, 'terminal.gif', async () => {
+    await sleep(1200)
+    const chip = p.locator('.chip', { hasText: 'repo-d' })
+    await move(p, chip); await sleep(300); await chip.click(); await sleep(1200)
+    const btn = p.getByRole('button', { name: 'Catch me up' })
+    await move(p, btn); await sleep(300); await btn.click(); await sleep(2800)
+    await move(p, p.locator('.xterm')); await p.locator('.xterm').click(); await sleep(700)
+    await p.keyboard.type('/', { delay: 140 }); await sleep(900)
+    await p.keyboard.type('c', { delay: 140 }); await sleep(900)
+    await p.keyboard.type('o', { delay: 140 }); await sleep(1200)
+    for (let i = 0; i < 3; i++) { await p.keyboard.press('Backspace'); await sleep(140) }
+    await p.keyboard.type('check the label text for the printer screen', { delay: 70 }); await sleep(500)
+    await p.keyboard.press('Enter'); await sleep(2200)
+  })
+  console.log('errors', JSON.stringify(errs)); await b.close()
+})()

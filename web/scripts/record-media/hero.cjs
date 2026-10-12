@@ -1,0 +1,16 @@
+const { open, record, move, sleep } = require('./rec.cjs')
+;(async () => {
+  const { b, p, errs } = await open(1440, 800)
+  await p.goto('' + (process.env.MOCK_URL || 'http://127.0.0.1:4322') + '/'); await p.waitForSelector('canvas'); await sleep(1500)
+  const post = (s) => p.evaluate((x) => fetch('/api/demo/' + x, { method: 'POST' }), s)
+  await p.screenshot({ path: require('path').join(require('os').tmpdir(), 'awrec-hero-preview.png') })
+  await record(p, { x: 0, y: 0, width: 1440, height: 540 }, 'hero.gif', async () => {
+    await sleep(1500)
+    await post('ask'); await sleep(2800)
+    await move(p, p.getByRole('button', { name: 'Allow once' }).first()); await sleep(500)
+    await p.getByRole('button', { name: 'Allow once' }).first().click(); await sleep(2600)
+    await post('done'); await sleep(2800)
+    await move(p, p.locator('.card summary').first()); await sleep(1200)
+  })
+  console.log('errors', JSON.stringify(errs)); await b.close()
+})()
