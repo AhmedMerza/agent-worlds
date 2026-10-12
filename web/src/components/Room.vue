@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup } from '../types'
-import { drawRoom, hitTest, layout, W, K, type Hit } from '../canvas'
+import { drawRoom, hitTest, W, type Hit } from '../canvas'
+import { roomHeight, type Walker } from '../zones'
 import { LABEL, NEEDS_YOU, roomConflicts, UNSORTED } from '../logic'
 import { state, select, ui } from '../store'
 
@@ -9,15 +10,33 @@ const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>
 defineEmits<{ 'new-task': [worldId: string] }>()
 const conflictN = computed(() => { const c = roomConflicts(props.group.sessions); return c.links.length + c.badges.length })
 const canCreate = computed(() => props.group.world.id !== UNSORTED.id)
+const wrap = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
-const size = computed(() => layout(props.group.sessions.length))
-const working = computed(() => props.group.sessions.filter((s) => s.state === 'working').length)
-const needN = computed(() => props.group.sessions.filter((s) => s.card && NEEDS_YOU.includes(s.state)).length)
+const count = (st: (s: string) => boolean) => props.group.sessions.filter((s) => st(s.state)).length
+const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))
+const working = computed(() => count((st) => st === 'working'))
+const idle = computed(() => count((st) => st === 'idle'))
 
+const h = computed(() => roomHeight(props.group.sessions))
+const walkers = new Map<string, Walker>()
 let hits: Hit[] = []
 let raf = 0
+let k = 1
 let lastStatic = ''
+
+/** Integer pixel scale so the pixel art stays crisp: as many whole device pixels per art pixel as fit. */
+function fitCanvas() {
+  const c = canvas.value, box = wrap.value
+  if (!c || !box) return
+  const dpr = window.devicePixelRatio || 1
+  const avail = box.clientWidth * dpr
+  k = Math.max(1, Math.floor(avail / W))
+  c.width = W * k; c.height = h.value * k
+  c.style.width = avail >= W ? `${(W * k) / dpr}px` : '100%'
+  lastStatic = ''
+}
+
 function frame(t: number) {
   raf = requestAnimationFrame(frame)
   const c = canvas.value
@@ -25,17 +44,26 @@ function frame(t: number) {
   const ctx = c.getContext('2d')
   if (!ctx) return
   // With reduced motion the picture only changes when data does, so skip identical redraws.
-  const key = reduced ? JSON.stringify([props.group.sessions, state.selectedId, Math.floor(state.now / 60000)]) : ''
-  if (reduced && key === lastStatic) return
-  lastStatic = key
-  hits = drawRoom(ctx, { group: props.group, selectedId: state.selectedId, t, now: state.now, reduced })
+  if (reduced) {
+    const key = JSON.stringify([props.group.sessions, state.selectedId, Math.floor(state.now / 60000), c.width, h.value])
+    if (key === lastStatic) return
+    lastStatic = key
+  }
+  hits = drawRoom(ctx, { group: props.group, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: h.value })
 }
-onMounted(() => { raf = requestAnimationFrame(frame) })
-onBeforeUnmount(() => cancelAnimationFrame(raf))
+let ro: ResizeObserver | null = null
+onMounted(() => {
+  fitCanvas()
+  ro = new ResizeObserver(fitCanvas)
+  if (wrap.value) ro.observe(wrap.value)
+  raf = requestAnimationFrame(frame)
+})
+watch(h, fitCanvas, { flush: 'post' })
+onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect() })
 
 function at(e: MouseEvent): Hit | undefined {
   const b = canvas.value!.getBoundingClientRect()
-  return hitTest(hits, (e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * size.value.H)
+  return hitTest(hits, (e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * h.value)
 }
 const onClick = (e: MouseEvent) => { const h = at(e); if (h) select(h.id) }
 const onMove = (e: MouseEvent) => { canvas.value!.style.cursor = at(e) ? 'pointer' : 'default' }
@@ -45,17 +73,19 @@ const onMove = (e: MouseEvent) => { canvas.value!.style.cursor = at(e) ? 'pointe
   <article class="room" :style="{ '--tint': group.world.color }">
     <header>
       <h2>{{ group.world.name }}</h2>
-      <span class="meta">{{ group.sessions.length }} {{ group.sessions.length === 1 ? 'session' : 'sessions' }} · {{ working }} working<template v-if="needN"> · {{ needN }} need you</template></span>
+      <span class="meta">{{ needN }} need you · {{ working }} working · {{ idle }} idle</span>
       <span v-if="conflictN" class="warn" :title="'Sessions in this room may be working on the same thing'">⚠ {{ conflictN }}</span>
-      <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New task</button>
+      <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>
     </header>
-    <canvas ref="canvas" :width="W * K" :height="size.H * K" :aria-label="`${group.world.name} room`" @click="onClick" @mousemove="onMove" />
+    <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @mousemove="onMove" /></div>
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
-      <template v-for="s in group.sessions" :key="s.id"><button class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span>
-      </button>
-      <button v-if="!canCreate" class="chip-more" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button></template>
+      <template v-for="s in group.sessions" :key="s.id">
+        <button class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
+          <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span>
+        </button>
+        <button v-if="!canCreate" class="chip-more" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
+      </template>
     </div>
   </article>
 </template>

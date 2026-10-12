@@ -28,7 +28,7 @@ function openNewTask(worldId?: string) {
   const g = groups.value.find((x) => x.sessions.includes(selected.value!))
   const id = worldId ?? g?.world.id
   const w = state.worlds.find((x) => x.id === id)
-  if (!w) { showToast('Select a session in a world first. Unsorted sessions have no world to start a task in.'); return }
+  if (!w) { showToast('Select a session in a world first. Unsorted sessions have no world to start a session in.'); return }
   newTaskWorld.value = w.id
 }
 async function onNotify() {

@@ -6,7 +6,7 @@ onMounted(() => box.value?.focus())
 const rows: [string, string][] = [
   ['Space', 'Jump to the next session that needs you (queue order)'],
   ['1 – 9', 'Select the session with that number (the small number on each chip)'],
-  ['N', 'New task in the selected session\'s world'],
+  ['N', 'New session in the selected session\'s world'],
   ['C', 'Catch me up on the selected session (Haiku reads its transcript)'],
   ['W', 'Open the Worlds panel (create, rename, reorder, delete)'],
   ['M', 'Mute or unmute the alert sound'],
