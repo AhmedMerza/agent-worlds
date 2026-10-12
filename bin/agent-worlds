@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Agent Worlds CLI. Runs the TypeScript sources directly (Node >= 24 strips types natively).
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+exec node --disable-warning=ExperimentalWarning "$here/../server/src/cli.ts" "$@"

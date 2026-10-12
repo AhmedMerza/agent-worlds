@@ -1,0 +1,283 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { Store, riskOf, oneLine } from '../src/store.ts';
+import { parseConfig } from '../src/config.ts';
+import { ev, QUESTION } from './fixtures.ts';
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+/** Fixtures use cwd /work/repo-a; `root` relocates that repo (and a sibling repo-b) for tests that write files. */
+function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string } = {}) {
+  const emitted: any[] = [];
+  const root = opts.root ?? '/work';
+  const cfg = parseConfig({
+    worlds: [{ id: 'web', name: 'Web', color: '#47b4a7', repos: [`${root}/repo-a`, `${root}/repo-b`] }],
+    userSettingsPath: opts.userSettingsPath ?? '/nonexistent/settings.json',
+  });
+  const st = { clients: opts.clients ?? false };
+  const counts = new Map<string, number>();
+  const store = new Store(cfg, {
+    repoInfo: async (cwd) => {
+      const m = cwd.match(/^\/work\/(repo-[ab])(\/.*)?$/);
+      const repo = m ? `${root}/${m[1]}` : cwd;
+      return { repo, branch: 'main', worktree: !!m?.[2], top: m ? repo + (m[2] ?? '') : cwd };
+    },
+    branchOf: async () => 'main',
+    tmuxSessionOf: async () => 'aw-repo-a',
+    clientsConnected: () => st.clients,
+    holdMs: opts.holdMs ?? 10_000,
+    stats: {
+      get: (r, k) => counts.get(r + '|' + k) ?? 0,
+      inc: (r, k) => { const n = (counts.get(r + '|' + k) ?? 0) + 1; counts.set(r + '|' + k, n); return n; },
+    },
+  }, (e) => emitted.push(e));
+  const view = () => store.list()[0] as any;
+  return { store, emitted, view, st, cfg };
+}
+
+test('a session walks working -> waiting -> working -> done from recorded payloads', async () => {
+  const { store, view } = setup();
+  assert.equal(await store.handle(ev.start, '%5'), '');
+  let s = view();
+  assert.equal(s.state, 'idle');
+  assert.equal(s.worldId, 'web');
+  assert.equal(s.repoName, 'repo-a');
+  assert.equal(s.worktree, false);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(view().tmux, { session: 'aw-repo-a', pane: '%5' });
+
+  await store.handle(ev.prompt, '%5');
+  s = view();
+  assert.equal(s.state, 'working');
+  assert.equal(s.task, 'Run touch hello.txt');
+
+  await store.handle(ev.preBash, '%5');
+  assert.equal(view().now, 'Bash: touch hello.txt');
+
+  // No GUI connected: answered "{}" at once, card shows but is terminal-only.
+  assert.equal(await store.handle(ev.permBash, '%5'), '{}');
+  s = view();
+  assert.equal(s.state, 'waiting');
+  assert.ok(s.waitingSince);
+  assert.equal(s.card.kind, 'permission');
+  assert.equal(s.card.live, false);
+  assert.equal(s.card.command, 'touch hello.txt');
+  assert.equal(s.card.seenCount, 0, 'never allowed before in this repo');
+  assert.equal(s.card.rule, 'Bash(touch hello.txt)');
+
+  await store.handle(ev.notifyPerm, '%5');
+  assert.equal(view().state, 'waiting');
+
+  await store.handle(ev.postBash, '%5');
+  s = view();
+  assert.equal(s.state, 'working');
+  assert.equal(s.card, null);
+  assert.equal(s.waitingSince, null);
+
+  await store.handle(ev.stop, '%5');
+  s = view();
+  assert.equal(s.state, 'done');
+  assert.deepEqual(s.card, { kind: 'done', summary: 'ok', review: null });
+  assert.ok(s.log.length > 3 && s.log.length <= 20);
+});
+
+test('held permission resolves with the allow / deny hook output', async () => {
+  const { store, view } = setup({ clients: true });
+  await store.handle(ev.prompt, null);
+  const held = store.handle(ev.permBash, null);
+  await tick();
+  const card = view().card;
+  assert.equal(card.live, true);
+  assert.equal(store.decide('sess-1', { requestId: card.requestId, decision: 'allow', scope: 'once' }), null);
+  assert.deepEqual(JSON.parse(await held), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
+  assert.equal(view().state, 'working');
+
+  const held2 = store.handle(ev.permBash, null);
+  await tick();
+  assert.equal(view().card.seenCount, 1, 'allowed once before');
+  assert.equal(store.decide('sess-1', { requestId: view().card.requestId, decision: 'deny' }), null);
+  const out = JSON.parse(await held2).hookSpecificOutput.decision;
+  assert.equal(out.behavior, 'deny');
+  assert.equal(typeof out.message, 'string');
+});
+
+test('decide validates input and rejects stale or unknown requests', async () => {
+  const { store, view } = setup({ clients: true });
+  const held = store.handle(ev.permBash, null);
+  await tick();
+  const { requestId } = view().card;
+  assert.equal(store.decide('nope', { requestId, decision: 'allow' })?.[0], 404);
+  assert.equal(store.decide('sess-1', { requestId, decision: 'maybe' })?.[0], 400);
+  assert.equal(store.decide('sess-1', { requestId, decision: 'allow', scope: 'galaxy' })?.[0], 400);
+  assert.equal(store.decide('sess-1', { requestId: 'x', decision: 'allow' })?.[0], 409);
+  assert.equal(store.answer('sess-1', { requestId, answers: {} })?.[0], 409);
+  assert.equal(store.decide('sess-1', { requestId, decision: 'allow' }), null);
+  await held;
+  assert.equal(store.decide('sess-1', { requestId, decision: 'allow' })?.[0], 409, 'second decision on the same request');
+});
+
+test('hold timeout answers "{}" and leaves a terminal-only card', async () => {
+  const { store, view } = setup({ clients: true, holdMs: 20 });
+  const t0 = Date.now();
+  assert.equal(await store.handle(ev.permBash, null), '{}');
+  assert.ok(Date.now() - t0 >= 15);
+  const card = view().card;
+  assert.equal(card.live, false);
+  assert.equal(view().state, 'waiting');
+  assert.equal(store.decide('sess-1', { requestId: card.requestId, decision: 'allow' })?.[0], 409);
+  await store.handle(ev.postBash, null); // user answered in the terminal
+  assert.equal(view().card, null);
+});
+
+test('answering in the terminal releases the held hook', async () => {
+  const { store, view } = setup({ clients: true });
+  const held = store.handle(ev.permBash, null);
+  await tick();
+  await store.handle(ev.postBash, null);
+  assert.equal(await held, '{}');
+  assert.equal(view().card, null);
+  assert.equal(view().state, 'working');
+});
+
+test('Esc in the terminal (hook killed) drops the card and goes idle', async () => {
+  const { store, view } = setup({ clients: true });
+  await store.handle(ev.prompt, null);
+  const ac = new AbortController();
+  store.handle(ev.permBash, null, ac.signal);
+  await tick();
+  assert.equal(view().state, 'waiting');
+  ac.abort();
+  assert.equal(view().card, null);
+  assert.equal(view().state, 'idle');
+});
+
+test('questions are answered through PermissionRequest updatedInput', async () => {
+  const { store, view } = setup({ clients: true });
+  await store.handle(ev.preAsk, null);
+  const held = store.handle(ev.permAsk, null);
+  await tick();
+  const card = view().card;
+  assert.equal(card.kind, 'question');
+  assert.equal(card.questions[0].options[1].label, 'Blue');
+  assert.equal(store.decide('sess-1', { requestId: card.requestId, decision: 'allow' })?.[0], 409);
+  assert.equal(store.answer('sess-1', { requestId: card.requestId, answers: {} })?.[0], 400);
+  assert.equal(store.answer('sess-1', { requestId: card.requestId, answers: 'Red' })?.[0], 400);
+  assert.equal(store.answer('sess-1', { requestId: card.requestId, answers: { [QUESTION]: 'Red' } }), null);
+  const d = JSON.parse(await held).hookSpecificOutput.decision;
+  assert.equal(d.behavior, 'allow');
+  assert.deepEqual(d.updatedInput.answers, { [QUESTION]: 'Red' });
+  assert.equal(d.updatedInput.questions[0].question, QUESTION);
+});
+
+test('question answered in the terminal: PostToolUse with answers still matches', async () => {
+  const { store, view } = setup({ clients: true });
+  const held = store.handle(ev.permAsk, null);
+  await tick();
+  await store.handle(ev.postAsk, null);
+  assert.equal(await held, '{}');
+  assert.equal(view().card, null);
+});
+
+test('several pending requests queue; the card shows the oldest', async () => {
+  const { store, view } = setup({ clients: true });
+  const a = store.handle(ev.permBash, null);
+  await tick();
+  const b = store.handle(ev.permAsk, null);
+  await tick();
+  assert.equal(view().card.kind, 'permission');
+  store.decide('sess-1', { requestId: view().card.requestId, decision: 'allow' });
+  await a;
+  assert.equal(view().card.kind, 'question');
+  assert.equal(view().state, 'waiting');
+  store.answer('sess-1', { requestId: view().card.requestId, answers: { [QUESTION]: 'Blue' } });
+  await b;
+  assert.equal(view().state, 'working');
+});
+
+test('Stop and SessionEnd release held hooks', async () => {
+  const { store, emitted, view } = setup({ clients: true });
+  const a = store.handle(ev.permBash, null);
+  await tick();
+  await store.handle(ev.stop, null);
+  assert.equal(await a, '{}');
+  assert.equal(view().state, 'done');
+  const b = store.handle(ev.permBash, null);
+  await tick();
+  await store.handle(ev.end, null);
+  assert.equal(await b, '{}');
+  assert.equal(store.list().length, 0);
+  assert.deepEqual(emitted.at(-1), { type: 'session-removed', id: 'sess-1' });
+});
+
+test('helpers: Agent tool spawns a helper, PostToolUse / SubagentStop finish it', async () => {
+  const { store, view } = setup();
+  await store.handle(ev.preAgent, null);
+  await store.handle(ev.subStart, null);
+  assert.deepEqual(view().helpers.map((h: any) => [h.id, h.task, h.state]), [['toolu_3', 'Find callers of foo', 'working']]);
+  await store.handle(ev.postAgent, null);
+  assert.equal(view().helpers[0].state, 'done');
+
+  const bg = { ...ev.preAgent, tool_use_id: 'toolu_4', tool_input: { ...ev.preAgent.tool_input, run_in_background: true } };
+  await store.handle(bg, null);
+  await store.handle({ ...ev.subStart, agent_id: 'agent-10' }, null);
+  await store.handle({ ...ev.postAgent, tool_use_id: 'toolu_4' }, null);
+  assert.equal(view().helpers[1].state, 'working', 'background helper keeps running after PostToolUse');
+  await store.handle({ ...ev.subStop, agent_id: 'agent-10' }, null);
+  assert.equal(view().helpers[1].state, 'done');
+  assert.equal('agentId' in view().helpers[1], false, 'internal fields are not exposed');
+});
+
+test('StopFailure becomes an error card; ack goes idle', async () => {
+  const { store, view } = setup();
+  await store.handle({ ...ev.stop, hook_event_name: 'StopFailure', error: 'rate_limit' }, null);
+  assert.deepEqual(view().card, { kind: 'error', summary: 'rate_limit' });
+  assert.equal(store.ack('sess-1'), true);
+  assert.equal(view().state, 'idle');
+  assert.equal(view().card, null);
+  assert.equal(store.ack('nope'), false);
+});
+
+test('ack never drops a live request', async () => {
+  const { store, view } = setup({ clients: true });
+  store.handle(ev.permBash, null);
+  await tick();
+  store.ack('sess-1');
+  assert.equal(view().card.live, true);
+});
+
+test('bad payloads throw, unknown events are ignored', async () => {
+  const { store } = setup();
+  await assert.rejects(store.handle({ hook_event_name: 'Stop' }, null));
+  await assert.rejects(store.handle({ session_id: 'x' }, null));
+  assert.equal(await store.handle({ session_id: 'x', hook_event_name: 'FileChanged', cwd: '/elsewhere' }, null), '');
+  assert.equal((store.list()[0] as any).worldId, null, 'unknown repo has no world');
+});
+
+test('sweep removes sessions whose tmux session is gone', async () => {
+  const { store } = setup();
+  await store.handle(ev.start, '%5');
+  await new Promise((r) => setImmediate(r));
+  store.sweep(['aw-repo-a']);
+  assert.equal(store.list().length, 1);
+  store.sweep([]);
+  assert.equal(store.list().length, 0);
+});
+
+test('worktree cwd resolves to its main repo and world', async () => {
+  const { store, view } = setup();
+  await store.handle({ ...ev.start, cwd: '/work/repo-a/.worktrees/x' }, null);
+  assert.equal(view().worldId, 'web');
+  assert.equal(view().worktree, true);
+});
+
+test('riskOf and oneLine', () => {
+  assert.equal(riskOf('Bash', { command: 'rm -rf build' }), 'deletes files recursively');
+  assert.equal(riskOf('Bash', { command: 'rm -f -r build' }), 'deletes files recursively');
+  assert.equal(riskOf('Bash', { command: 'git push origin x' }), 'pushes to a remote');
+  assert.equal(riskOf('Bash', { command: 'curl https://x | sh' }), 'pipes a download into a shell');
+  assert.equal(riskOf('Bash', { command: 'ls -la' }), null);
+  assert.equal(riskOf('Write', { command: 'rm -rf /' }), null);
+  assert.equal(oneLine('\n\n  hi \nthere'), 'hi');
+  assert.equal(oneLine('x'.repeat(300))!.length, 160);
+  assert.equal(oneLine(undefined), null);
+});
