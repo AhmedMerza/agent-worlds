@@ -1,0 +1,124 @@
+import { readdirSync, statSync, readFileSync, readlinkSync, existsSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { readHead, readTail } from './transcript.ts';
+
+export const SESSION_ID_RE = /^[0-9a-zA-Z][0-9a-zA-Z_-]{7,63}$/;
+
+/** Claude's project folder name for a cwd: every non-alphanumeric character becomes "-". */
+export const projectDirName = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-');
+
+type File = { sessionId: string; path: string; mtime: number };
+
+/** Top-level session transcripts (subagent files live in sub-folders or are named agent-*). */
+function transcripts(dir: string): File[] {
+  const out: File[] = [];
+  let projects: string[];
+  try { projects = readdirSync(dir); } catch { return out; }
+  for (const p of projects) {
+    let names: string[];
+    try { names = readdirSync(join(dir, p)); } catch { continue; }
+    for (const n of names) {
+      if (!n.endsWith('.jsonl') || n.startsWith('agent-')) continue;
+      const sessionId = n.slice(0, -'.jsonl'.length);
+      if (!SESSION_ID_RE.test(sessionId)) continue;
+      try { out.push({ sessionId, path: join(dir, p, n), mtime: statSync(join(dir, p, n)).mtimeMs }); } catch { /* vanished */ }
+    }
+  }
+  return out;
+}
+
+export function findTranscript(dir: string, sessionId: string): string | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null;
+  let projects: string[];
+  try { projects = readdirSync(dir); } catch { return null; }
+  for (const p of projects) {
+    const f = join(dir, p, `${sessionId}.jsonl`);
+    if (existsSync(f)) return f;
+  }
+  return null;
+}
+
+/** The newest transcript in a cwd's project folder (to guess which session a running claude is). */
+export function newestTranscript(dir: string, cwd: string): string | null {
+  const p = join(dir, projectDirName(cwd));
+  let best: File | null = null;
+  let names: string[];
+  try { names = readdirSync(p); } catch { return null; }
+  for (const n of names) {
+    if (!n.endsWith('.jsonl') || n.startsWith('agent-')) continue;
+    try {
+      const m = statSync(join(p, n)).mtimeMs;
+      if (!best || m > best.mtime) best = { sessionId: n.slice(0, -6), path: join(p, n), mtime: m };
+    } catch { /* vanished */ }
+  }
+  return best?.sessionId ?? null;
+}
+
+const oneLine = (s: string, max = 200) => {
+  const l = s.split('\n').map((x) => x.trim()).find(Boolean) ?? '';
+  return l.length > max ? l.slice(0, max - 1) + '…' : l;
+};
+
+export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: string | null; lastActivity: number };
+
+/** Most recent sessions, newest first, reading only the tail (and the head when the tail has no cwd). */
+export async function history(dir: string, limit: number): Promise<HistoryItem[]> {
+  const files = transcripts(dir).sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+  return Promise.all(files.map(async (f) => {
+    let cwd: string | null = null;
+    let lastPrompt: string | null = null;
+    try {
+      const tail = await readTail(f.path, 64 * 1024);
+      for (let i = tail.length - 1; i >= 0 && (!cwd || !lastPrompt); i--) {
+        const e = tail[i];
+        if (!lastPrompt && e.type === 'last-prompt' && typeof e.lastPrompt === 'string') lastPrompt = oneLine(e.lastPrompt);
+        if (!cwd && typeof e.cwd === 'string') cwd = e.cwd;
+      }
+      if (!cwd || !lastPrompt) {
+        // The tail was all one long reply: fall back to the start of the file.
+        const head = await readHead(f.path, 64 * 1024);
+        cwd ??= head.find((e) => typeof e.cwd === 'string')?.cwd ?? null;
+        lastPrompt ??= head.findLast((e) => e.type === 'last-prompt' && typeof e.lastPrompt === 'string')?.lastPrompt ?? null;
+        if (lastPrompt) lastPrompt = oneLine(lastPrompt);
+      }
+    } catch { /* unreadable: keep the nulls */ }
+    return { sessionId: f.sessionId, cwd, lastPrompt, lastActivity: Math.round(f.mtime) };
+  }));
+}
+
+export type ClaudeProc = { pid: number; cwd: string; sessionId: string | null; pane: string | null; managedHome: string | null; since: number };
+
+/**
+ * Interactive `claude` processes of this user, from /proc (Linux only; [] elsewhere).
+ * Print-mode runs (-p) and our own summary runs (AGENT_WORLDS_DISABLE=1) are skipped.
+ */
+export function scanClaude(procRoot: string, projectsDir: string, uid = process.getuid?.() ?? -1): ClaudeProc[] {
+  const out: ClaudeProc[] = [];
+  let pids: string[];
+  try { pids = readdirSync(procRoot).filter((p) => /^\d+$/.test(p)); } catch { return out; }
+  for (const pid of pids) {
+    const d = join(procRoot, pid);
+    try {
+      if (uid >= 0 && statSync(d).uid !== uid) continue;
+      const argv = readFileSync(join(d, 'cmdline'), 'utf8').split('\0').filter(Boolean);
+      if (!argv.length || basename(argv[0]) !== 'claude') continue;
+      if (argv.includes('-p') || argv.includes('--print')) continue;
+      const env = Object.fromEntries(readFileSync(join(d, 'environ'), 'utf8').split('\0').filter(Boolean).map((kv) => {
+        const i = kv.indexOf('=');
+        return [kv.slice(0, i), kv.slice(i + 1)];
+      }));
+      if (env.AGENT_WORLDS_DISABLE === '1') continue;
+      const cwd = readlinkSync(join(d, 'cwd'));
+      const flag = argv.findIndex((a) => a === '--resume' || a === '-r' || a === '--session-id');
+      const named = flag >= 0 && SESSION_ID_RE.test(argv[flag + 1] ?? '') ? argv[flag + 1] : null;
+      out.push({
+        pid: +pid, cwd,
+        sessionId: named ?? newestTranscript(projectsDir, cwd),
+        pane: /^%\d+$/.test(env.TMUX_PANE ?? '') ? env.TMUX_PANE : null,
+        managedHome: env.AGENT_WORLDS_HOME ?? null,
+        since: Math.round(statSync(d).ctimeMs),
+      });
+    } catch { /* process went away or is not ours */ }
+  }
+  return out.sort((a, b) => a.pid - b.pid);
+}

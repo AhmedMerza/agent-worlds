@@ -10,6 +10,8 @@ import { Stats } from './rules.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
 import { Worlds } from './worlds.ts';
+import { history, findTranscript, scanClaude, SESSION_ID_RE, type ClaudeProc } from './history.ts';
+import { readHead } from './transcript.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -25,7 +27,7 @@ const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.
 
 type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
-  home?: string; summarise?: Summarise; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
+  home?: string; summarise?: Summarise; procRoot?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -100,6 +102,27 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const recent = new Map<string, { at: number; reply: Promise<string> }>();
   const DEDUPE_MS = 500;
   const worlds = new Worlds(cfg, join(opts.home ?? homeDir(), 'config.json'), opts.resolveRepo);
+  // Running claude processes (Linux /proc), refreshed every 10 s.
+  let procs: ClaudeProc[] = [];
+  let unmanaged: Record<string, unknown>[] = [];
+  const repoCache = new Map<string, Promise<sys.RepoInfo>>();
+  const repoOf = (cwd: string) => {
+    if (!repoCache.has(cwd)) repoCache.set(cwd, (store.deps.repoInfo)(cwd));
+    if (repoCache.size > 500) repoCache.delete(repoCache.keys().next().value!);
+    return repoCache.get(cwd)!;
+  };
+  const isManaged = (p: ClaudeProc) => [...store.sessions.values()].some((s) => (p.pane && s.tmux?.pane === p.pane) || s.id === p.sessionId);
+  async function scan() {
+    procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
+    const next = await Promise.all(procs.filter((p) => !isManaged(p)).map(async (p) => {
+      const info = await repoOf(p.cwd);
+      return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldOf(info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since };
+    }));
+    if (JSON.stringify(next) !== JSON.stringify(unmanaged)) {
+      unmanaged = next;
+      broadcast({ type: 'unmanaged', unmanaged });
+    }
+  }
   const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
   const hostPort = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${cfg.port}`;
@@ -162,7 +185,40 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
     }
-    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list() });
+    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), unmanaged });
+    if (method === 'GET' && url.pathname === '/api/history') {
+      const n = Number(url.searchParams.get('limit') ?? 50);
+      const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
+      const running = new Set([...store.sessions.keys(), ...procs.map((p) => p.sessionId).filter(Boolean) as string[]]);
+      const items = await Promise.all((await history(cfg.claudeProjectsDir, limit)).map(async (h) => {
+        const info = h.cwd ? await repoOf(h.cwd) : null;
+        return {
+          ...h, repo: info?.repo ?? null, worldId: info ? store.worldOf(info.repo, h.cwd!) : null,
+          running: running.has(h.sessionId), managed: store.sessions.has(h.sessionId),
+        };
+      }));
+      return send(res, 200, { sessions: items });
+    }
+    if (method === 'POST' && url.pathname === '/api/sessions/resume') {
+      const b = await readBody(req);
+      if (typeof b.sessionId !== 'string' || !SESSION_ID_RE.test(b.sessionId)) return send(res, 400, { error: 'sessionId is required' });
+      if (b.worldId !== undefined && b.worldId !== null && !cfg.worlds.some((w) => w.id === b.worldId)) return send(res, 400, { error: 'unknown worldId' });
+      if (b.worktree === true) return send(res, 400, { error: 'resume in a worktree is not supported' });
+      const file = findTranscript(cfg.claudeProjectsDir, b.sessionId);
+      if (!file) return send(res, 404, { error: 'no transcript for that session' });
+      const cwd = (await readHead(file, 256 * 1024)).find((e) => typeof e.cwd === 'string')?.cwd as string | undefined;
+      if (!cwd || !sys.isDir(cwd)) return send(res, 422, { error: `the session's folder no longer exists: ${cwd ?? 'unknown'}` });
+      if (b.force !== true) {
+        procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
+        const live = store.sessions.get(b.sessionId);
+        const proc = procs.find((p) => p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane));
+        if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
+      }
+      try {
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir() });
+        return send(res, 201, { tmuxSession: r.tmuxSession });
+      } catch (e) { return send(res, 422, { error: (e as Error).message }); }
+    }
     if (url.pathname === '/api/fs' && method === 'GET') {
       const [code, body] = worlds.list(url.searchParams.get('path'));
       return send(res, code, body);
@@ -239,7 +295,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (!authed(req)) return reject(401, 'Unauthorized');
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
-        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list() }));
+        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged }));
       });
     }
     if (url.pathname === '/pty') {
@@ -254,14 +310,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const servers = cfg.listen.map(() => createServer(onRequest).on('upgrade', onUpgrade));
 
   let sweeper: NodeJS.Timeout | null = null;
+  let scanner: NodeJS.Timeout | null = null;
   return {
-    server: servers[0], servers, store,
+    server: servers[0], servers, store, scan,
     listen(): Promise<void> {
       sweeper = setInterval(async () => {
         const alive = await sys.tmuxSessions();
         if (alive) store.sweep(alive);
       }, 15_000);
       sweeper.unref();
+      const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
+      void rescan();
+      scanner = setInterval(rescan, 10_000);
+      scanner.unref();
       return Promise.all(servers.map((srv, i) => new Promise<void>((ok, fail) => {
         srv.once('error', fail);
         srv.listen(cfg.port, cfg.listen[i], () => ok());
@@ -269,6 +330,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     },
     close(): Promise<void> {
       if (sweeper) clearInterval(sweeper);
+      if (scanner) clearInterval(scanner);
       for (const s of [...store.sessions.values()]) store.remove(s);
       for (const c of [...wss.clients, ...ptys.clients]) c.terminate();
       return Promise.all(servers.map((srv) => new Promise<void>((ok) => { srv.close(() => ok()); srv.closeAllConnections(); }))).then(() => {});
