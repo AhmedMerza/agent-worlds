@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { World } from '../types'
-import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList } from '../store'
+import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast } from '../store'
 import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 
@@ -32,7 +32,15 @@ async function addWorld() {
 async function addRepo(path: string) {
   const w = state.worlds.find((x) => x.id === browsing.value)
   if (!w) return
-  if (await run(updateWorld(w.id, { repos: withRepo(w.repos, path) }))) browsing.value = null
+  if (await run(updateWorld(w.id, { repos: withRepo(w.repos, path) }))) showToast(`Added ${baseName(path)} to ${w.name}.`) // the browser stays open: add several in a row
+}
+async function moveHere(path: string, fromId: string) {
+  const w = state.worlds.find((x) => x.id === browsing.value)
+  const from = state.worlds.find((x) => x.id === fromId)
+  if (!w) return
+  const err = await moveRepo(path, fromId, w.id)
+  error.value = err ?? ''
+  if (!err) showToast(`Moved ${baseName(path)} from ${from?.name ?? 'its old world'} to ${w.name}.`)
 }
 async function confirmDelete(w: World) {
   if (await run(deleteWorld(w.id))) confirming.value = null
@@ -53,7 +61,7 @@ defineExpose({ escape })
       <p class="why">A world is a named group of repos. Sessions in those repos show up in its room.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
 
-      <FolderBrowser v-if="browsing" :taken="state.worlds.find((w) => w.id === browsing)?.repos ?? []" @pick="addRepo" @back="browsing = null" />
+      <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
 
       <template v-else>
         <p v-if="!state.worlds.length" class="why">No worlds yet. Create one below.</p>

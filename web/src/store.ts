@@ -1,5 +1,6 @@
 import { reactive, computed, ref } from 'vue'
-import type { ServerMessage, Session, World, FsListing, Unmanaged, HistorySession } from './types'
+import type { ServerMessage, Session, World, FsListing, Unmanaged, HistorySession, PermissionMode } from './types'
+import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
 
@@ -11,6 +12,8 @@ export interface StoreState {
   loaded: boolean
   connected: boolean
   selectedId: string | null
+  /** The app picked the selection itself (nobody clicked): the first Space takes the head of the queue. */
+  autoSelected: boolean
   toast: { text: string; n: number } | null
   filter: string
   now: number
@@ -22,7 +25,7 @@ export interface StoreState {
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, order: [], loaded: false, connected: false,
-  selectedId: null, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [],
+  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [],
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -51,7 +54,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.unmanaged = msg.unmanaged
       break
     case 'session':
-      if (claimPending(st, msg.session)) st.selectedId = msg.session.id
+      if (claimPending(st, msg.session)) { st.selectedId = msg.session.id; st.autoSelected = false }
       if (startsNeedingYou(st.sessions[msg.session.id], msg.session)) alert = msg.session
       if (!st.sessions[msg.session.id]) st.order.push(msg.session.id)
       st.sessions[msg.session.id] = msg.session
@@ -75,6 +78,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
   if (!st.selectedId || !(st.sessions[st.selectedId] || st.unmanaged.some((u) => ghostId(u.pid) === st.selectedId))) {
     const list = st.order.map((i) => st.sessions[i])
     st.selectedId = (queue(list)[0] ?? list[0])?.id ?? null
+    st.autoSelected = st.selectedId !== null
   }
   return alert
 }
@@ -91,6 +95,7 @@ export const selected = computed(() => (state.selectedId ? lookup(state.selected
 
 export const select = (id: string): void => {
   state.selectedId = id
+  state.autoSelected = false
   const s = lookup(id)
   if (state.filter !== 'all' && s) {
     const g = groups.value.find((g) => g.sessions.includes(s))
@@ -98,7 +103,7 @@ export const select = (id: string): void => {
   }
 }
 export const selectNext = (): boolean => {
-  const n = nextNeedingYou(needsYou.value, state.selectedId)
+  const n = nextNeedingYou(needsYou.value, state.selectedId, state.autoSelected)
   if (!n) { showToast('Nothing needs you right now.'); return false }
   select(n.id)
   return true
@@ -146,7 +151,31 @@ export type Scope = 'once' | 'repo' | 'world' | 'all'
 export const decidePermission = (id: string, requestId: string, decision: 'allow' | 'deny', scope: Scope = 'once') =>
   post(`${base(id)}/permission`, { requestId, decision, scope })
 export const sendInput = (id: string, text: string) => post(`${base(id)}/input`, { text })
-export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string }
+/** Sends a slash command to a session and says so, since nothing else on screen changes. */
+export async function askClaude(id: string, repoName: string, command: string): Promise<boolean> {
+  const ok = await sendInput(id, command)
+  if (ok) showToast(`Asked ${repoName} to ${command}`)
+  return ok
+}
+export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode }
+
+/** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */
+export async function moveRepo(path: string, fromId: string, toId: string): Promise<string | null> {
+  const [rm, add] = moveRepoPatches(state.worlds, path, fromId, toId)
+  if (!rm || !add) return 'That world no longer exists.'
+  const original = state.worlds.find((w) => w.id === fromId)!.repos
+  const a = await updateWorld(rm.id, { repos: rm.repos })
+  if (!a.ok) return a.error
+  const b = await updateWorld(add.id, { repos: add.repos })
+  if (b.ok) return null
+  await updateWorld(rm.id, { repos: original })
+  return b.error
+}
+/** Claude Code's own permission mode on this computer (null when unset or unknown). */
+export async function fetchClaudeDefault(): Promise<string | null> {
+  const r = await api<{ permissionMode: string | null }>('GET', '/api/claude-defaults')
+  return r.ok ? r.data.permissionMode ?? null : null
+}
 /** Returns null on success, else a message to show the user. */
 /** Selects the session running in tmux session `name` as soon as it shows up (or now, if it already has). */
 function followNew(name: unknown): void {
@@ -156,9 +185,9 @@ function followNew(name: unknown): void {
   if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `force` resumes even if it is still open elsewhere. */
-export async function resumeSession(sessionId: string, force = false): Promise<ResumeResult> {
+export async function resumeSession(sessionId: string, force = false, permissionMode?: PermissionMode): Promise<ResumeResult> {
   try {
-    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { sessionId, force: true } : { sessionId }) })
+    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(force ? { force: true } : {}), ...(permissionMode ? { permissionMode } : {}) }) })
     let body: unknown = null
     try { body = await r.json() } catch { /* empty body */ }
     const res = resumeOutcome(r.status, body)

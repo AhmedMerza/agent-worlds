@@ -3,12 +3,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { LABEL, catchupView, isLeaveTerminalKey } from '../logic'
-import { state, selected, groups, termFocusTick, requestCatchup } from '../store'
+import { LABEL, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
+import { state, selected, groups, termFocusTick, requestCatchup, needsYou } from '../store'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
 const cu = computed(() => (s.value ? catchupView(s.value, state.now) : null))
+const touch = isTouch()
+/** Said when the app chose this session itself, so nobody wonders why it is showing. */
+const autoLabel = computed(() => (state.autoSelected && s.value ? (needsYou.value.some((n) => n.id === s.value!.id) ? 'Showing: oldest needing you' : 'Showing: first session') : ''))
 const root = ref<HTMLElement | null>(null)
 const host = ref<HTMLElement | null>(null)
 const link = ref<'connecting' | 'live' | 'closed'>('connecting')
@@ -98,7 +101,8 @@ watch(termFocusTick, async () => {
       <template v-if="s">
         <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ world?.name }} · {{ LABEL[s.state] }}
         <span v-if="s.context"> · {{ s.context.pct }}% context</span>
-        <span v-if="hasTmux && termFocused" class="term-paused">Shortcuts paused · Ctrl+] to leave</span>
+        <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
+        <span v-if="hasTmux && termFocused" class="term-paused">Shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : 'Ctrl+] to leave' }}</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
       </template>
       <template v-else>No session selected</template>
@@ -109,6 +113,7 @@ watch(termFocusTick, async () => {
         <template v-if="cu.did"><dt>It did</dt><dd>{{ cu.did }}</dd></template>
         <dt>It needs</dt><dd :class="['needs', { none: !cu.needs }]">{{ cu.needs || cu.needsFallback }}</dd>
         <span class="tag">Catch-up written by Haiku</span>
+        <span v-if="cu.stale" class="stale" role="status">May be out of date · <button class="linkbtn" @click="requestCatchup(s.id)">Refresh</button></span>
       </template>
       <p v-if="cu.mode === 'running'" class="catch-run" role="status">Haiku is reading the transcript…</p>
       <p v-else class="catch-act">

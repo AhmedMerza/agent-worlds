@@ -11,7 +11,7 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
 import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui } from './store'
-import { routeKey, isTypingTarget, isControlTarget, defaultWorld } from './logic'
+import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
 const worldsPanel = ref<InstanceType<typeof WorldsPanel> | null>(null)
@@ -32,10 +32,16 @@ function openNewTask(worldId?: string) {
   else if (c.kind === 'pick') newTaskWorld.value = ''
   else ui.worldsOpen = true // no worlds yet: creating one is the next step
 }
+const menuOpen = ref(false)
+watch(phone, () => { menuOpen.value = false })
 async function onNotify() {
   const r = await toggleNotifications()
   if (r === 'denied') showToast('Notifications are blocked. Allow them in the browser site settings.')
+  else showToast(r === 'on' ? 'Notifications on. You will get one when a session needs you and this tab is hidden.' : 'Notifications off.')
 }
+function onCtrlClick(e: MouseEvent) { if (phone.value && (e.target as HTMLElement).closest('button')) menuOpen.value = false }
+function onMute() { toggleMute(); showToast(prefs.muted ? 'Sounds muted.' : 'Sounds on.') }
+const split = computed(() => needSplit(needsYou.value))
 const shown = computed(() => groups.value.filter((g) => state.filter === 'all' || g.world.id === state.filter))
 const numbers = computed(() => Object.fromEntries(screenSessions.value.slice(0, 9).map((s, i) => [s.id, i + 1])))
 const count = (st: string) => sessionList.value.filter((s) => s.state === st).length
@@ -55,9 +61,9 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'worlds') ui.worldsOpen = true
   else if (a.kind === 'recent') ui.recentOpen = true
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
-  else if (a.kind === 'mute') { toggleMute(); showToast(prefs.muted ? 'Sounds muted.' : 'Sounds on.') }
+  else if (a.kind === 'mute') onMute()
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return
-  else { help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.putSession = null }
+  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.putSession = null }
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -78,21 +84,26 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
   <div class="wrap">
     <header class="top">
       <h1 class="brand"><i aria-hidden="true" />Agent Worlds</h1>
-      <div class="stats">
-        <span class="stat"><b>{{ sessionList.length }}</b> sessions</span>
-        <span class="stat"><span class="dot working" /><b>{{ count('working') }}</b> working</span>
-        <span class="stat"><span class="dot waiting" /><b>{{ needsYou.length }}</b> need you</span>
-        <span class="stat"><span class="dot" /><b>{{ count('idle') }}</b> idle</span>
+      <div class="stats" aria-label="Summary">
+        <template v-if="!phone">
+          <span class="stat opt"><b>{{ sessionList.length }}</b> sessions</span>
+          <span class="stat"><span class="dot working" /><b>{{ count('working') }}</b> working</span>
+        </template>
+        <span class="stat need"><span class="dot waiting" /><b>{{ split.waiting }}</b> waiting on you · <b>{{ split.review }}</b> to review</span>
+        <span v-if="!phone" class="stat opt"><span class="dot" /><b>{{ count('idle') }}</b> idle</span>
       </div>
-      <nav class="filters" aria-label="Show world">
-        <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All worlds</button>
-        <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
-      </nav>
-      <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Worlds</button>
-      <button class="hdr-btn" @click="ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
-      <button class="hdr-btn" :aria-pressed="prefs.muted" :title="'Sounds for new requests (M)'" @click="toggleMute">{{ prefs.muted ? 'Sound off' : 'Sound on' }}</button>
-      <button v-if="notifySupported" class="hdr-btn" :aria-pressed="prefs.notify" @click="onNotify">{{ prefs.notify ? 'Notifications on' : 'Enable notifications' }}</button>
-      <button class="hdr-btn" aria-label="Keyboard shortcuts" @click="help = true"><kbd>?</kbd> Shortcuts</button>
+      <button v-if="phone" class="hdr-btn more" aria-label="Menu" aria-haspopup="true" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">⋯</button>
+      <div v-show="!phone || menuOpen" :class="['ctrl', { menu: phone }]" @click="onCtrlClick">
+        <nav class="filters" aria-label="Show world">
+          <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All worlds</button>
+          <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
+        </nav>
+        <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Worlds</button>
+        <button class="hdr-btn" @click="ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
+        <button class="hdr-btn toggle" :aria-pressed="!prefs.muted" title="Sound for new requests (M)" @click="onMute"><i aria-hidden="true" />Sound {{ prefs.muted ? 'off' : 'on' }}</button>
+        <button v-if="notifySupported" class="hdr-btn toggle" :aria-pressed="prefs.notify" @click="onNotify"><i aria-hidden="true" />Notifications {{ prefs.notify ? 'on' : 'off' }}</button>
+        <button class="hdr-btn" aria-label="Keyboard shortcuts" @click="help = true"><kbd>?</kbd> Shortcuts</button>
+      </div>
     </header>
     <div v-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>

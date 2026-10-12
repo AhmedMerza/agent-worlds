@@ -9,7 +9,9 @@ export interface QuestionOption { label: string; description?: string }
 export interface Question { question: string; header?: string; multiSelect: boolean; options: QuestionOption[] }
 
 export interface ReviewFile { path: string; added: number; deleted: number }
-export interface Review { files: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
+export interface ReviewCommit { sha: string; subject: string }
+/** files = changed since the session started (vs baseSha); commits = made since then; uncommitted = still in the working tree. */
+export interface Review { baseSha: string | null; files: ReviewFile[]; commits: ReviewCommit[]; uncommitted: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
 
 export interface PermissionTarget { type: 'command' | 'file' | 'url' | 'other'; value: string }
 
@@ -17,6 +19,7 @@ export type Card =
   | { kind: 'permission'; requestId: string; tool: string; command: string | null; target?: PermissionTarget; input: unknown; risky: string | null; seenCount: number; live?: boolean }
   | { kind: 'question'; requestId: string; questions: Question[]; live?: boolean }
   | { kind: 'done'; summary: string | null; review?: Review | null }
+  | { kind: 'asking'; summary: string }
   | { kind: 'error'; summary: string }
 
 export interface Session {
@@ -38,6 +41,10 @@ export interface Session {
   catchup?: { asked: string; did: string | null; needs: string | null } | null
   catchupRunning?: boolean
   catchupAt?: number | null
+  /** The session needed you again after the catch-up was written. */
+  catchupStale?: boolean
+  /** The latest thing you said to it (task is the first). */
+  lastPrompt?: string | null
   context?: { used: number; limit: number; pct: number } | null
   conflicts?: { withId: string; reason: string }[]
   startedAt: number
@@ -60,6 +67,8 @@ export type ServerMessage =
   | { type: 'toast'; text: string }
 
 export interface RoomGroup { world: World; sessions: Session[] }
+
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
 
 export interface FsEntry { name: string; path: string; isRepo: boolean }
 export interface FsListing { path: string; parent: string | null; entries: FsEntry[] }

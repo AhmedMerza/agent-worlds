@@ -28,16 +28,19 @@ const permOf = (tool, type, value) => ({ kind: 'permission', requestId: crypto.r
 const sessions = new Map(Object.entries({
   'repo-a': mkSession('repo-a', 'web', { branch: 'feat/filter', worktree: true, context: { used: 24000, limit: 200000, pct: 12 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
     conflicts: [{ withId: 'repo-b', reason: 'both edit the table component' }, { withId: 'repo-e', reason: 'same API client' }],
-    catchupAt: now() - 4 * MIN, catchup: { asked: 'Add a filter to the table', did: 'Wired the dropdown to the API', needs: '' } }),
+    catchupAt: now() - 4 * MIN, catchupStale: true, lastPrompt: 'Also make the filter remember its value', catchup: { asked: 'Add a filter to the table', did: 'Wired the dropdown to the API', needs: 'none' } }),
   'repo-b': mkSession('repo-b', 'web', { state: 'waiting', waitingSince: now() - 3 * MIN, now: 'Waiting for you to allow a command', card: perm('npm run migrate -- --force', 'changes a database'), context: { used: 70000, limit: 200000, pct: 35 } }),
   'repo-c': mkSession('repo-c', 'web', { state: 'waiting', waitingSince: now() - 14 * MIN, now: 'Waiting for your answer',
     card: { kind: 'question', requestId: crypto.randomUUID(), live: true, questions: [{ question: 'Where should the new categories go?', header: 'Parent', multiSelect: false, options: [{ label: 'Under Restaurants', description: 'Nested one level' }, { label: 'New top-level category', description: '' }, { label: 'Leave unassigned', description: '' }] }] } }),
-  'repo-d': mkSession('repo-d', 'web', { state: 'done', waitingSince: now() - 8 * MIN, now: 'Finished', card: { kind: 'done', summary: 'Fixed the badge count. All 12 tests pass.', review: { files: [{ path: 'src/badge.ts', added: 6, deleted: 3 }, { path: 'src/cart.ts', added: 4, deleted: 9 }], tests: { command: 'npm test', ok: true, line: '12 passed, 0 failed' }, diff: ['@@ src/badge.ts @@', '-const n = cache.count', '+const n = fresh.count', ...Array.from({ length: 450 }, (_, i) => (i % 3 ? ` context ${i}` : `+added line ${i}`))].join('\n') } }, context: { used: 140000, limit: 200000, pct: 70 } }),
+  'repo-d': mkSession('repo-d', 'web', { state: 'done', waitingSince: now() - 8 * MIN, now: 'Finished', card: { kind: 'done', summary: 'Fixed the badge count. All 12 tests pass.', review: { baseSha: 'a1b2c3d4e5f6', files: [{ path: 'src/badge.ts', added: 6, deleted: 3 }, { path: 'src/cart.ts', added: 4, deleted: 9 }], commits: [{ sha: '9f8e7d6c5b4a', subject: 'Use the fresh cart count in the badge' }], uncommitted: [{ path: 'src/cart.ts', added: 4, deleted: 9 }], tests: { command: 'npm test', ok: true, line: '12 passed, 0 failed' }, diff: ['@@ src/badge.ts @@', '-const n = cache.count', '+const n = fresh.count', ...Array.from({ length: 450 }, (_, i) => (i % 3 ? ` context ${i}` : `+added line ${i}`))].join('\n') } }, context: { used: 140000, limit: 200000, pct: 70 } }),
   'repo-e': mkSession('repo-e', 'mobile', { conflicts: [{ withId: 'repo-f', reason: 'both touch sync' }], state: 'error', waitingSince: now() - 26 * MIN, now: 'Stopped after failing tests', card: { kind: 'error', summary: '3 of 41 tests fail in the sync suite.' }, context: { used: 170000, limit: 200000, pct: 85 } }),
   'repo-f': mkSession('repo-f', 'mobile', { conflicts: [{ withId: 'repo-e', reason: 'both touch sync' }], helpers: [1, 2, 3, 4, 5].map((n) => ({ id: `h${n}`, task: `Helper ${n}`, state: n % 2 ? 'working' : 'done', startedAt: now() })) }),
   'repo-g': mkSession('repo-g', 'mobile', { state: 'idle', now: 'Ready for a new task', context: { used: 5000, limit: 200000, pct: 3 } }),
   'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: { ...perm('npm run lint'), seenCount: 5 } }),
   'repo-j': mkSession('repo-j', 'tools', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting (terminal only)', card: { ...perm('rm -rf build'), live: false } }),
+  'repo-t': mkSession('repo-t', 'web', { branch: 'fix/totals', worktree: true, state: 'waiting', waitingSince: now() - 4 * MIN, now: 'Waiting for your reply', card: { kind: 'asking', summary: 'I fixed the rounding. Do you want the same change in the invoice totals as well?' } }),
+  'repo-v': mkSession('repo-v', 'tools', { state: 'waiting', waitingSince: now() - 7 * MIN, now: 'AskUserQuestion', card: { kind: 'question', requestId: crypto.randomUUID(), live: false, questions: [{ question: 'Which test runner should I use?', header: 'Runner', multiSelect: false, options: [{ label: 'Vitest', description: 'Already installed' }, { label: 'Jest', description: '' }] }] } }),
+  'repo-w': mkSession('repo-w', 'tools', { state: 'done', waitingSince: now() - 9 * MIN, now: 'Bash', card: { kind: 'done', summary: 'Committed the change.', review: { baseSha: 'c0ffee', files: [{ path: 'src/a.ts', added: 3, deleted: 1 }], commits: [{ sha: 'd00dfeed1234', subject: 'Tighten the parser' }], uncommitted: [], tests: null, diff: '@@ src/a.ts @@\n-old\n+new' } } }),
   'repo-q': mkSession('repo-q', 'web', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting to edit a file', card: permOf('Edit', 'file', '/work/repo-q/src/app.ts') }),
   'repo-r': mkSession('repo-r', 'mobile', { state: 'waiting', waitingSince: now() - 5 * MIN, now: 'Waiting to open an address', card: permOf('WebFetch', 'url', 'https://example.com/docs') }),
   'repo-s': mkSession('repo-s', 'mobile', { state: 'waiting', waitingSince: now() - 6 * MIN, now: 'Waiting', card: permOf('Grep', 'other', 'TODO') }),
@@ -47,6 +50,7 @@ const sessions = new Map(Object.entries({
 // ---- import: processes running outside Agent Worlds, and past sessions ----
 let unmanaged = process.env.MOCK_EMPTY ? [] : [
   { pid: 4121, cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', sessionId: 'sess-k', inTmux: false, since: now() - 12 * MIN },
+  ...Array.from({ length: Number(process.env.MOCK_GHOSTS ?? 9) }, (_, i) => ({ pid: 6000 + i, cwd: `/work/other-${i}`, repo: null, worldId: null, sessionId: null, inTmux: i % 2 === 0, since: now() - (i + 1) * MIN })),
   { pid: 5230, cwd: '/work/repo-m', repo: null, worldId: null, sessionId: null, inTmux: true, since: now() - 3 * MIN },
 ]
 const history = [
@@ -81,6 +85,7 @@ const demoStep = {
   ask(s) { Object.assign(s, { state: 'waiting', waitingSince: now(), now: 'Waiting for you to allow a command', card: perm('npm run migrate -- --force', 'changes a database') }) },
   done(s) {
     Object.assign(s, { state: 'done', waitingSince: now(), now: 'Finished', card: { kind: 'done', summary: 'Added the status filter and wired it to the orders API. All 14 tests pass.', review: {
+      baseSha: 'b7c8d9e0f1a2', commits: [], uncommitted: [{ path: 'src/orders/OrdersTable.vue', added: 31, deleted: 4 }, { path: 'src/orders/useOrders.ts', added: 12, deleted: 2 }, { path: 'tests/orders.test.ts', added: 40, deleted: 0 }],
       files: [{ path: 'src/orders/OrdersTable.vue', added: 31, deleted: 4 }, { path: 'src/orders/useOrders.ts', added: 12, deleted: 2 }, { path: 'tests/orders.test.ts', added: 40, deleted: 0 }],
       tests: { command: 'npm test', ok: true, line: '14 passed, 0 failed' },
       diff: ['@@ src/orders/OrdersTable.vue @@', '-  <th>Status</th>', '+  <th><StatusFilter v-model="status" /></th>', ' ', '@@ src/orders/useOrders.ts @@', '-export function useOrders() {', '+export function useOrders(status: Ref<string>) {', "+  const params = computed(() => ({ status: status.value }))"].join('\n') } } })
@@ -153,9 +158,11 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
+  if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
   if (req.method === 'POST' && url.pathname === '/api/sessions/resume') {
     const b = await readBody(req)
+    console.log('resume', JSON.stringify(b))
     const h = history.find((x) => x.sessionId === b.sessionId)
     if (!h) return json(404, { error: 'No transcript for that session.' })
     if (h.running && !b.force) return json(409, { error: 'that session is still running', pid: unmanaged.find((u) => u.sessionId === h.sessionId)?.pid ?? null })
@@ -169,6 +176,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/sessions') {
     const b = await readBody(req)
+    console.log('create', JSON.stringify(b))
     if (!b.repo) return json(400, { message: 'Task and repo are required.' })
     if (/bad/.test(b.task)) return json(500, { message: 'Could not start tmux: no server running.' })
     const id = `repo-new-${sessions.size}`
@@ -235,7 +243,8 @@ const server = http.createServer(async (req, res) => {
       broadcast({ type: 'toast', text: `Answered ${s.id}.` })
     } else if (m[2] === 'ack') {
       Object.assign(s, { state: 'idle', waitingSince: null, card: null, now: 'Ready for a new task' }); upsert(s)
-    } else { s.log.push({ t: now(), text: `Input: ${body.text}` }); upsert(s) }
+    } else if (s.card?.kind === 'asking') { resume(s, 'Continuing with your reply') }
+    else { s.log.push({ t: now(), text: `Input: ${body.text}` }); upsert(s) }
     return json(200, { ok: true })
   }
   // static dist (SPA)

@@ -42,15 +42,20 @@ is in no world sit in an **Unsorted** room. Deleting a world never stops its ses
 
 ### Needs-you inbox
 
-Every session that needs something shows a card, oldest first (permissions, then questions,
-errors, finished).
+Every session that needs something shows a card: permissions first, then oldest first. The
+header counts "waiting on you" (permissions, questions) apart from "to review" (finished, error).
+The list holds still while your pointer is over it, so a click never lands on a different card.
 
 - **Permission requests**: the command, a warning for risky ones, **Allow once**, **Deny**, and
   **Always allow** for this repo, this world or everywhere. "Everywhere" is refused for risky
   requests (pushes, database changes, deploys, recursive deletes, writes outside the project).
 - **Questions**: each option is a button; multi-select and several questions work.
-- **Finished turns**: a review with changed files (+/-), the last test result and a colourised
-  diff, plus one-click `/commit`, `/mr-create` and `/ship-check`.
+- **A turn that ends in a question** shows as "asking": the question and a reply box.
+- **Finished turns**: a review of what changed since the session started (files +/-, the commits
+  made, and anything not yet committed, listed separately), the last test result and a colourised
+  diff. **Ask Claude to commit** appears only when something is uncommitted, **Open MR** only
+  when there are commits; `/ship-check` is always there. New worktrees fork from the repo's
+  default branch (origin/HEAD, else main/master), never from what the main checkout has open.
 - **Errors**: a quick reply box to tell the session what to do next.
 - **Catch-up** (on request): a short "you asked / it did / it needs" summary of any session.
 - **Context and conflicts**: how full each session's context is, with `/checkpoint`,
@@ -76,9 +81,13 @@ Agent Worlds also knows about Claude sessions you started before it, or outside 
 - **Resume here** runs `claude --resume <id>` in a new tmux session, in the session's original
   folder, with its full conversation. If that session still looks open somewhere else, you are
   asked first; **Resume anyway** goes ahead.
-- A Claude running in a plain terminal appears as a faded **ghost** with a dashed outline and
-  the label "plain terminal", in its world's lounge (or Unsorted). Select it and quit that
-  terminal's Claude, then **Move into Agent Worlds** to take it over.
+- Claudes running in plain terminals appear as faded **ghosts** with a dashed outline, in their
+  world's lounge (or Unsorted). Each room folds them into one chip, "N other Claude sessions on
+  this computer"; open it, select one, quit that terminal's Claude, then **Move into Agent
+  Worlds** to take it over. Ghosts get no number key.
+- **New session** and **Resume** have a **Permissions** choice. It defaults to your own Claude
+  default (shown in brackets); the others are ask before every action, auto-accept edits, plan
+  only and auto.
 - Process detection reads `/proc`, so it is **Linux only**. Elsewhere there are no ghosts, but
   Recent sessions and Resume work.
 
@@ -290,7 +299,8 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
 - **The terminal says the session is view-only.** The session is not running inside tmux. Cards
   still work; start it in tmux (or from the app) for a live terminal.
 - **No permission cards appear.** Your Claude default permission mode is `auto` or bypass, so
-  Claude never asks. `acceptEdits` mode also gives no cards for file edits. Agent Worlds only
+  Claude never asks. Pick "Ask before every action" under **Permissions** when you start a session
+  to override it for that session. `acceptEdits` mode also gives no cards for file edits. Agent Worlds only
   sees what Claude asks.
 - **"unknown host" (421).** The server only answers its own address. Add the `host:port` you
   are using (for example a tunnel under another name) to `extraHosts` in the config and

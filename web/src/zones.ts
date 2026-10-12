@@ -52,6 +52,9 @@ export function retarget(w: Walker | undefined, target: Pos, now: number, reduce
   return { from: { x: cur.x, top: cur.top }, to: target, start: now }
 }
 
+/** Holds a walk still for `dt` ms (the pointer is over the sprite): the walk resumes where it stopped. */
+export function pauseWalker(w: Walker, dt: number): void { w.start += dt }
+
 /** A newcomer starts outside the left wall and walks in through the door to its slot. */
 export const doorWalker = (to: Pos, now: number): Walker => ({ from: { x: -16, top: to.top }, to, start: now })
 

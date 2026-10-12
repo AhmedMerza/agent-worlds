@@ -34,7 +34,7 @@ export function tone(worldIndex: number): void {
   } catch { /* audio blocked until a user gesture */ }
 }
 
-const WHAT = { permission: 'wants to run a command', question: 'has a question', done: 'finished', error: 'hit a problem' } as const
+const WHAT = { permission: 'wants to run a command', question: 'has a question', asking: 'is asking you something', done: 'finished', error: 'hit a problem' } as const
 export function alertNeedsYou(s: Session, worldIndex: number, worldName: string): void {
   tone(worldIndex)
   if (prefs.notify && notifySupported && Notification.permission === 'granted' && document.hidden) {
