@@ -9,12 +9,13 @@ export const projectDirName = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-')
 
 type File = { sessionId: string; path: string; mtime: number };
 
-/** Top-level session transcripts (subagent files live in sub-folders or are named agent-*). */
-function transcripts(dir: string): File[] {
+/** Top-level session transcripts (subagent files live in sub-folders or are named agent-*); `only` picks project folders by name. */
+function transcripts(dir: string, only?: (project: string) => boolean): File[] {
   const out: File[] = [];
   let projects: string[];
   try { projects = readdirSync(dir); } catch { return out; }
   for (const p of projects) {
+    if (only && !only(p)) continue;
     let names: string[];
     try { names = readdirSync(join(dir, p)); } catch { continue; }
     for (const n of names) {
@@ -61,10 +62,24 @@ const oneLine = (s: string, max = 200) => {
 
 export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: string | null; lastActivity: number };
 
-/** Most recent sessions, newest first, reading only the tail (and the head when the tail has no cwd). */
-export async function history(dir: string, limit: number): Promise<HistoryItem[]> {
-  const files = transcripts(dir).sort((a, b) => b.mtime - a.mtime).slice(0, limit);
-  return Promise.all(files.map(async (f) => ({ sessionId: f.sessionId, ...(await transcriptSummary(f.path)), lastActivity: Math.round(f.mtime) })));
+/** A folder that belongs to `repo`: the repo itself, a folder inside it, or one of its `<repo>-worktrees`. */
+export const inRepo = (cwd: string, repo: string) => cwd === repo || cwd.startsWith(repo + '/') || cwd.startsWith(repo + '-worktrees/');
+
+/**
+ * Most recent sessions, newest first, reading only the tail (and the head when the tail has no cwd).
+ * With `repo`, only that repo's: project folders are picked by name first, then each transcript's cwd decides
+ * (a look-alike such as `<repo>-admin` shares the folder-name prefix but not the cwd).
+ */
+export async function history(dir: string, limit: number, repo?: string): Promise<HistoryItem[]> {
+  const name = repo ? projectDirName(repo) : '';
+  const files = transcripts(dir, repo ? (p) => p === name || p.startsWith(name + '-') : undefined).sort((a, b) => b.mtime - a.mtime);
+  const read = (f: File) => transcriptSummary(f.path).then((s) => ({ sessionId: f.sessionId, ...s, lastActivity: Math.round(f.mtime) }));
+  if (!repo) return Promise.all(files.slice(0, limit).map(read));
+  const out: HistoryItem[] = [];
+  for (let i = 0; i < files.length && out.length < limit; i += 50) {
+    for (const h of await Promise.all(files.slice(i, i + 50).map(read))) if (h.cwd && inRepo(h.cwd, repo) && out.length < limit) out.push(h);
+  }
+  return out;
 }
 
 /** A transcript's folder and the last thing the user asked, from its tail (and its head when the tail has neither). */

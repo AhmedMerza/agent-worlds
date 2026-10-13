@@ -215,7 +215,7 @@ export async function resumeSession(sessionId: string, stop = false, permissionM
     return res
   } catch { return { kind: 'error', message: 'Could not reach the server.' } }
 }
-export const fetchHistory = () => api<{ sessions: HistorySession[] }>('GET', '/api/history?limit=200')
+export const fetchHistory = (repo?: string) => api<{ sessions: HistorySession[] }>('GET', `/api/history?limit=200${repo ? `&repo=${encodeURIComponent(repo)}` : ''}`)
 
 export async function createSession(body: NewTask): Promise<string | null> {
   try {
@@ -275,4 +275,5 @@ export const termFocusTick = ref(0)
 export const focusTerminal = (): void => { termFocusTick.value++ }
 
 /** Dialog state shared by the header, rooms and detail panel. */
-export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, phoneOpen: false })
+/** recentRepo: Recent sessions shows only that repo's (its folder and worktrees); null shows all. */
+export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false })

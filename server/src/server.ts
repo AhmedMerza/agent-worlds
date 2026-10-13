@@ -385,7 +385,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const n = Number(url.searchParams.get('limit') ?? 50);
       const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
       const running = new Set([...store.sessions.keys(), ...procs.map((p) => p.sessionId).filter(Boolean) as string[]]);
-      const items = await Promise.all((await history(cfg.claudeProjectsDir, limit)).map(async (h) => {
+      const repo = url.searchParams.get('repo');
+      if (repo !== null && !repo.startsWith('/')) return send(res, 400, { error: 'repo must be an absolute path' });
+      const items = await Promise.all((await history(cfg.claudeProjectsDir, limit, repo ? normalize(repo).replace(/\/+$/, '') : undefined)).map(async (h) => {
         const info = h.cwd ? await repoOf(h.cwd) : null;
         return {
           ...h, repo: info?.repo ?? null, worldId: info ? store.worldOf(info.repo, h.cwd!) : null,

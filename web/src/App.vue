@@ -67,7 +67,7 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'new-task') openNewTask()
   else if (a.kind === 'catchup') { if (selected.value && !selected.value.catchupRunning) requestCatchup(selected.value.id) }
   else if (a.kind === 'worlds') ui.worldsOpen = true
-  else if (a.kind === 'recent') ui.recentOpen = true
+  else if (a.kind === 'recent') { ui.recentRepo = null; ui.recentOpen = true }
   else if (a.kind === 'terminal') focusTerminal()
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
   else if (a.kind === 'mute') onMute()
@@ -108,7 +108,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
           <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
         </nav>
         <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Manage worlds</button>
-        <button class="hdr-btn" @click="ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
+        <button class="hdr-btn" @click="ui.recentRepo = null; ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
         <button class="hdr-btn toggle" :aria-pressed="!prefs.muted" title="Sound for new requests (M)" @click="onMute"><i aria-hidden="true" />Sound {{ prefs.muted ? 'off' : 'on' }}</button>
         <button v-if="notifySupported" class="hdr-btn toggle" :aria-pressed="prefs.notify" @click="onNotify"><i aria-hidden="true" />Notifications {{ prefs.notify ? 'on' : 'off' }}</button>
         <button class="hdr-btn" @click="ui.phoneOpen = true">Connect a phone</button>

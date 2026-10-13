@@ -382,6 +382,25 @@ export function filterHistory(list: HistorySession[], q: string): HistorySession
     return words.every((w) => hay.includes(w))
   })
 }
+export interface FolderGroup { cwd: string; label: string; items: HistorySession[] }
+/**
+ * Sessions by the folder they ran in, newest folder first (the list comes newest first). The label is the path from
+ * the repo's parent, so a worktree reads "oreem/worktrees/aw-x" or "oreem-worktrees/feat".
+ */
+export function groupByFolder(list: HistorySession[]): FolderGroup[] {
+  const groups = new Map<string, FolderGroup>()
+  for (const h of list) {
+    const cwd = h.cwd ?? ''
+    let g = groups.get(cwd)
+    if (!g) {
+      const parent = h.repo ? h.repo.replace(/\/[^/]+$/, '') : ''
+      const label = !cwd ? 'Unknown folder' : parent && cwd.startsWith(parent + '/') ? cwd.slice(parent.length + 1) : baseName(cwd)
+      groups.set(cwd, (g = { cwd, label, items: [] }))
+    }
+    g.items.push(h)
+  }
+  return [...groups.values()]
+}
 export function ageText(ms: number, now: number): string {
   const min = Math.max(0, Math.floor((now - ms) / 60000))
   if (min < 1) return 'just now'

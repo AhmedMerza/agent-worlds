@@ -37,3 +37,9 @@ export function moveRepoPatches(worlds: World[], path: string, fromId: string, t
   if (!from || !to) return []
   return [{ id: from.id, repos: from.repos.filter((r) => r !== path) }, { id: to.id, repos: to.repos.includes(path) ? to.repos : [...to.repos, path] }]
 }
+
+/** Entries whose name holds every word of `q` (any case). */
+export function matchEntries(entries: FsEntry[], q: string): FsEntry[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
+  return words.length ? entries.filter((e) => words.every((w) => e.name.toLowerCase().includes(w))) : entries
+}

@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, utimesSync, chmodSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { history, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
+import { history, inRepo, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
 import { startServer, spawnTmuxPty } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { midTurn } from '../src/transcript.ts';
@@ -280,4 +280,24 @@ test('midTurn: an unanswered prompt or tool result, or a running tool call, is m
   assert.equal(midTurn([u('<local-command-stdout></local-command-stdout>')]), false);
   assert.equal(midTurn([u('meta', { isMeta: true })]), false);
   assert.equal(midTurn([]), false);
+});
+
+test('history for one repo: its folder, folders inside it and its worktrees; not a look-alike repo', async () => {
+  const dir = join(tmp(), 'projects');
+  const put = (cwd: string, id: string, mtime: number) => {
+    const p = join(dir, projectDirName(cwd));
+    mkdirSync(p, { recursive: true });
+    const f = join(p, `${id}.jsonl`);
+    writeFileSync(f, line({ type: 'user', cwd, sessionId: id, message: { role: 'user', content: `in ${cwd}` } }));
+    utimesSync(f, mtime, mtime);
+  };
+  put('/r/oreem', 'aaaaaaaa-0001', 1000);
+  put('/r/oreem/worktrees/aw-x', 'aaaaaaaa-0002', 3000);
+  put('/r/oreem-worktrees/feat', 'aaaaaaaa-0003', 2000);
+  put('/r/oreem-admin', 'aaaaaaaa-0004', 4000);
+  put('/r/other', 'aaaaaaaa-0005', 5000);
+  assert.deepEqual((await history(dir, 10, '/r/oreem')).map((h) => h.cwd), ['/r/oreem/worktrees/aw-x', '/r/oreem-worktrees/feat', '/r/oreem']);
+  assert.deepEqual((await history(dir, 2, '/r/oreem')).map((h) => h.sessionId), ['aaaaaaaa-0002', 'aaaaaaaa-0003']);
+  assert.equal((await history(dir, 10)).length, 5);
+  assert.equal(inRepo('/r/oreem-admin', '/r/oreem'), false);
 });
