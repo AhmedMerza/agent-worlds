@@ -1,6 +1,6 @@
 import type { RoomGroup, Session, SessionState } from './types'
 import { tiredLevel, waitMinutes, ctxColor, roomConflicts } from './logic'
-import { ROOM_W, ROOM_H, WALK_MS, ZONE_X, assignZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, pauseWalker, type Zone, type Walker } from './zones'
+import { ROOM_W, ROOM_H, WALK_MS, assignZones, zoneBounds, countZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, pauseWalker, type Zone, type Walker } from './zones'
 
 export const W = ROOM_W
 const WALL_H = 48
@@ -223,7 +223,7 @@ function tag(f: Frame, ctx: Ctx, s: Session, x: number, y: number, maxW: number)
   else f.ui.push(() => nameTag(ctx, s, x, y, maxW, false))
 }
 
-interface Frame { tt: number; focus: string | null; top: (() => void)[]; ui: (() => void)[]; lights: [number, number, number, string, number][] }
+interface Frame { tt: number; zx: ReturnType<typeof zoneBounds>; focus: string | null; top: (() => void)[]; ui: (() => void)[]; lights: [number, number, number, string, number][] }
 
 function drawDesk(ctx: Ctx, x: number, y: number, w: number, s: Session, l: Look, f: Frame) {
   const hw = Math.round(w / 2)
@@ -260,7 +260,7 @@ function drawStation(ctx: Ctx, s: Session, zone: Zone, x: number, top: number, d
     const head = moving
       ? person(ctx, x, feet, l, { t: tt, walk: true, mood: 'smile' })
       : person(ctx, x, feet, l, { t: tt, mood: s.busy ? 'flat' : 'smile', typing: !s.busy, bob: s.busy ? 0 : Math.sin(tt / 700 + l.seed) * 0.5, noShadow: true })
-    drawDesk(ctx, dx, deskY, Math.min(64, slotWidth('desks', n) - 6), s, l, f)
+    drawDesk(ctx, dx, deskY, Math.min(64, slotWidth('desks', n, f.zx) - 6), s, l, f)
     if (f.focus === s.id) f.top.push(() => nameTag(ctx, s, dx, deskY + 9, 0, true))
     if (s.busy && !moving) {
       const busy = s.busy
@@ -291,7 +291,7 @@ function drawStation(ctx: Ctx, s: Session, zone: Zone, x: number, top: number, d
       font(ctx, 7, 'left'); ctx.fillText('z', x + 9, head - 1 - z)
       font(ctx, 9, 'left'); ctx.fillText('z', x + 13, head - 7 - z)
     })
-    tag(f, ctx, s, x, top + 44, slotWidth('lounge', n) - 2)
+    tag(f, ctx, s, x, top + 44, slotWidth('lounge', n, f.zx) - 2)
   } else {
     const m = waitMinutes(s, o.now), tired = tiredLevel(m)
     const hop = s.state === 'waiting' && !tired && !moving && !o.reduced ? -Math.abs(Math.sin(tt / 380 + l.seed)) * 2 : 0
@@ -304,7 +304,7 @@ function drawStation(ctx: Ctx, s: Session, zone: Zone, x: number, top: number, d
       bubble(ctx, x, head - 2, glyph, STATE_COLOR[s.state])
       pill(ctx, `${m}m`, x + 15, head - 8, 40, m >= 20 ? STATE_COLOR.error : m >= 10 ? STATE_COLOR.waiting : INK, 6.5)
     })
-    tag(f, ctx, s, x, top + 46, slotWidth('help', n) - 2)
+    tag(f, ctx, s, x, top + 46, slotWidth('help', n, f.zx) - 2)
     if (s.state === 'error') {
       f.lights.push([x, top + 18, 24, STATE_COLOR.error, 0.14])
       if (!moving) for (let k = 0; k < 3; k++) {
@@ -325,7 +325,7 @@ function drawStation(ctx: Ctx, s: Session, zone: Zone, x: number, top: number, d
 
 // ---- the room ----
 function drawScenery(ctx: Ctx, tint: string, H: number, f: Frame) {
-  const [lx0, lx1] = ZONE_X.lounge, [hx0, hx1] = ZONE_X.help
+  const [lx0, lx1] = f.zx.lounge, [hx0, hx1] = f.zx.help, [dx0, dx1] = f.zx.desks
   let g = ctx.createLinearGradient(0, 0, 0, WALL_H)
   g.addColorStop(0, mix(tint, BG, 0.7)); g.addColorStop(1, mix(tint, BG, 0.82))
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, WALL_H)
@@ -376,7 +376,7 @@ function drawScenery(ctx: Ctx, tint: string, H: number, f: Frame) {
   ctx.fillStyle = STATE_COLOR.waiting; ctx.beginPath(); ctx.arc(bx, 43, 5, Math.PI, 0); ctx.fill(); ctx.fillRect(bx - 6, 42, 12, 1.6); ell(ctx, bx, 37.5, 1.2, 1.2); ctx.fill()
   f.ui.push(() => {
     font(ctx, 7.5)
-    ctx.fillStyle = 'rgba(236,230,217,.6)'; ctx.fillText('LOUNGE', (lx0 + lx1) / 2 + 6, 56); ctx.fillText('DESKS', W / 2, 40)
+    ctx.fillStyle = 'rgba(236,230,217,.6)'; ctx.fillText('LOUNGE', (lx0 + lx1) / 2 + 6, 56); ctx.fillText('DESKS', (dx0 + dx1) / 2, 40)
     ctx.fillStyle = STATE_COLOR.waiting; ctx.fillText('HELP DESK', (hx0 + hx1) / 2 - 8, 38)
   })
 }
@@ -391,7 +391,7 @@ function drawLight(ctx: Ctx, H: number, f: Frame, waiting: boolean) {
     const g = ctx.createLinearGradient(0, 26, 0, 150); g.addColorStop(0, 'rgba(150,180,240,.09)'); g.addColorStop(1, 'rgba(150,180,240,0)')
     ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(wx, 26); ctx.lineTo(wx + 44, 26); ctx.lineTo(wx + 72, 150); ctx.lineTo(wx + 8, 150); ctx.closePath(); ctx.fill()
   }
-  const [hx0, hx1] = ZONE_X.help
+  const [hx0, hx1] = f.zx.help
   const pulse = waiting ? 0.5 + 0.5 * Math.sin(f.tt / 600) : 0
   glow(ctx, hx1 - 22, 40, 46, STATE_COLOR.waiting, 0.1 + 0.14 * pulse)
   glow(ctx, (hx0 + hx1) / 2, 110, 70, STATE_COLOR.waiting, waiting ? 0.08 : 0.04)
@@ -403,10 +403,10 @@ function drawLight(ctx: Ctx, H: number, f: Frame, waiting: boolean) {
 export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.imageSmoothingEnabled = true
   ctx.clearRect(0, 0, W, o.h)
-  const f: Frame = { tt: o.reduced ? 0 : o.t, focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
+  const zones = assignZones(o.group.sessions)
+  const f: Frame = { tt: o.reduced ? 0 : o.t, zx: zoneBounds(countZones(zones)), focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
   drawScenery(ctx, o.group.world.color, o.h, f)
 
-  const zones = assignZones(o.group.sessions)
   const live = new Set(o.group.sessions.map((s) => s.id))
   for (const id of o.walkers.keys()) if (!live.has(id)) o.walkers.delete(id)
 
@@ -415,7 +415,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
     const list = zones[zone], cap = capacity(zone)
     list.forEach((s, i) => {
       if (i >= cap) return
-      const target = slotPos(zone, i, list.length)
+      const target = slotPos(zone, i, list.length, f.zx)
       const w = retarget(o.walkers.get(s.id) ?? (s.state === 'starting' && !o.reduced ? doorWalker(target, o.t) : undefined), target, o.t, o.reduced)
       if (o.hoverId === s.id && o.dt && o.t - w.start < WALK_MS) pauseWalker(w, o.dt)
       o.walkers.set(s.id, w)
@@ -424,7 +424,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
     })
     const extra = zone === 'lounge' ? (o.moreGhosts ?? 0) : 0
     if (list.length + extra > cap || extra) {
-      const x1 = ZONE_X[zone][1]
+      const x1 = f.zx[zone][1]
       f.ui.push(() => badge(ctx, '+' + (Math.max(0, list.length - cap) + extra), x1 - 15, o.h - 10, INK))
     }
   }

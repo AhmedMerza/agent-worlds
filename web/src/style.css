@@ -4,7 +4,7 @@
   --bg:#12161d; --panel:#1a1f28; --panel-2:#222935; --line:#2d3544;
   --ink:#ece6d9; --muted:#9aa2b0; --dark-ink:#14110b;
   --work:#6aaef0; --wait:#f2b84b; --ok:#72cf98; --err:#ee705f; --idle:#8a92a0;
-  --f-display:"Pixelify Sans","Courier New",monospace;
+  --f-display:"Atkinson Hyperlegible",system-ui,sans-serif;
   --f-body:"Atkinson Hyperlegible",system-ui,sans-serif;
   --f-mono:"JetBrains Mono",ui-monospace,monospace;
 }
