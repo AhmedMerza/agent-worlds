@@ -382,6 +382,12 @@ export function filterHistory(list: HistorySession[], q: string): HistorySession
     return words.every((w) => hay.includes(w))
   })
 }
+/** The world a dragged session lands in, or null when the drop changes nothing (no room, or its own room). */
+export function dropTarget(s: Session | undefined, over: string | null, worlds: World[]): World | null {
+  const w = over ? worlds.find((x) => x.id === over) : undefined
+  return s && w && w.id !== s.worldId ? w : null
+}
+
 export interface FolderGroup { cwd: string; label: string; items: HistorySession[] }
 /**
  * Sessions by the folder they ran in, newest folder first (the list comes newest first). The label is the path from

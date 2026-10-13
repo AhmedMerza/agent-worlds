@@ -3,7 +3,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-13
-- Move one session to another world ("Move to another world…" in its panel): its repo and the repo's other sessions stay put; the move survives /clear and restarts (`<home>/placements.json`).
+- Move one session to another world ("Move to another world…" in its panel, or drag its character onto another room with a mouse): its repo and the repo's other sessions stay put; the move survives /clear and restarts (`<home>/placements.json`).
 - `/clear` (or a skill that clears) keeps the same terminal selected: the page follows that terminal's new session instead of jumping to another one.
 - Recent sessions are grouped by folder (fold a folder shut); "Past sessions here" in a session's panel shows only its repo: its folder, the folders inside it and its worktrees (`GET /api/history?repo=`).
 - New session: "Another folder…" is always there, not only for an empty world; the folder browser opens next to the chosen folder and can search the folders it lists.

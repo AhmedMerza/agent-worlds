@@ -288,4 +288,6 @@ export const focusTerminal = (): void => { termFocusTick.value++ }
 
 /** Dialog state shared by the header, rooms and detail panel. */
 /** recentRepo: Recent sessions shows only that repo's (its folder and worktrees); null shows all. */
-export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null })
+export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
+  /** A character being dragged to another room: where the pointer is, and the world under it. */
+  drag: null as { id: string; x: number; y: number; over: string | null } | null })

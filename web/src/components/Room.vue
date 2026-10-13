@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { roomHeight, type Walker } from '../zones'
-import { stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
-import { state, select, focusTerminal } from '../store'
+import { dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
+import { state, select, focusTerminal, ui, moveSession, showToast } from '../store'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
 defineEmits<{ 'new-task': [worldId: string] }>()
@@ -83,19 +83,48 @@ function open(id: string) {
   const s = state.sessions[id]
   if (!isTouch() && (s?.tmux || s?.direct)) focusTerminal()
 }
-const onClick = (e: MouseEvent) => { const h = at(e); if (h) open(h.id) }
 const onMove = (e: MouseEvent) => { const h = at(e); hoverId.value = h?.id ?? null; canvas.value!.style.cursor = h ? 'pointer' : 'default' }
+
+// Drag a character onto another room to move that one session there (mouse and pen; on touch it would fight scrolling).
+let press: { id: string; x: number; y: number } | null = null
+let dropped = false
+const roomUnder = (x: number, y: number) => document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-world]')?.dataset.world ?? null
+function onDown(e: PointerEvent) {
+  if (e.pointerType === 'touch' || e.button !== 0) return
+  const h = at(e)
+  if (!h || !state.sessions[h.id]) return // ghosts are not ours to move
+  press = { id: h.id, x: e.clientX, y: e.clientY }
+  canvas.value!.setPointerCapture(e.pointerId)
+}
+function onPointerMove(e: PointerEvent) {
+  if (!press) return onMove(e)
+  if (!ui.drag && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 6) return // a click, not a drag yet
+  ui.drag = { id: press.id, x: e.clientX, y: e.clientY, over: roomUnder(e.clientX, e.clientY) }
+  canvas.value!.style.cursor = 'grabbing'
+}
+async function onUp() {
+  const d = ui.drag
+  press = null; ui.drag = null
+  if (!d) return
+  dropped = true // the click that ends a drag must not also open the session
+  const s = state.sessions[d.id], to = dropTarget(s, d.over, state.worlds)
+  if (!s || !to) return
+  const r = await moveSession(s.id, to.id)
+  showToast(r.ok ? `This ${s.repoName} session is now in ${to.name}.` : r.error)
+}
+const onCancel = () => { press = null; ui.drag = null }
+const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } const h = at(e); if (h) open(h.id) }
 </script>
 
 <template>
-  <article class="room" :style="{ '--tint': group.world.color }">
+  <article class="room" :class="{ drop: ui.drag && ui.drag.over === group.world.id && dropTarget(state.sessions[ui.drag.id], ui.drag.over, state.worlds) }" :data-world="canCreate ? group.world.id : undefined" :style="{ '--tint': group.world.color }">
     <header>
       <h2>{{ group.world.name }}</h2>
       <span class="meta">{{ needN }} need you · {{ working }} working · {{ idle }} idle</span>
       <span v-if="conflictN" class="warn" :title="'Sessions in this room may be working on the same thing'">⚠ {{ conflictN }}</span>
       <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>
     </header>
-    <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @mousemove="onMove" @mouseleave="hoverId = null" /></div>
+    <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @pointerdown="onDown" @pointermove="onPointerMove" @pointerup="onUp" @pointercancel="onCancel" @mouseleave="hoverId = null" /></div>
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">

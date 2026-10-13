@@ -149,6 +149,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
     <PhoneDialog v-if="ui.phoneOpen" @close="ui.phoneOpen = false" />
     <MoveSessionDialog v-if="ui.moveSession" :session-id="ui.moveSession" @close="ui.moveSession = null" />
     <PutInWorldDialog v-if="ui.putSession" :session-id="ui.putSession" @close="ui.putSession = null" @open-worlds="ui.worldsOpen = true" />
+    <div v-if="ui.drag" class="drag-tag" :style="{ left: `${ui.drag.x}px`, top: `${ui.drag.y}px` }" aria-hidden="true">
+      {{ state.sessions[ui.drag.id]?.repoName }}<template v-if="ui.drag.over && ui.drag.over !== state.sessions[ui.drag.id]?.worldId"> → {{ state.worlds.find((w) => w.id === ui.drag!.over)?.name }}</template>
+    </div>
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
     <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>
