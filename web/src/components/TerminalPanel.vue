@@ -4,19 +4,23 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { LABEL, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
-import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation } from '../store'
+import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile } from '../store'
+import { copyText, osc52Text } from '../clipboard'
 import type { Turn } from '../types'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
 const cu = computed(() => (s.value ? catchupView(s.value, state.now) : null))
 const touch = isTouch()
+/** The key that drags a selection past tmux's mouse mode (xterm.js: Shift, Option on a Mac). */
+const selectKey = /Mac/.test(navigator.platform) ? 'Option' : 'Shift'
 /** Said when the app chose this session itself, so nobody wonders why it is showing. */
 const autoLabel = computed(() => (state.autoSelected && s.value ? (needsYou.value.some((n) => n.id === s.value!.id) ? 'Showing: oldest needing you' : 'Showing: first session') : ''))
 const root = ref<HTMLElement | null>(null)
 const host = ref<HTMLElement | null>(null)
 const link = ref<'connecting' | 'live' | 'closed'>('connecting')
-const hasTmux = computed(() => !!s.value?.tmux)
+/** A live terminal: tmux, or a session the server runs itself (no tmux). */
+const hasTmux = computed(() => !!s.value?.tmux || !!s.value?.direct)
 const termFocused = ref(false)
 const showCatchup = computed(() => !!s.value && !s.value.ghost && s.value.state !== 'starting')
 const attachId = computed(() => (hasTmux.value ? s.value!.id : null))
@@ -42,6 +46,18 @@ async function loadHistory() {
   await nextTick()
   if (historyBox.value) historyBox.value.scrollTop = historyBox.value.scrollHeight
 }
+/** Pasted or dropped files: upload each, then type its path so Claude attaches it (as a native terminal would). */
+async function sendFiles(files: File[]) {
+  if (!s.value || !files.length) return
+  for (const f of files) {
+    const r = await uploadFile(s.value.id, f)
+    if (!r.ok) { showToast(`Could not add ${f.name || 'the file'}: ${r.error}`); continue }
+    if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: r.data.path + ' ' }))
+  }
+  term?.focus()
+}
+/** Claude's full-screen view jumps to the latest output on Ctrl+End; phones and Mac keyboards have no such key. */
+function jumpToLatest() { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: '\x1b[1;5F' })) }
 function openHistory() { historyOpen.value = true; history.value = null; void loadHistory() }
 watch(() => s.value?.id, () => { historyOpen.value = false; history.value = null })
 
@@ -89,7 +105,7 @@ async function reattach(id: string | null) {
   if (!id || !host.value) { term?.dispose(); term = null; fit = null; return }
   if (!term) {
     term = new Terminal({
-      fontFamily: '"JetBrains Mono", ui-monospace, monospace', fontSize: 13, cursorBlink: true,
+      fontFamily: '"JetBrains Mono", ui-monospace, monospace', fontSize: 13, cursorBlink: true, macOptionClickForcesSelection: true,
       theme: { background: '#0c0f14', foreground: '#ece6d9' },
     })
     fit = new FitAddon()
@@ -100,6 +116,18 @@ async function reattach(id: string | null) {
       if (e.type === 'keydown' && isLeaveTerminalKey(e)) { term?.blur(); return false }
       return true
     })
+    // Copying: programs inside (Claude Code, tmux) send OSC 52, which xterm.js drops unless handled;
+    // and a selection made with Shift+drag (past tmux's mouse mode) is copied on release.
+    const copy = async (text: string) => showToast(await copyText(text) ? 'Copied to your clipboard.' : 'The browser blocked the clipboard.')
+    term.parser.registerOscHandler(52, (data) => { const t = osc52Text(data); if (t) void copy(t); return true })
+    host.value.addEventListener('mouseup', () => { const t = term?.getSelection().replace(/[ \t]+$/gm, ''); if (t) void copy(t) }) // no padding a terminal row adds
+    // Capture phase, so a pasted image never reaches xterm.js (it would paste nothing); plain text still pastes as usual.
+    host.value.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.files ?? [])]
+      if (files.length) { e.preventDefault(); e.stopPropagation(); void sendFiles(files) }
+    }, true)
+    host.value.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault() })
+    host.value.addEventListener('drop', (e) => { const files = [...(e.dataTransfer?.files ?? [])]; if (files.length) { e.preventDefault(); void sendFiles(files) } })
     term.textarea?.addEventListener('focus', () => { termFocused.value = true })
     term.textarea?.addEventListener('blur', () => { termFocused.value = false })
     term.onData((d) => { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d })) })
@@ -131,15 +159,18 @@ watch(termFocusTick, async () => {
 </script>
 
 <template>
-  <section ref="root" class="term" aria-label="Session terminal" :style="{ '--tint': world?.color ?? '#8a92a0' }">
+  <section ref="root" :class="['term', { typing: hasTmux && termFocused }]" aria-label="Session terminal" :style="{ '--tint': world?.color ?? '#8a92a0' }">
     <div class="term-head">
       <template v-if="s">
         <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ world?.name }} · {{ LABEL[s.state] }}
         <span v-if="s.context"> · {{ s.context.pct }}% context</span>
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
-        <span v-if="hasTmux && termFocused" class="term-paused">Shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : 'Ctrl+] to leave' }}</span>
+        <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into Claude</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
+        <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" title="Jump to Claude's latest output (Ctrl+End)" @click="jumpToLatest">Jump to latest</button>
+        <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
+        <span v-if="s?.direct" class="term-note" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">Runs without tmux · stops if Agent Worlds restarts</span>
       </template>
       <template v-else>No session selected</template>
     </div>

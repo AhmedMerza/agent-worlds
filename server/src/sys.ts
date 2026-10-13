@@ -71,15 +71,25 @@ export async function typeInto(pane: string, text: string): Promise<boolean> {
 
 const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '') || 'task';
 
+/** Sessions run inside tmux so they outlive the server and can be watched from several screens at once. */
+export const hasTmux = async () => (await run('tmux', ['-V'])) !== null;
+export const TMUX_INSTALL = process.platform === 'darwin' ? 'brew install tmux' : 'sudo dnf install tmux, or sudo apt install tmux';
+export const TMUX_MISSING = `tmux is not installed, so sessions run inside Agent Worlds itself and end when it restarts or updates. Install tmux (${TMUX_INSTALL}) and restart Agent Worlds to keep sessions running across restarts and to open them from your own terminal.`;
+/** Runs `claude` as a session the server owns (no tmux). */
+export type SpawnDirect = (name: string, file: string, args: string[], cwd: string, env: Record<string, string>) => Promise<void>;
+
 /**
  * Start `claude` in a new detached tmux session, optionally in a fresh worktree
  * (<repo>-worktrees/<branch>, new branch forked from the repo's default branch, see defaultStart). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string; permissionMode?: string }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string; permissionMode?: string; spawnDirect?: SpawnDirect }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
+  const direct = !(await hasTmux());
+  if (direct && !opts.spawnDirect) throw new Error(`this needs tmux, which is not installed (${TMUX_INSTALL}). Start sessions from the web page instead.`); // before any worktree is made
   const id = randomBytes(2).toString('hex');
   let dir = opts.repo;
   let branch: string | null = null;
   if (opts.worktree) {
+    if (!('head' in await repoInfo(opts.repo))) throw new Error(`${opts.repo} is not a git repo, so it cannot use a worktree`);
     branch = opts.branch || `aw/${slug(opts.task || 'session', 32)}-${id}`;
     if ((await run('git', ['check-ref-format', '--branch', branch])) === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
     dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));
@@ -94,7 +104,13 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   const settings = opts.home ? ['--settings', join(opts.home, 'hooks.json')] : [];
   const resume = opts.resume ? ['--resume', opts.resume] : [];
   const mode = opts.permissionMode ? ['--permission-mode', opts.permissionMode] : [];
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...resume, ...mode, ...settings, ...(task ? ['--', task] : [])]);
+  const args = [...resume, ...mode, ...settings, ...(task ? ['--', task] : [])];
+  if (direct) {
+    // AGENT_WORLDS_PTY lets aw-hook tell the server which of its sessions an event belongs to (tmux has TMUX_PANE for that).
+    try { await opts.spawnDirect!(name, opts.claudeBin ?? 'claude', args, dir, { ...(opts.home ? { AGENT_WORLDS_HOME: opts.home } : {}), AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start claude: ${(e as Error).message}`); }
+    return { tmuxSession: name, dir, branch, pane: null, direct: true };
+  }
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...args]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.

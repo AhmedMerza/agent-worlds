@@ -35,6 +35,8 @@ type Pending = {
 export type Session = {
   id: string; worldId: string | null; repo: string; repoName: string; cwd: string;
   branch: string | null; worktree: boolean; tmux: { session: string | null; pane: string } | null;
+  /** Set when the server runs this session itself (no tmux): the name of its pty. */
+  direct: string | null;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];
@@ -140,10 +142,14 @@ export class Store {
 
   private now() { return this.deps.now ? this.deps.now() : Date.now(); }
 
+  /** The world holding `repo`, else the one whose folder holds `cwd` most closely (so ~/ws/x beats ~/ws beats ~). */
   worldOf(repo: string, cwd: string): string | null {
     for (const w of this.cfg.worlds) if (w.repos.includes(repo)) return w.id;
-    for (const w of this.cfg.worlds) if (w.repos.some((r) => cwd === r || cwd.startsWith(r + '/'))) return w.id;
-    return null;
+    let best: string | null = null, len = -1;
+    for (const w of this.cfg.worlds) {
+      for (const r of w.repos) if (r.length > len && (cwd === r || cwd.startsWith(r === '/' ? '/' : r + '/'))) { best = w.id; len = r.length; }
+    }
+    return best;
   }
 
   view(s: Session) {
@@ -205,26 +211,33 @@ export class Store {
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
-  async addStarting(o: { tmuxSession: string; pane: string | null; dir: string; task: string | null }): Promise<string> {
+  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null }): Promise<string> {
+    // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
+    const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
+    if (live) { if (o.task && !live.task) { live.task = oneLine(o.task, 200); this.push(live); } return live.id; }
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir);
     s.state = 'starting';
     s.task = o.task ? oneLine(o.task, 200) : null;
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
+    s.direct = o.direct ?? null;
     s.now = 'Starting… Claude may ask you to trust this folder in the terminal';
     this.push(s);
     return id;
   }
 
-  private async create(id: string, cwd: string, pane: string | null = null): Promise<Session> {
+  private async create(id: string, cwd: string, pane: string | null = null, direct: string | null = null): Promise<Session> {
     const info = await this.deps.repoInfo(cwd);
     const existing = this.sessions.get(id); // another event may have created it while git ran
     if (existing) return existing;
     const t = this.now();
-    const starting = pane ? [...this.sessions.values()].find((x) => x.state === 'starting' && x.tmux?.pane === pane) : undefined;
+    // One pane runs one Claude: a new id there (a 'starting' card, or /clear or /resume made a new
+    // conversation, maybe while the server was down) replaces the old session.
+    const prior = pane || direct ? [...this.sessions.values()].find((x) => x.id !== id && ((pane && x.tmux?.pane === pane) || (direct && x.direct === direct))) : undefined;
+    const starting = prior?.state === 'starting' ? prior : undefined;
     const s: Session = {
       id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
-      branch: info.branch, worktree: info.worktree, tmux: null,
+      branch: info.branch, worktree: info.worktree, tmux: null, direct,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
@@ -234,9 +247,8 @@ export class Store {
       s.task = starting.task;
       s.startedAt = starting.startedAt;
       s.tmux = starting.tmux;
-      this.sessions.delete(starting.id);
-      this.emit({ type: 'session-removed', id: starting.id });
     }
+    if (prior) this.remove(prior);
     this.sessions.set(id, s);
     return s;
   }
@@ -261,7 +273,7 @@ export class Store {
   }
 
   /** Handle one hook event. Resolves to the body aw-hook prints ('' = print nothing). */
-  async handle(p: Record<string, unknown>, pane: string | null, signal?: AbortSignal): Promise<string> {
+  async handle(p: Record<string, unknown>, pane: string | null, signal?: AbortSignal, direct: string | null = null): Promise<string> {
     const id = p.session_id;
     const ev = p.hook_event_name;
     if (typeof id !== 'string' || !id || typeof ev !== 'string') throw new Error('session_id and hook_event_name are required');
@@ -271,7 +283,8 @@ export class Store {
       return '';
     }
     const cwd = typeof p.cwd === 'string' && p.cwd.startsWith('/') ? p.cwd : '/';
-    const s = this.sessions.get(id) ?? (await this.create(id, cwd, pane));
+    const s = this.sessions.get(id) ?? (await this.create(id, cwd, pane, direct));
+    if (direct) s.direct = direct;
     if (pane && s.tmux?.pane !== pane) {
       s.tmux = { session: null, pane };
       this.deps.tmuxSessionOf(pane).then((name) => {

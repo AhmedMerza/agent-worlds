@@ -100,6 +100,8 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-
 .detail ol li{font-family:var(--f-mono);font-size:12.5px;color:var(--muted)}
 .detail ol li::before{content:"›";color:var(--tint)}
 .term{background:#0c0f14;border:1px solid var(--line);border-top:4px solid var(--tint);border-radius:6px;display:flex;flex-direction:column;min-width:0}
+.term.typing{border-color:var(--wait);box-shadow:0 0 0 2px var(--wait)}
+.term:not(.typing) .term-body{opacity:.85}
 .term-head{display:flex;align-items:center;gap:8px 10px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted);flex-wrap:wrap}
 .term-head b{font-family:var(--f-mono);color:var(--ink)}
 .term-head .live{margin-left:auto;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
@@ -116,11 +118,14 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-
 .hdr-btn{font:inherit;font-size:13px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 .hdr-btn:hover{color:var(--ink);border-color:var(--muted)}
 .banner{background:var(--err);color:var(--dark-ink);font-weight:700;padding:8px 14px;border-radius:6px;font-size:14px}
+.banner.update{background:var(--panel);color:var(--ink);border:1px solid var(--ok);display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.banner.update .err{flex-basis:100%;margin:0;white-space:pre-wrap;font:12px var(--f-mono);color:var(--err);max-height:200px;overflow:auto}
 .loading{color:var(--muted);padding:40px 0;text-align:center}
 .term-body{height:300px;padding:6px 0 6px 8px;min-width:0;overflow:hidden}
 .term-body .xterm{height:100%}
 .term-view{padding:16px 14px;color:var(--muted);font-size:14px;margin:0}
 .term-state{margin-left:auto;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.term-note{font-size:11px;color:var(--muted);margin-left:8px}
 .btn.opt.on{border-color:var(--wait);background:var(--line)}
 .soon{font-size:12px;color:var(--muted);margin:0}
 .review-tests.bad{color:var(--err)}
@@ -216,7 +221,8 @@ pre.diff{max-height:320px;overflow:auto}
 .recent-list li .resume{flex:none}
 .attach-cmd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .attach-cmd code{font-family:var(--f-mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
-.term-paused{margin-left:auto;font-size:11px;color:var(--wait)}
+.term-paused{margin-left:auto;font-size:12px;color:var(--wait)}
+.term-paused.idle{color:var(--muted)}
 
 /* Fixed app shell on desktop: the page never scrolls, each region scrolls on its own. */
 @media (min-width:1000px){

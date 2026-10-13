@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from '../clipboard'
 import { computed } from 'vue'
 import { LABEL, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText } from '../logic'
 import { selected, groups, focusTerminal, askClaude, showToast, ui, state } from '../store'
@@ -13,14 +14,7 @@ const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmu
 async function copyAttach() {
   const text = attachText.value
   if (!text) return
-  try { await navigator.clipboard.writeText(text); showToast('Copied: ' + text); return } catch { /* fall back below */ }
-  const ta = document.createElement('textarea')
-  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
-  document.body.appendChild(ta); ta.select()
-  let ok = false
-  try { ok = document.execCommand('copy') } catch { /* ignore */ }
-  ta.remove()
-  showToast(ok ? 'Copied: ' + text : 'Could not copy. Run: ' + text)
+  showToast(await copyText(text) ? 'Copied: ' + text : 'Could not copy. Run: ' + text)
 }
 </script>
 
@@ -39,7 +33,7 @@ async function copyAttach() {
     <div v-else class="detail">
       <p v-if="s.state === 'starting'" class="why">Claude may be asking to trust this folder. Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ LABEL[s.state] }}</span></div>
-      <p class="path">{{ world?.name }} · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</p>
+      <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p class="path" :title="s.cwd">{{ s.cwd }}</p>
       <p v-if="s.task" class="now"><span class="lbl">Task (first prompt)</span>{{ s.task }}</p>
       <p v-if="s.lastPrompt && s.lastPrompt !== s.task" class="now"><span class="lbl">Last message you sent</span>{{ s.lastPrompt }}</p>

@@ -13,11 +13,12 @@ const all: [string, string][] = [
   ['C', 'Catch me up on the selected session (Haiku reads its transcript)'],
   ['W', 'Open the Worlds panel (create, rename, reorder, delete)'],
   ['M', 'Mute or unmute the alert sound'],
+  ['T or Enter', 'Type into the selected session\'s terminal'],
   ['Ctrl+]', 'Leave the terminal and get the shortcuts back (Esc still goes to Claude)'],
   ['?', 'Show this list'],
   ['Esc', 'Close this list or any dialog'],
 ]
-const rows = touch ? all.filter(([k]) => k !== 'Ctrl+]') : all
+const rows = touch ? all.filter(([k]) => k !== 'Ctrl+]' && k !== 'T or Enter') : all
 </script>
 
 <template>

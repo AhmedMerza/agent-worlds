@@ -164,7 +164,7 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
     const ok = await post('/api/sessions/resume', { sessionId: b });
     assert.equal(ok.status, 201);
     assert.deepEqual(ok.body, { tmuxSession: 'aw-repo-a-1' });
-    assert.deepEqual(calls[2], { repo, worktree: false, resume: b, claudeBin: 'claude', home: root, prefix: undefined });
+    assert.deepEqual({ ...calls[2], spawnDirect: undefined }, { spawnDirect: undefined, repo, worktree: false, resume: b, claudeBin: 'claude', home: root, prefix: undefined });
   } finally { await app.close(); }
 });
 

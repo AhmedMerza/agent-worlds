@@ -21,11 +21,15 @@ export interface StoreState {
   pending: { tmux: string; until: number } | null
   /** Claude processes running outside Agent Worlds. */
   unmanaged: Unmanaged[]
+  /** Newer code is on disk: offer "Update now". */
+  update: boolean
+  /** tmux is installed on the server (false: sessions run inside Agent Worlds and end when it restarts). */
+  tmux: boolean
 }
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, order: [], loaded: false, connected: false,
-  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [],
+  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true,
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -33,7 +37,7 @@ export const newState = (): StoreState => ({
 export function claimPending(st: StoreState, s: Session, now = Date.now()): boolean {
   if (!st.pending) return false
   if (now > st.pending.until) { st.pending = null; return false }
-  if (s.tmux?.session !== st.pending.tmux) return false
+  if ((s.tmux?.session ?? s.direct) !== st.pending.tmux) return false
   st.pending = null
   return true
 }
@@ -48,6 +52,8 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.order = []
       for (const s of msg.sessions) { st.sessions[s.id] = s; st.order.push(s.id) }
       st.unmanaged = msg.unmanaged ?? []
+      st.update = msg.update ?? false
+      st.tmux = msg.tmux ?? true
       st.loaded = true
       break
     case 'unmanaged':
@@ -62,13 +68,16 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
     case 'session-removed': {
       // A 'starting:<tmux>' placeholder is replaced by the real session on its first hook: keep following it.
       const gone = st.sessions[msg.id]
-      if (st.selectedId === msg.id && gone?.state === 'starting' && gone.tmux) st.pending = { tmux: gone.tmux.session, until: Date.now() + 10000 }
+      if (st.selectedId === msg.id && gone?.state === 'starting' && (gone.tmux || gone.direct)) st.pending = { tmux: gone.tmux?.session ?? gone.direct!, until: Date.now() + 10000 }
       delete st.sessions[msg.id]
       st.order = st.order.filter((i) => i !== msg.id)
       break
     }
     case 'worlds':
       st.worlds = msg.worlds
+      break
+    case 'update':
+      st.update = true
       break
     case 'toast':
       st.toast = { text: msg.text, n: (st.toast?.n ?? 0) + 1 }
@@ -135,7 +144,8 @@ const base = (id: string) => `/api/sessions/${encodeURIComponent(id)}`
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 async function api<T>(method: string, path: string, body?: unknown): Promise<ApiResult<T>> {
   try {
-    const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+    const raw = body instanceof Blob // a file goes up as-is
+    const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': raw ? body.type || 'application/octet-stream' : 'application/json' }, body: raw ? body : body === undefined ? undefined : JSON.stringify(body) })
     let data: unknown = null
     try { data = await r.json() } catch { /* empty body */ }
     return r.ok ? { ok: true, data: data as T } : { ok: false, error: errorText(r.status, data) }
@@ -148,6 +158,7 @@ export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/world
 export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
 export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
+export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST', `${base(id)}/upload?name=${encodeURIComponent(f.name)}`, f)
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })
@@ -190,7 +201,7 @@ export async function fetchClaudeDefault(): Promise<string | null> {
 function followNew(name: unknown): void {
   if (typeof name !== 'string') return
   state.pending = { tmux: name, until: Date.now() + 60000 }
-  const known = Object.values(state.sessions).find((x) => x.tmux?.session === name)
+  const known = Object.values(state.sessions).find((x) => (x.tmux?.session ?? x.direct) === name)
   if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */
@@ -226,13 +237,22 @@ export const acknowledge = (id: string) => post(`${base(id)}/ack`)
 // ---- websocket with backoff ----
 let ws: WebSocket | null = null
 let retry = 0
+/** Set once the server accepted "Update now": the next connection is the new server, so load the new page. */
+let reloadOnConnect = false
+/** Restarts the server into the newer code on disk; the page reloads when it is back. Returns an error or null. */
+export async function updateNow(force = false): Promise<string | null> {
+  const r = await api<{ ok: true }>('POST', '/api/restart', { force })
+  if (!r.ok) return r.error
+  reloadOnConnect = true
+  return null
+}
 let timer: ReturnType<typeof setTimeout> | undefined
 export const backoffMs = (n: number): number => Math.min(15000, 500 * 2 ** n)
 
 export function connect(): void {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   ws = new WebSocket(`${proto}://${location.host}/ws`)
-  ws.onopen = () => { retry = 0; state.connected = true }
+  ws.onopen = () => { retry = 0; state.connected = true; if (reloadOnConnect) location.reload() }
   ws.onmessage = (e) => {
     let m: ServerMessage
     try { m = JSON.parse(String(e.data)) as ServerMessage } catch { return /* ignore a malformed frame */ }

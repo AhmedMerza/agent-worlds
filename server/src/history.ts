@@ -96,7 +96,7 @@ export async function transcriptSummary(path: string): Promise<{ cwd: string | n
   return { cwd, lastPrompt };
 }
 
-export type ClaudeProc = { pid: number; cwd: string; sessionId: string | null; pane: string | null; managedHome: string | null; since: number };
+export type ClaudeProc = { pid: number; cwd: string; sessionId: string | null; pane: string | null; managedHome: string | null; direct: string | null; since: number };
 
 /**
  * Interactive `claude` processes of this user, from /proc (Linux only; [] elsewhere).
@@ -126,6 +126,7 @@ export function scanClaude(procRoot: string, projectsDir: string, uid = process.
         sessionId: named ?? newestTranscript(projectsDir, cwd),
         pane: /^%\d+$/.test(env.TMUX_PANE ?? '') ? env.TMUX_PANE : null,
         managedHome: env.AGENT_WORLDS_HOME ?? null,
+        direct: env.AGENT_WORLDS_PTY || null,
         since: Math.round(statSync(d).ctimeMs),
       });
     } catch { /* process went away or is not ours */ }

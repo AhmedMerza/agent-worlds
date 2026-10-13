@@ -4,7 +4,7 @@ import type { FsListing } from '../types'
 import { browseFs, state } from '../store'
 import { breadcrumbs, cleanPath, repoStatus, visibleEntries } from '../fsbrowser'
 
-/** Browses for repos to put into world `worldId`. Stays open: the parent decides when to leave. */
+/** Browses for folders (git repos or plain ones) to put into world `worldId`. Stays open: the parent decides when to leave. */
 const props = defineProps<{ worldId: string }>()
 const emit = defineEmits<{ pick: [path: string]; move: [path: string, fromWorldId: string]; back: [] }>()
 const listing = ref<FsListing | null>(null)
@@ -15,7 +15,7 @@ const typed = ref('')
 const known = ref<Record<string, boolean>>({})
 const crumbs = computed(() => (listing.value ? breadcrumbs(listing.value.path) : []))
 const entries = computed(() => (listing.value ? visibleEntries(listing.value.entries) : []))
-const here = computed(() => (listing.value && known.value[listing.value.path] ? listing.value.path : null))
+const here = computed(() => listing.value?.path ?? null)
 const status = (path: string) => repoStatus(path, props.worldId, state.worlds)
 const other = (path: string) => { const s = status(path); return s.kind === 'elsewhere' ? s : null }
 
@@ -34,7 +34,7 @@ onMounted(() => go(''))
 
 <template>
   <div class="browser">
-    <div class="actions"><button class="btn" @click="emit('back')">← Back</button><span class="why">Pick the repo folders to add. You can add several.</span></div>
+    <div class="actions"><button class="btn" @click="emit('back')">← Back</button><span class="why">Pick the folders to add: a repo, a folder of repos, or any folder. You can add several.</span></div>
     <nav class="crumbs" aria-label="Folder breadcrumbs">
       <button v-for="c in crumbs" :key="c.path" class="linkbtn" @click="go(c.path)">{{ c.name }}</button>
     </nav>
@@ -43,7 +43,7 @@ onMounted(() => go(''))
       <button class="btn primary">Go</button>
     </form>
     <div v-if="here" class="here">
-      <span class="path">{{ here }}</span><span class="tag">git repo</span>
+      <span class="path">{{ here }}</span><span v-if="known[here]" class="tag">git repo</span>
       <span v-if="status(here).kind === 'added'" class="why">Added</span>
       <template v-else-if="other(here)">
         <button class="btn" disabled>In {{ other(here)!.worldName }}</button>
@@ -58,14 +58,12 @@ onMounted(() => go(''))
       <li v-for="e in entries" :key="e.path" :class="{ repo: e.isRepo }">
         <button class="linkbtn" @click="go(e.path)">{{ e.name }}</button>
         <span v-if="e.isRepo" class="tag">git repo</span>
-        <template v-if="e.isRepo">
-          <span v-if="status(e.path).kind === 'added'" class="why end">Added</span>
-          <template v-else-if="other(e.path)">
-            <button class="btn end" disabled>In {{ other(e.path)!.worldName }}</button>
-            <button class="btn" @click="emit('move', e.path, other(e.path)!.worldId)">Move here</button>
-          </template>
-          <button v-else class="btn end" @click="emit('pick', e.path)">Add</button>
+        <span v-if="status(e.path).kind === 'added'" class="why end">Added</span>
+        <template v-else-if="other(e.path)">
+          <button class="btn end" disabled>In {{ other(e.path)!.worldName }}</button>
+          <button class="btn" @click="emit('move', e.path, other(e.path)!.worldId)">Move here</button>
         </template>
+        <button v-else class="btn end" @click="emit('pick', e.path)">Add</button>
       </li>
       <li v-if="!entries.length" class="why">No folders here.</li>
     </ul>
