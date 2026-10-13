@@ -11,11 +11,11 @@ const FS_MAX = 500;
 type Result = [number, Record<string, unknown>];
 const bad = (error: string): Result => [400, { error }];
 
-/** Main repo of a git top-level directory, or an error message. Worktrees resolve to their main repo. */
+/** Main repo of a git top-level directory, a plain (non-git) folder as itself, or an error message. Worktrees resolve to their main repo. */
 export function repoRoot(path: string): Promise<{ repo: string } | { error: string }> {
   return new Promise((done) => {
     execFile('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { timeout: 5000 }, (err, out) => {
-      if (err) return done({ error: `not a git repo: ${path}` });
+      if (err) return done({ repo: realpathSync(path) }); // a plain folder: a workspace of repos, or no repo at all
       const [top, common] = out.toString().trim().split('\n');
       if (realpathSync(path) !== top) return done({ error: `not the top folder of a git repo: ${path} (the repo is ${top})` });
       done({ repo: basename(common) === '.git' ? dirname(common) : common });
@@ -129,7 +129,7 @@ export class Worlds {
     });
   }
 
-  /** Folder browser for picking repos: sub-directories only, no hidden ones, sorted, at most 500. */
+  /** Folder browser for picking folders: sub-directories only, no hidden ones, sorted, at most 500. */
   list(path: string | null): Result {
     let dir = path;
     if (!dir) {

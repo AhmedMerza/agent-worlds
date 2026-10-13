@@ -140,10 +140,14 @@ export class Store {
 
   private now() { return this.deps.now ? this.deps.now() : Date.now(); }
 
+  /** The world holding `repo`, else the one whose folder holds `cwd` most closely (so ~/ws/x beats ~/ws beats ~). */
   worldOf(repo: string, cwd: string): string | null {
     for (const w of this.cfg.worlds) if (w.repos.includes(repo)) return w.id;
-    for (const w of this.cfg.worlds) if (w.repos.some((r) => cwd === r || cwd.startsWith(r + '/'))) return w.id;
-    return null;
+    let best: string | null = null, len = -1;
+    for (const w of this.cfg.worlds) {
+      for (const r of w.repos) if (r.length > len && (cwd === r || cwd.startsWith(r === '/' ? '/' : r + '/'))) { best = w.id; len = r.length; }
+    }
+    return best;
   }
 
   view(s: Session) {

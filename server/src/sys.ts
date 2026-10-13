@@ -80,6 +80,7 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   let dir = opts.repo;
   let branch: string | null = null;
   if (opts.worktree) {
+    if (!('head' in await repoInfo(opts.repo))) throw new Error(`${opts.repo} is not a git repo, so it cannot use a worktree`);
     branch = opts.branch || `aw/${slug(opts.task || 'session', 32)}-${id}`;
     if ((await run('git', ['check-ref-format', '--branch', branch])) === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
     dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));

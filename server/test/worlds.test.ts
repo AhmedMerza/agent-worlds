@@ -95,7 +95,6 @@ test('create/update validation errors', async () => {
   await bad({ name: 'X', repos: 'nope' }, /array/);
   await bad({ name: 'X', repos: ['relative/path'] }, /absolute/);
   await bad({ name: 'X', repos: [join(code, 'missing')] }, /no such folder/);
-  await bad({ name: 'X', repos: [join(code, 'plain')] }, /not a git repo/);
   await bad({ name: 'X', repos: [join(repoA, 'sub')] }, /not the top folder/);
   await bad({ name: 'X', repos: [repoA] }, /belongs to the Web Apps world/);
   await bad({ name: 'X', repos: [wt] }, /belongs to the Web Apps world/);
@@ -187,4 +186,19 @@ test('fs listing: directories only, no hidden, sorted, repo flag, bounds', async
   assert.equal(def.body.path, code, 'defaults to where most repos live');
 
   assert.equal((await fetch(`${base}/api/fs`)).status, 401);
+});
+
+test('plain folders: a folder of repos is an entry; a session joins the closest folder', async () => {
+  const r = await call('POST', '/api/worlds', { name: 'Workspace', repos: [code] });
+  assert.equal(r.status, 201);
+  const id = r.body.world.id;
+  await app.store.handle({ ...ev.start, session_id: 'p-plain', cwd: join(code, 'plain') }, null);
+  mkdirSync(join(repoC, 'sub'));
+  await app.store.handle({ ...ev.start, session_id: 'p-sub', cwd: join(repoC, 'sub') }, null);
+  await app.store.handle({ ...ev.start, session_id: 'p-a', cwd: repoA }, null);
+  const view = (sid: string) => (app.store.list().find((s: any) => s.id === sid) as any).worldId;
+  assert.equal(view('p-plain'), id, 'a non-git folder under the entry');
+  assert.equal(view('p-sub'), id, 'a repo inside the folder that no world lists');
+  assert.notEqual(view('p-a'), id, 'a repo listed by its own world wins over the folder above it');
+
 });

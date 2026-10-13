@@ -39,7 +39,7 @@ async function copyAttach() {
     <div v-else class="detail">
       <p v-if="s.state === 'starting'" class="why">Claude may be asking to trust this folder. Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ LABEL[s.state] }}</span></div>
-      <p class="path">{{ world?.name }} · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</p>
+      <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p class="path" :title="s.cwd">{{ s.cwd }}</p>
       <p v-if="s.task" class="now"><span class="lbl">Task (first prompt)</span>{{ s.task }}</p>
       <p v-if="s.lastPrompt && s.lastPrompt !== s.task" class="now"><span class="lbl">Last message you sent</span>{{ s.lastPrompt }}</p>

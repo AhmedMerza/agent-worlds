@@ -99,3 +99,7 @@ test('the same hook reported twice (two command strings) is handled once and bot
     assert.equal(s.log.filter((l) => l.text.startsWith('You:')).length, 2);
   } finally { ws.close(); await app.close(); }
 });
+
+test('createSession refuses a worktree in a plain (non-git) folder', async () => {
+  await assert.rejects(createSession({ repo: tmp(), worktree: true }), /not a git repo, so it cannot use a worktree/);
+});

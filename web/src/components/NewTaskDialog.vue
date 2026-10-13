@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { state, createSession, updateWorld, moveRepo } from '../store'
+import { state, browseFs, createSession, updateWorld, moveRepo } from '../store'
 import { baseName, modeField, withRepo, type ModeChoice } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 import PermissionSelect from './PermissionSelect.vue'
@@ -16,6 +16,14 @@ const task = ref('')
 const mode = ref<ModeChoice>('claude')
 const browsing = ref(false)
 const worktree = ref(true)
+/** Whether the chosen folder is a git repo (null while unknown): worktrees and branches only make sense there. */
+const isGit = ref<boolean | null>(null)
+watch(repo, async (path) => {
+  isGit.value = null
+  const parent = path.replace(/\/[^/]+$/, '') || '/'
+  const r = path ? await browseFs(parent) : null
+  if (repo.value === path) isGit.value = r?.ok ? (r.data.entries.find((e) => e.path === path)?.isRepo ?? false) : null
+}, { immediate: true })
 const branch = ref('')
 const error = ref('')
 const sending = ref(false)
@@ -38,9 +46,9 @@ async function moveFolder(path: string, fromId: string) {
 async function submit() {
   if (sending.value) return
   if (!wid.value) { error.value = 'Pick a world.'; return }
-  if (!repo.value) { error.value = 'Pick a repo.'; return }
+  if (!repo.value) { error.value = 'Pick a folder.'; return }
   sending.value = true; error.value = ''
-  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value, ...modeField(mode.value), ...(branch.value.trim() ? { branch: branch.value.trim() } : {}) })
+  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...modeField(mode.value), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
   sending.value = false
   if (err) error.value = err
   else emit('close')
@@ -63,17 +71,20 @@ async function submit() {
         <p class="why">This world has no folders yet.</p>
         <button type="button" class="btn" @click="browsing = true">Add a folder</button>
       </div>
-      <label v-else-if="wid">Repo
+      <label v-else-if="wid">Folder
         <select v-model="repo"><option v-for="r in world?.repos ?? []" :key="r" :value="r">{{ baseName(r) }} ({{ r }})</option></select>
       </label>
       <label>Task (optional)
         <textarea v-model="task" placeholder="Leave empty to start a blank session" />
       </label>
       <PermissionSelect v-model="mode" />
-      <label class="row"><input v-model="worktree" type="checkbox"> Use a new worktree</label>
-      <label>Branch name (optional)
-        <input v-model="branch" type="text" placeholder="feat/something" autocomplete="off">
-      </label>
+      <template v-if="isGit !== false">
+        <label class="row"><input v-model="worktree" type="checkbox"> Use a new worktree</label>
+        <label>Branch name (optional)
+          <input v-model="branch" type="text" placeholder="feat/something" autocomplete="off">
+        </label>
+      </template>
+      <p v-else class="why">Not a git repo, so the session starts right in this folder.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
       <div class="actions">
         <button class="btn primary" :disabled="sending || !repo">{{ sending ? 'Starting…' : 'Start' }}</button>
