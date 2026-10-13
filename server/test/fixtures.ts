@@ -1,3 +1,14 @@
+import { writeFileSync, chmodSync } from 'node:fs';
+import { join } from 'node:path';
+
+/** A fake claude binary: a bash script running `body`. */
+export function stubClaude(dir: string, body: string): string {
+  const f = join(dir, 'claude-stub');
+  writeFileSync(f, `#!/usr/bin/env bash\n${body}\n`);
+  chmodSync(f, 0o755);
+  return f;
+}
+
 // Hook payloads recorded from Claude Code 2.1.296 (paths and ids genericised).
 const base = { session_id: 'sess-1', transcript_path: '/tmp/t.jsonl', cwd: '/work/repo-a', prompt_id: 'p1', permission_mode: 'default' };
 const bash = { command: 'touch hello.txt', description: 'Create hello.txt' };
