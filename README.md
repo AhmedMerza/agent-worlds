@@ -31,8 +31,8 @@ room, and each session stands in the zone that matches what it is doing:
 | **Desks** (middle) | working sessions, with their helpers (subagents) underneath |
 | **Help desk** (right, amber) | sessions that need you: waiting, finished or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
 
-Characters walk between zones when their state changes. Click a character (or its chip, or
-press `1`-`9`) to select it.
+Characters walk between zones when their state changes. Click a character (or its chip) to select it
+and type straight into its terminal; `1`-`9` select it and keep the keyboard shortcuts.
 
 Press `W` to create, rename, recolour, reorder or delete worlds, and to pick each world's repos
 with a folder browser. Nothing is fixed: a fresh install has no worlds, and sessions whose folder

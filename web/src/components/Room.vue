@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { roomHeight, type Walker } from '../zones'
-import { LABEL, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText } from '../logic'
-import { state, select } from '../store'
+import { LABEL, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
+import { state, select, focusTerminal } from '../store'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
 defineEmits<{ 'new-task': [worldId: string] }>()
@@ -76,7 +76,14 @@ function at(e: MouseEvent): Hit | undefined {
   const b = canvas.value!.getBoundingClientRect()
   return hitTest(hits, (e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * hLog)
 }
-const onClick = (e: MouseEvent) => { const h = at(e); if (h) select(h.id) }
+/** A mouse click also puts you in the session's terminal, so what you type next goes to Claude.
+ *  Not on touch (it would leave the Rooms tab and pop the keyboard); 1-9 keep the shortcuts. */
+function open(id: string) {
+  select(id)
+  const s = state.sessions[id]
+  if (!isTouch() && (s?.tmux || s?.direct)) focusTerminal()
+}
+const onClick = (e: MouseEvent) => { const h = at(e); if (h) open(h.id) }
 const onMove = (e: MouseEvent) => { const h = at(e); hoverId.value = h?.id ?? null; canvas.value!.style.cursor = h ? 'pointer' : 'default' }
 </script>
 
@@ -91,7 +98,7 @@ const onMove = (e: MouseEvent) => { const h = at(e); hoverId.value = h?.id ?? nu
     <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @mousemove="onMove" @mouseleave="hoverId = null" /></div>
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
-      <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
+      <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
         <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
