@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { modeField, modeOptions } from '../src/logic'
-import { applyMessage, keepSelection, newState, backoffMs, createSession, resumeSession } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession } from '../src/store'
 import { mk, perm } from './helpers'
 
 const worlds = [{ id: 'web', name: 'Web', color: '#fff', repos: [] }]
@@ -131,5 +131,18 @@ describe('permission mode', () => {
     fn = stub()
     await resumeSession('s1', true, 'plan')
     expect(sent(fn)).toEqual({ sessionId: 's1', stop: true, permissionMode: 'plan' })
+  })
+})
+
+describe('moveSession', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('posts the world for that one session', async () => {
+    const fn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    vi.stubGlobal('fetch', fn)
+    expect((await moveSession('sess 1', 'pos')).ok).toBe(true)
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/sessions/sess%201/world')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ worldId: 'pos' })
   })
 })

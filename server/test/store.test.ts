@@ -7,11 +7,11 @@ import { ev, QUESTION } from './fixtures.ts';
 const tick = () => new Promise((r) => setImmediate(r));
 
 /** Fixtures use cwd /work/repo-a; `root` relocates that repo (and a sibling repo-b) for tests that write files. */
-function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string; now?: () => number } = {}) {
+function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string; now?: () => number; placements?: Map<string, string> } = {}) {
   const emitted: any[] = [];
   const root = opts.root ?? '/work';
   const cfg = parseConfig({
-    worlds: [{ id: 'web', name: 'Web', color: '#47b4a7', repos: [`${root}/repo-a`, `${root}/repo-b`] }],
+    worlds: [{ id: 'web', name: 'Web', color: '#47b4a7', repos: [`${root}/repo-a`, `${root}/repo-b`] }, { id: 'pos', name: 'POS', color: '#cc8844', repos: [] }],
     userSettingsPath: opts.userSettingsPath ?? '/nonexistent/settings.json',
   });
   const st = { clients: opts.clients ?? false };
@@ -27,6 +27,7 @@ function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSe
     clientsConnected: () => st.clients,
     holdMs: opts.holdMs ?? 10_000,
     now: opts.now,
+    placements: opts.placements && { get: (id) => opts.placements!.get(id), set: (id, w) => { if (w) opts.placements!.set(id, w); else opts.placements!.delete(id); } },
     stats: {
       get: (r, k) => counts.get(r + '|' + k) ?? 0,
       inc: (r, k) => { const n = (counts.get(r + '|' + k) ?? 0) + 1; counts.set(r + '|' + k, n); return n; },
@@ -411,4 +412,46 @@ test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is th
   await store.handle(ev.prompt, '%5');
   await store.handle({ ...ev.notifyPerm, notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }, '%5');
   assert.equal(view().state, 'idle');
+});
+
+test('moving one session to another world: its repo stays, /clear keeps the move, moving back clears it', async () => {
+  const placements = new Map<string, string>();
+  const { store } = setup({ placements });
+  const get = (id: string) => store.list().find((x: any) => x.id === id) as any;
+  await store.handle(ev.start, '%5');
+  await store.handle({ ...ev.start, session_id: 'sess-2' }, '%6');
+  assert.equal(store.place('sess-1', 'pos'), null);
+  assert.equal(get('sess-1').worldId, 'pos');
+  assert.equal(get('sess-2').worldId, 'web', 'the other session of the same repo stays');
+  assert.deepEqual(store.place('sess-1', 'nope'), [400, 'no such world']);
+  assert.deepEqual(store.place('ghost', 'pos'), [404, 'no such session']);
+
+  // /clear in that terminal: a new conversation id, still in POS
+  await store.handle({ ...ev.start, session_id: 'sess-1b', source: 'clear' }, '%5');
+  assert.equal(get('sess-1b').worldId, 'pos');
+  // worlds edited (a repo moved, say): the hand move still wins
+  store.recomputeWorlds();
+  assert.equal(get('sess-1b').worldId, 'pos');
+
+  assert.equal(store.place('sess-1b', null), null);
+  assert.equal(get('sess-1b').worldId, 'web');
+  assert.equal(placements.has('sess-1b'), false);
+  // moving it to its own folder's world is the same as moving it back: nothing saved
+  store.place('sess-2', 'web');
+  assert.equal(placements.has('sess-2'), false);
+});
+
+test('placements are saved to a private file and read back after a restart', async () => {
+  const { mkdtempSync, statSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { Placements } = await import('../src/placements.ts');
+  const file = join(mkdtempSync(join(tmpdir(), 'aw-place-')), 'placements.json');
+  const p = new Placements(file);
+  p.set('sess-1', 'pos'); p.set('sess-2', 'web'); p.set('sess-2', null);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  const again = new Placements(file);
+  assert.equal(again.get('sess-1'), 'pos');
+  assert.equal(again.get('sess-2'), undefined);
+  assert.equal(again.get('constructor'), undefined, 'only ids it holds');
 });

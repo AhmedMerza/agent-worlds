@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, type Config } from './config.ts';
 import { Store } from './store.ts';
 import { Stats } from './rules.ts';
+import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
@@ -144,6 +145,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     clientsConnected: () => wss.clients.size > 0,
     holdMs: opts.holdMs ?? HOLD_MS,
     stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
+    placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
     onEvent: (s, ev) => insights?.onEvent(s, ev),
     ...opts.deps,
   }, broadcast);
@@ -208,7 +210,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     for (const p of procs) if (p.managedHome === home && p.pane && p.sessionId && !isManaged(p)) await adopt(p);
     const next = await Promise.all(procs.filter((p) => !isManaged(p)).map(async (p) => {
       const info = await repoOf(p.cwd);
-      return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldOf(info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since, ...(await ghostOf(p.sessionId)) };
+      return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldFor(p.sessionId, info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since, ...(await ghostOf(p.sessionId)) };
     }));
     if (JSON.stringify(next) !== JSON.stringify(unmanaged)) {
       unmanaged = next;
@@ -390,7 +392,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const items = await Promise.all((await history(cfg.claudeProjectsDir, limit, repo ? normalize(repo).replace(/\/+$/, '') : undefined)).map(async (h) => {
         const info = h.cwd ? await repoOf(h.cwd) : null;
         return {
-          ...h, repo: info?.repo ?? null, worldId: info ? store.worldOf(info.repo, h.cwd!) : null,
+          ...h, repo: info?.repo ?? null, worldId: info ? store.worldFor(h.sessionId, info.repo, h.cwd!) : null,
           running: running.has(h.sessionId), managed: store.sessions.has(h.sessionId),
         };
       }));
@@ -525,6 +527,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!s.transcriptPath) return send(res, 409, { error: 'no transcript yet for this session' });
       try { return send(res, 200, { turns: conversation(await readTail(s.transcriptPath, 2 * 1024 * 1024)).slice(-400) }); }
       catch { return send(res, 502, { error: 'cannot read the transcript' }); }
+    }
+    const wm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/world$/);
+    if (wm && method === 'POST') {
+      const body = await readBody(req);
+      if (body.worldId !== null && typeof body.worldId !== 'string') return send(res, 400, { error: 'worldId must be a world id or null' });
+      const err = store.place(decodeURIComponent(wm[1]), body.worldId);
+      return err ? send(res, err[0], { error: err[1] }) : send(res, 200, { ok: true });
     }
     const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack|catchup)$/);
     if (m && method === 'POST') {

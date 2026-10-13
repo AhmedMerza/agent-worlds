@@ -89,6 +89,8 @@ export type Deps = {
   /** Minimum gap between branch refreshes of one session (default 2000). */
   branchDebounceMs?: number;
   stats: { get(repo: string, rule: string): number; inc(repo: string, rule: string): number };
+  /** Sessions moved to a world by hand, by conversation id (see placements.ts). */
+  placements?: { get(id: string): string | undefined; set(id: string, worldId: string | null): void };
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
@@ -163,6 +165,24 @@ export class Store {
       for (const r of w.repos) if (r.length > len && (cwd === r || cwd.startsWith(r === '/' ? '/' : r + '/'))) { best = w.id; len = r.length; }
     }
     return best;
+  }
+
+  /** A session's world: the one it was moved to by hand (while that world exists), else its folder's. */
+  worldFor(id: string | null, repo: string, cwd: string): string | null {
+    const p = id ? this.deps.placements?.get(id) : undefined;
+    return p && this.cfg.worlds.some((w) => w.id === p) ? p : this.worldOf(repo, cwd);
+  }
+
+  /** Moves one session to a world by hand (null: back to its folder's world). Other sessions of its repo stay. */
+  place(id: string, worldId: string | null): [number, string] | null {
+    const s = this.sessions.get(id);
+    if (!s) return [404, 'no such session'];
+    if (worldId !== null && !this.cfg.worlds.some((w) => w.id === worldId)) return [400, 'no such world'];
+    if (!this.deps.placements) return [500, 'cannot save placements'];
+    this.deps.placements.set(id, worldId === this.worldOf(s.repo, s.cwd) ? null : worldId);
+    s.worldId = this.worldFor(id, s.repo, s.cwd);
+    this.push(s);
+    return null;
   }
 
   view(s: Session) {
@@ -248,8 +268,12 @@ export class Store {
     // conversation, maybe while the server was down) replaces the old session.
     const prior = pane || direct ? [...this.sessions.values()].find((x) => x.id !== id && ((pane && x.tmux?.pane === pane) || (direct && x.direct === direct))) : undefined;
     const starting = prior?.state === 'starting' ? prior : undefined;
+    // /clear or /resume in a session moved by hand: the new conversation stays where it was moved
+    const moved = prior && this.deps.placements?.get(prior.id);
+    if (moved && !this.deps.placements!.get(id)) this.deps.placements!.set(id, moved);
+    if (moved && starting) this.deps.placements!.set(starting.id, null); // a placeholder id is never seen again
     const s: Session = {
-      id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
+      id, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null, direct,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
@@ -583,7 +607,7 @@ export class Store {
   /** After worlds change: re-derive every session's world and broadcast the ones that moved. */
   recomputeWorlds() {
     for (const s of this.sessions.values()) {
-      const w = this.worldOf(s.repo, s.cwd);
+      const w = this.worldFor(s.id, s.repo, s.cwd);
       if (w !== s.worldId) { s.worldId = w; this.push(s); }
     }
   }
