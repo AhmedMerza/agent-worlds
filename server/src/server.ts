@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,8 @@ import { Stats } from './rules.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
-import { phoneAddresses, Pairing, type Address } from './phone.ts';
+import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
+import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { readHead } from './transcript.ts';
 import { readFileSync } from 'node:fs';
@@ -31,6 +32,11 @@ type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
   home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
+  /** Path to cloudflared; null = not installed. Default: looked up on PATH and in ~/.local/bin. */
+  cloudflared?: string | null;
+  /** Where to download cloudflared from (tests serve a fake one). */
+  installCloudflared?: () => Promise<string>;
+  detectFirewall?: () => Promise<'firewalld' | 'ufw' | null>;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -64,6 +70,14 @@ const BAD_PAIR_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport
 <p>On your computer, open Agent Worlds, press <b>Connect a phone</b> and scan the new code.</p>
 </body>`;
 
+const page = (title: string, body: string) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
+<body style="font:16px/1.5 system-ui,sans-serif;max-width:26em;margin:4em auto;padding:0 1em;background:#14161b;color:#e6e8ec">${body}</body>`;
+const loginPage = (msg = '') => page('Agent Worlds: log in', `<h1 style="font-size:24px">Agent Worlds</h1>
+${msg ? `<p style="color:#f2b84b">${msg}</p>` : '<p>Enter the password you set in <b>Connect a phone</b> on your computer.</p>'}
+<form method="post" action="/login"><input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password"
+ style="font:inherit;width:100%;box-sizing:border-box;padding:10px;border-radius:6px;border:1px solid #444;background:#0d0f13;color:inherit">
+<button style="font:inherit;margin-top:10px;width:100%;padding:10px;border:0;border-radius:6px;background:#f2b84b;color:#111;font-weight:600">Log in</button></form>`);
+
 /** SIGTERM a Claude process and wait up to 5 s for it to exit. */
 async function stopProcess(pid: number): Promise<boolean> {
   const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -88,7 +102,10 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
     });
     req.on('end', () => {
       try {
-        const v = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+        const text = Buffer.concat(chunks).toString('utf8');
+        // The login page posts a plain HTML form; everything else sends JSON.
+        if (req.headers['content-type']?.startsWith('application/x-www-form-urlencoded')) return ok(Object.fromEntries(new URLSearchParams(text)));
+        const v = JSON.parse(text || '{}');
         if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('body must be a JSON object');
         ok(v);
       } catch (e) { fail(Object.assign(new Error((e as Error).message), { status: 400 })); }
@@ -174,11 +191,30 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
   const pairing = new Pairing();
+  const password = new Password(join(opts.home ?? homeDir(), 'password.json'));
+  const limiter = new LoginLimiter();
+  const tunnel = new Tunnel();
+  const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
+  let installed: string | null = null;
+  const cloudflared = () => installed ?? (opts.cloudflared !== undefined ? opts.cloudflared : findCloudflared());
+  /** Where a request came from. cloudflared connects from this machine, so only then is its CF-Connecting-IP trusted. */
+  const client = (req: IncomingMessage) => {
+    const sock = (req.socket.remoteAddress ?? '?').replace(/^::ffff:/, '');
+    const local = sock === '127.0.0.1' || sock === '::1';
+    const viaTunnel = local && !!tunnel.host() && req.headers.host?.toLowerCase() === tunnel.host();
+    const ip = viaTunnel && typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : sock;
+    return { ip, route: (viaTunnel ? 'public link' : local ? 'this computer' : 'network') as 'public link' | 'network' | 'this computer', agent: String(req.headers['user-agent'] ?? '').slice(0, 300) };
+  };
+  const logAccess = (req: IncomingMessage, via: string, ok: boolean, device: string | null = null) => access.add({ at: Date.now(), device, via, ok, ...client(req) });
   const addresses = opts.phoneAddresses ?? phoneAddresses;
   const port = () => (servers[0].address() as { port?: number } | null)?.port ?? cfg.port;
-  const login = (req: IncomingMessage, res: ServerResponse) => {
+  /** Sign this browser in: the shared token cookie plus a device id, so the access log can tell devices apart. */
+  const login = (req: IncomingMessage, res: ServerResponse, via: string) => {
     const secure = (req.socket as { encrypted?: boolean }).encrypted || req.headers['x-forwarded-proto'] === 'https';
-    res.writeHead(302, { 'set-cookie': `aw_token=${token}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/${secure ? '; Secure' : ''}`, location: '/' });
+    const attrs = `Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/${secure ? '; Secure' : ''}`;
+    const device = cookie(req, 'aw_dev') ?? randomBytes(9).toString('base64url');
+    logAccess(req, via, true, device);
+    res.writeHead(302, { 'set-cookie': [`aw_token=${token}; ${attrs}`, `aw_dev=${device}; ${attrs}`], location: '/' });
     res.end();
   };
   /** Start or stop answering on a phone address, and remember it in config.json. 127.0.0.1 is never touched. */
@@ -204,7 +240,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (allowed) return allowed;
     const p = port();
     const hp = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${p}`;
-    const set = new Set([...cfg.listen.map(hp), `localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`, ...cfg.extraHosts].map((h) => h.toLowerCase()));
+    const set = new Set([...cfg.listen.map(hp), `localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`, ...cfg.extraHosts, ...(tunnel.host() ? [tunnel.host()!] : [])].map((h) => h.toLowerCase()));
     if (servers[0].listening) allowed = set;
     return set;
   };
@@ -236,18 +272,38 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
 
     if (!hostOk(req)) return send(res, 421, { error: 'unknown host; add it to extraHosts in the config' });
     if (url.pathname === '/' && url.searchParams.has('token')) {
-      if (!same(url.searchParams.get('token'), token)) return sendHtml(res, 401, BAD_TOKEN_PAGE);
-      return login(req, res);
+      if (!same(url.searchParams.get('token'), token)) { logAccess(req, 'link with token', false); return sendHtml(res, 401, BAD_TOKEN_PAGE); }
+      return login(req, res, 'link with token');
     }
     if (method === 'GET' && url.pathname.startsWith('/pair/')) {
-      return pairing.redeem(url.pathname.slice('/pair/'.length)) ? login(req, res) : sendHtml(res, 401, BAD_PAIR_PAGE);
+      if (pairing.redeem(url.pathname.slice('/pair/'.length))) return login(req, res, 'QR code');
+      logAccess(req, 'QR code', false);
+      return sendHtml(res, 401, BAD_PAIR_PAGE);
     }
     if (!originOk(req)) return send(res, 403, { error: 'origin not allowed' });
     if ((method === 'GET' || method === 'HEAD') && PUBLIC_RE.test(url.pathname)) {
       try { await stat(join(webDist, url.pathname)); } catch { return send(res, 404, 'not found\n'); }
       return serveStatic(req, res, url.pathname);
     }
-    if (!authed(req)) return send(res, 401, url.pathname.startsWith('/api/') ? { error: 'unauthorized' } : 'Unauthorized. Open the URL printed by `agent-worlds url`.\n');
+    if (url.pathname === '/login' && password.isSet()) {
+      if (method === 'GET') return sendHtml(res, 200, loginPage());
+      if (method === 'POST') {
+        const wait = limiter.locked();
+        if (wait) return sendHtml(res, 429, loginPage(`Too many wrong passwords. Try again in ${Math.ceil(wait / 60_000)} minutes.`));
+        const b = await readBody(req);
+        if (typeof b.password === 'string' && password.check(b.password)) { limiter.ok(); return login(req, res, 'password'); }
+        limiter.fail();
+        logAccess(req, 'password', false);
+        return sendHtml(res, 401, loginPage('Wrong password.'));
+      }
+    }
+    if (!authed(req)) {
+      if (url.pathname.startsWith('/api/')) return send(res, 401, { error: 'unauthorized' });
+      if (password.isSet()) { res.writeHead(302, { location: '/login' }); return res.end(); }
+      return send(res, 401, 'Unauthorized. Open the URL printed by `agent-worlds url`.\n');
+    }
+    const dev = cookie(req, 'aw_dev');
+    if (dev) access.touch(dev);
 
     if (method === 'POST' && url.pathname === '/api/hook') {
       const body = await readBody(req);
@@ -316,7 +372,34 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
     if (url.pathname === '/api/phone' && method === 'GET') {
-      return send(res, 200, { port: port(), addresses: addresses().map((a) => ({ ...a, allowed: cfg.listen.includes(a.address) })) });
+      return send(res, 200, { port: port(), addresses: addresses().map((a) => ({ ...a, allowed: cfg.listen.includes(a.address) })), firewall: await (opts.detectFirewall ?? detectFirewall)(), lanReached: access.entries.some((e) => e.route === 'network'), passwordSet: password.isSet(), cloudflared: !!cloudflared(), canInstall: !!opts.installCloudflared || !!cloudflaredAsset(), tunnel: tunnel.url });
+    }
+    if (url.pathname === '/api/access' && method === 'GET') {
+      return send(res, 200, { devices: access.devices(), entries: access.entries.slice(0, 100), you: cookie(req, 'aw_dev') });
+    }
+    if (url.pathname === '/api/password' && method === 'POST') {
+      const b = await readBody(req);
+      if (typeof b.password !== 'string' || b.password.length < 10) return send(res, 400, { error: 'use at least 10 characters' });
+      password.set(b.password);
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/password' && method === 'DELETE') {
+      tunnel.stop(); allowed = null; // no password, no public link
+      password.clear();
+      return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/cloudflared/install' && method === 'POST') {
+      try { installed = await (opts.installCloudflared ?? installCloudflared)(); return send(res, 200, { ok: true }); }
+      catch (e) { return send(res, 502, { error: (e as Error).message }); }
+    }
+    if (url.pathname === '/api/tunnel' && method === 'POST') {
+      const b = await readBody(req);
+      if (b.on !== true) { tunnel.stop(); allowed = null; return send(res, 200, { url: null }); }
+      if (!password.isSet()) return send(res, 400, { error: 'set a password first: the link is reachable from the internet' });
+      const bin = cloudflared();
+      if (!bin) return send(res, 400, { error: 'cloudflared is not installed on this computer' });
+      try { const u = await tunnel.start(bin, port()); allowed = null; return send(res, 200, { url: u }); }
+      catch (e) { return send(res, 502, { error: (e as Error).message }); }
     }
     if (url.pathname === '/api/phone/allow' && method === 'POST') {
       const b = await readBody(req);
@@ -326,9 +409,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     if (url.pathname === '/api/phone/pair' && method === 'POST') {
       const b = await readBody(req);
-      if (typeof b.address !== 'string' || !cfg.listen.includes(b.address) || !addresses().some((a) => a.address === b.address)) return send(res, 400, { error: 'phones are not allowed on that address' });
+      const viaTunnel = b.address === 'tunnel' && tunnel.url;
+      if (!viaTunnel && (typeof b.address !== 'string' || !cfg.listen.includes(b.address) || !addresses().some((a) => a.address === b.address))) return send(res, 400, { error: 'phones are not allowed on that address' });
       const { code, expiresAt } = pairing.issue();
-      return send(res, 200, { url: `http://${b.address}:${port()}/pair/${code}`, expiresAt });
+      return send(res, 200, { url: viaTunnel ? `${tunnel.url}/pair/${code}` : `http://${b.address}:${port()}/pair/${code}`, expiresAt });
     }
     if (url.pathname === '/api/fs' && method === 'GET') {
       const [code, body] = worlds.list(url.searchParams.get('path'));
@@ -456,6 +540,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (sweeper) clearInterval(sweeper);
       if (scanner) clearInterval(scanner);
       if (heartbeat) clearInterval(heartbeat);
+      tunnel.stop();
       for (const s of [...store.sessions.values()]) store.remove(s);
       for (const c of [...wss.clients, ...ptys.clients]) c.terminate();
       return Promise.all(servers.map((srv) => new Promise<void>((ok) => { srv.close(() => ok()); srv.closeAllConnections(); }))).then(() => {});

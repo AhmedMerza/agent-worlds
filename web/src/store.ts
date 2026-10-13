@@ -1,5 +1,5 @@
 import { reactive, computed, ref } from 'vue'
-import type { ServerMessage, Session, World, FsListing, PhoneInfo, Unmanaged, HistorySession, PermissionMode } from './types'
+import type { ServerMessage, Session, World, FsListing, PhoneInfo, AccessInfo, Unmanaged, HistorySession, PermissionMode } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
@@ -148,6 +148,11 @@ export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/world
 export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
 export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
+export const accessLog = () => api<AccessInfo>('GET', '/api/access')
+export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })
+export const clearPassword = () => api<unknown>('DELETE', '/api/password')
+export const installCloudflared = () => api<unknown>('POST', '/api/cloudflared/install')
+export const setTunnel = (on: boolean) => api<{ url: string | null }>('POST', '/api/tunnel', { on })
 export const pairPhone = (address: string) => api<{ url: string; expiresAt: number }>('POST', '/api/phone/pair', { address })
 
 export type Scope = 'once' | 'repo' | 'world' | 'all'
