@@ -227,6 +227,34 @@ test('helpers: Agent tool spawns a helper, PostToolUse / SubagentStop finish it'
   assert.equal('agentId' in view().helpers[1], false, 'internal fields are not exposed');
 });
 
+test('a background subagent working after the turn ended keeps the session where its card put it', async () => {
+  const { store, view } = setup();
+  const sub = { agent_id: 'agent-10', agent_type: 'Explore' };
+  await store.handle({ ...ev.stop, last_assistant_message: 'Found it.\n\nShould I build that?' }, null);
+  await store.handle({ ...ev.preBash, ...sub }, null);
+  await store.handle({ ...ev.postBash, ...sub }, null);
+  assert.equal(view().state, 'waiting');
+  assert.deepEqual(view().card, { kind: 'asking', summary: 'Should I build that?' });
+
+  // its permission prompt still needs you; once answered, the question is back
+  const r = store.handle({ ...ev.permBash, ...sub }, null);
+  await tick();
+  assert.equal(view().card.kind, 'permission');
+  await store.handle({ ...ev.postBash, ...sub }, null);
+  assert.equal(await r, '{}');
+  assert.equal(view().state, 'waiting');
+  assert.equal(view().card.kind, 'asking');
+
+  await store.handle(ev.stop, null);
+  await store.handle({ ...ev.preBash, ...sub }, null);
+  assert.equal(view().state, 'done');
+
+  // the session's own tool calls still wake it
+  await store.handle(ev.preBash, null);
+  assert.equal(view().state, 'working');
+  assert.equal(view().card, null);
+});
+
 test('StopFailure becomes an error card; ack goes idle', async () => {
   const { store, view } = setup();
   await store.handle({ ...ev.stop, hook_event_name: 'StopFailure', error: 'rate_limit' }, null);

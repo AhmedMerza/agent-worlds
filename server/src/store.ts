@@ -269,6 +269,12 @@ export class Store {
     for (const p of [...s.pending]) this.settle(s, p, '{}');
   }
 
+  /** The state a session rests in once its own turn ended (its card says so), else null. */
+  private ended(s: Session): State | null {
+    const k = s.card?.kind;
+    return k === 'asking' ? 'waiting' : k === 'done' || k === 'error' ? k : null;
+  }
+
   private afterPending(s: Session, state: State) {
     if (s.pending.length) return;
     s.state = state;
@@ -301,6 +307,9 @@ export class Store {
     const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
     const input = (p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {}) as Record<string, unknown>;
     let reply: Promise<string> | string = '';
+    // Tool events from a subagent carry its agent_id. A background one runs on after the turn ended,
+    // and must not move the session back to the desks or drop its card.
+    const rest = typeof p.agent_id === 'string' ? this.ended(s) : null;
 
     switch (ev) {
       case 'SessionStart':
@@ -318,10 +327,12 @@ export class Store {
         break;
       }
       case 'PreToolUse':
-        s.now = describe(tool, input);
-        this.log(s, s.now);
-        s.card = null;
-        this.afterPending(s, 'working');
+        this.log(s, describe(tool, input));
+        if (!rest) {
+          s.now = describe(tool, input);
+          s.card = null;
+          this.afterPending(s, 'working');
+        }
         if (tool === 'Bash' && typeof input.command === 'string' && TEST_RE.test(input.command) && typeof p.tool_use_id === 'string') s.testing.add(p.tool_use_id);
         if (SUBAGENT_TOOLS.has(tool)) {
           s.helpers.push({
@@ -338,7 +349,7 @@ export class Store {
         const key = inputKey(tool, input);
         const match = s.pending.find((x) => x.key === key) ?? s.pending.find((x) => x.tool === tool);
         if (match) this.settle(s, match, '{}');
-        this.afterPending(s, 'working');
+        this.afterPending(s, rest ?? 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
         if (ev === 'PostToolUse' && tool === 'Bash') this.refreshBranch(s);
         const wd = ev === 'PostToolUse' ? workDirOf(tool, input) : null;
@@ -369,7 +380,7 @@ export class Store {
         s.pending.push(pend);
         s.state = 'waiting';
         s.waitingSince ??= this.now();
-        s.card = null;
+        if (!rest) s.card = null;
         this.log(s, pend.kind === 'question' ? 'Asked a question' : `Needs permission: ${describe(tool, input)}`);
         if (!pend.live) { reply = '{}'; break; }
         reply = new Promise<string>((resolve) => {
