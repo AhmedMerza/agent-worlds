@@ -3,6 +3,9 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-13
+- Busy but not needing you: a turn that ends with background work running, or a scheduled wake-up, stays at the desks with a clock; compacting shows "…" at the desks. New hooks: `PreCompact`, `PostCompact` (re-merge a global hooks block).
+- A session that asked you something stays at the Help desk while its background helpers keep working.
+- A session taken back after a server restart in the middle of a long command goes to the desks, not the lounge.
 - Phone terminal: scroll back through the conversation; the PC takes its size back when you return to it.
 - Sessions are re-adopted after a server restart.
 - Phone dialog shows a firewall hint until a phone gets through; the QR code has its own section.

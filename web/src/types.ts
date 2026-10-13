@@ -34,6 +34,8 @@ export interface Session {
   /** The server runs this session itself (no tmux): the name of its terminal. */
   direct?: string | null
   state: SessionState
+  /** Busy, but not needing you (state stays 'working'): compacting, or background work runs on after the turn. */
+  busy?: { kind: 'compact' } | { kind: 'background'; tasks: number; nextAt: number | null } | null
   waitingSince: number | null
   task: string | null
   now: string

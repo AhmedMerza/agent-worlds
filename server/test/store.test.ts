@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Store, riskOf, oneLine } from '../src/store.ts';
+import { Store, riskOf, oneLine, nextWake } from '../src/store.ts';
 import { parseConfig } from '../src/config.ts';
 import { ev, QUESTION } from './fixtures.ts';
 
 const tick = () => new Promise((r) => setImmediate(r));
 
 /** Fixtures use cwd /work/repo-a; `root` relocates that repo (and a sibling repo-b) for tests that write files. */
-function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string } = {}) {
+function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string; now?: () => number } = {}) {
   const emitted: any[] = [];
   const root = opts.root ?? '/work';
   const cfg = parseConfig({
@@ -26,6 +26,7 @@ function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSe
     tmuxSessionOf: async () => 'aw-repo-a',
     clientsConnected: () => st.clients,
     holdMs: opts.holdMs ?? 10_000,
+    now: opts.now,
     stats: {
       get: (r, k) => counts.get(r + '|' + k) ?? 0,
       inc: (r, k) => { const n = (counts.get(r + '|' + k) ?? 0) + 1; counts.set(r + '|' + k, n); return n; },
@@ -253,6 +254,86 @@ test('a background subagent working after the turn ended keeps the session where
   await store.handle(ev.preBash, null);
   assert.equal(view().state, 'working');
   assert.equal(view().card, null);
+});
+
+test('a turn that ends with background work running stays at the desks until it is back, or gives up after 30 min', async () => {
+  let t = 1_000_000;
+  const { store, view } = setup({ now: () => t });
+  const task = { id: 'b1', type: 'subagent', status: 'running', description: 'Trace the bug', agent_type: 'Explore' };
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [task, { ...task, id: 'b2' }] }, null);
+  assert.equal(view().state, 'working');
+  assert.equal(view().card, null, 'no done card yet');
+  assert.deepEqual(view().busy, { kind: 'background', tasks: 2, nextAt: null });
+  assert.equal(view().now, 'Waiting on 2 background tasks');
+  assert.equal('busyEnd' in view(), false, 'internal');
+
+  // the helpers report in, and the idle-prompt notice does not send it to the lounge
+  await store.handle({ ...ev.preBash, agent_id: 'agent-10' }, null);
+  await store.handle({ ...ev.notifyPerm, notification_type: 'idle_prompt' }, null);
+  assert.equal(view().now, 'Waiting on 2 background tasks');
+  assert.equal(view().state, 'working');
+
+  // Claude resumes by itself and finishes
+  await store.handle(ev.preBash, null);
+  assert.equal(view().busy, null);
+  await store.handle(ev.stop, null);
+  assert.equal(view().state, 'done');
+
+  // asking a question wins over background work
+  await store.handle({ ...ev.stop, last_assistant_message: 'Shall I?', background_tasks: [task] }, null);
+  assert.equal(view().state, 'waiting');
+  assert.equal(view().busy, null);
+
+  // nothing ever reports back: done after 30 min, with the turn's summary
+  await store.handle({ ...ev.stop, background_tasks: [task] }, null);
+  t += 29 * 60_000; store.checkBusy();
+  assert.equal(view().state, 'working');
+  t += 2 * 60_000; store.checkBusy();
+  assert.equal(view().state, 'done');
+  assert.deepEqual(view().card, { kind: 'done', summary: 'ok', review: null });
+  assert.equal(view().busy, null);
+});
+
+test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {
+  const t0 = new Date(2026, 9, 13, 14, 0).getTime();
+  let t = t0;
+  const { store, view } = setup({ now: () => t });
+  await store.handle({ ...ev.stop, session_crons: [{ id: 'c1', schedule: '20 14 13 10 *', recurring: false, prompt: 'check CI' }] }, null);
+  assert.deepEqual(view().busy, { kind: 'background', tasks: 0, nextAt: t0 + 20 * 60_000 });
+  assert.equal(view().now, 'Scheduled to come back');
+  t = t0 + 24 * 60_000; store.checkBusy();
+  assert.equal(view().state, 'working');
+  t = t0 + 31 * 60_000; store.checkBusy();
+  assert.equal(view().state, 'done');
+});
+
+test('nextWake: one-shot crons only, the soonest, rolling into next year when past', () => {
+  const now = new Date(2026, 9, 13, 14, 0).getTime();
+  assert.equal(nextWake([{ schedule: '*/5 * * * *', recurring: true }], now), null);
+  assert.equal(nextWake([{ schedule: 'junk', recurring: false }], now), null);
+  assert.equal(nextWake([{ schedule: '30 15 13 10 *', recurring: false }, { schedule: '5 14 13 10 *', recurring: false }], now), new Date(2026, 9, 13, 14, 5).getTime());
+  assert.equal(nextWake([{ schedule: '0 9 1 1 *', recurring: false }], now), new Date(2027, 0, 1, 9, 0).getTime());
+});
+
+test('compacting: at the desks while it runs; /compact by hand ends idle, an automatic one carries on', async () => {
+  const { store, view } = setup();
+  await store.handle(ev.stop, null);
+  await store.handle({ ...ev.stop, hook_event_name: 'PreCompact', trigger: 'manual', custom_instructions: '' }, null);
+  assert.equal(view().state, 'working');
+  assert.deepEqual(view().busy, { kind: 'compact' });
+  assert.equal(view().card, null);
+  await store.handle({ ...ev.stop, hook_event_name: 'PostCompact', trigger: 'manual', compact_summary: 's' }, null);
+  await store.handle({ ...ev.start, source: 'compact' }, null);
+  assert.equal(view().state, 'idle');
+  assert.equal(view().busy, null);
+  assert.equal(view().now, 'Compacted');
+
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, hook_event_name: 'PreCompact', trigger: 'auto' }, null);
+  await store.handle({ ...ev.stop, hook_event_name: 'PostCompact', trigger: 'auto' }, null);
+  assert.equal(view().state, 'working');
+  assert.equal(view().busy, null);
 });
 
 test('StopFailure becomes an error card; ack goes idle', async () => {

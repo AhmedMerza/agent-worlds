@@ -8,6 +8,7 @@ import WebSocket from 'ws';
 import { history, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
 import { startServer, spawnTmuxPty } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
+import { midTurn } from '../src/transcript.ts';
 import { createSession } from '../src/sys.ts';
 import { awSessions, formatRows, pick } from '../src/cli.ts';
 import { ev } from './fixtures.ts';
@@ -237,7 +238,7 @@ test('attach listing: our prefix only, number or name picks, server state when r
   }
 });
 
-test('server restart: our own idle sessions in tmux are taken back, not shown as ghosts', async () => {
+test('server restart: our own sessions in tmux are taken back, not shown as ghosts', async () => {
   const root = tmp();
   const repo = join(root, 'repo-a');
   mkdirSync(repo);
@@ -260,8 +261,23 @@ test('server restart: our own idle sessions in tmux are taken back, not shown as
     assert.equal(s.worldId, 'web');
     assert.ok(s.transcriptPath, 'catch-up and scroll back work again');
     assert.ok(s.lastPrompt, 'shows what it was last asked');
+    assert.equal(s.state, 'working', 'its transcript ends on a tool result: still mid-turn');
     assert.equal(app.store.sessions.has(b), false, 'not ours: stays a ghost');
     const st = await (await fetch(`http://127.0.0.1:${(app.server.address() as any).port}/api/state`, { headers: { 'x-aw-token': 'i'.repeat(64) } })).json() as any;
     assert.deepEqual(st.unmanaged.map((u: any) => u.pid), [302]);
   } finally { await app.close(); }
+});
+
+test('midTurn: an unanswered prompt or tool result, or a running tool call, is mid-turn; an answer or Esc is not', () => {
+  const u = (content: unknown, extra = {}) => ({ type: 'user', ...extra, message: { role: 'user', content } });
+  const a = (content: unknown) => ({ type: 'assistant', message: { role: 'assistant', content } });
+  const tail = { type: 'last-prompt', lastPrompt: 'x' };
+  assert.equal(midTurn([u('run the tests'), tail]), true);
+  assert.equal(midTurn([u('run'), a([{ type: 'tool_use', name: 'Bash', input: {} }])]), true, 'a long Bash still running');
+  assert.equal(midTurn([a([{ type: 'tool_use' }]), u([{ type: 'tool_result', content: 'ok' }])]), true);
+  assert.equal(midTurn([u('run'), a([{ type: 'text', text: 'Done.' }]), tail]), false);
+  assert.equal(midTurn([a([{ type: 'tool_use' }]), u([{ type: 'text', text: '[Request interrupted by user for tool use]' }])]), false);
+  assert.equal(midTurn([u('<local-command-stdout></local-command-stdout>')]), false);
+  assert.equal(midTurn([u('meta', { isMeta: true })]), false);
+  assert.equal(midTurn([]), false);
 });

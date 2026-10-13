@@ -51,6 +51,15 @@ export function userPrompt(e: Entry): string | null {
   return t;
 }
 
+/** Claude is mid-turn: the last message is a prompt or tool result it has not answered yet, or a tool call still running. */
+export function midTurn(entries: Entry[]): boolean {
+  const e = entries.findLast((x) => x.type === 'user' || x.type === 'assistant');
+  const c = e?.message?.content;
+  const has = (type: string) => Array.isArray(c) && c.some((b) => b?.type === type);
+  if (!e) return false;
+  return e.type === 'assistant' ? has('tool_use') : userPrompt(e) !== null || has('tool_result');
+}
+
 export const firstPrompt = (entries: Entry[]): string | null => {
   for (const e of entries) { const p = userPrompt(e); if (p) return p; }
   return null;

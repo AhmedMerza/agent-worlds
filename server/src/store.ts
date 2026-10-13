@@ -19,6 +19,13 @@ type Card =
   | { kind: 'asking'; summary: string | null }
   | { kind: 'error'; summary: string };
 
+/** Busy, but not needing you: compacting, or the turn ended while background work runs on. State stays 'working'. */
+type Busy = null | { kind: 'compact' } | { kind: 'background'; tasks: number; nextAt: number | null };
+
+/** No word from background work for this long: the session is shown as done after all. */
+const BUSY_TTL = 30 * 60_000;
+const WAKE_GRACE = 5 * 60_000;
+
 type Pending = {
   requestId: string;
   kind: 'permission' | 'question';
@@ -42,6 +49,7 @@ export type Session = {
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];
   card: Card;
+  busy: Busy;
   catchup: { asked: string; did: string; needs: string } | null;
   catchupAt: number | null;
   catchupRunning: boolean;
@@ -67,8 +75,10 @@ export type Session = {
   testing: Set<string>;
   /** When the last hook event arrived: a transcript interrupt marker older than this is stale. */
   hookAt: number;
+  /** A background wait gives up at `at` and shows `summary` as done. */
+  busyEnd: { at: number; summary: string | null } | null;
 };
-const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing', 'hookAt'] as const;
+const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing', 'hookAt', 'busyEnd'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -242,7 +252,7 @@ export class Store {
       id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null, direct,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
-      log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
+      log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
       pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(), hookAt: t,
     };
@@ -271,6 +281,7 @@ export class Store {
 
   /** The state a session rests in once its own turn ended (its card says so), else null. */
   private ended(s: Session): State | null {
+    if (s.busy) return 'working';
     const k = s.card?.kind;
     return k === 'asking' ? 'waiting' : k === 'done' || k === 'error' ? k : null;
   }
@@ -313,7 +324,7 @@ export class Store {
 
     switch (ev) {
       case 'SessionStart':
-        s.now = 'Started';
+        if (p.source !== 'compact') s.now = 'Started';
         if (typeof p.model === 'string') s.model = p.model;
         break;
       case 'UserPromptSubmit': {
@@ -322,6 +333,7 @@ export class Store {
         if (!s.task && prompt && !prompt.startsWith('/')) s.task = oneLine(prompt, 200);
         s.lastPrompt = oneLine(prompt, 200) ?? s.lastPrompt;
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Thinking';
+        s.busy = null; s.busyEnd = null;
         this.log(s, `You: ${prompt}`);
         this.refreshBranch(s);
         break;
@@ -331,6 +343,7 @@ export class Store {
         if (!rest) {
           s.now = describe(tool, input);
           s.card = null;
+          s.busy = null; s.busyEnd = null;
           this.afterPending(s, 'working');
         }
         if (tool === 'Bash' && typeof input.command === 'string' && TEST_RE.test(input.command) && typeof p.tool_use_id === 'string') s.testing.add(p.tool_use_id);
@@ -408,13 +421,14 @@ export class Store {
           if (typeof p.message === 'string') s.now = oneLine(p.message, 120) ?? s.now;
         }
         // Claude sits at its prompt (~60s): a turn interrupted with Esc that checkInterrupts missed.
-        if (type === 'idle_prompt' && s.state === 'working') this.afterPending(s, 'idle');
+        if (type === 'idle_prompt' && s.state === 'working' && !s.busy) this.afterPending(s, 'idle');
         break;
       }
-      case 'Stop':
+      case 'Stop': {
         this.settleAll(s);
         s.testing.clear();
         this.refreshBranch(s);
+        s.busy = null; s.busyEnd = null;
         if (typeof p.last_assistant_message === 'string' && p.last_assistant_message.trim().endsWith('?')) {
           // The turn ended on a question: the session is waiting for an answer, not finished.
           s.state = 'waiting'; s.waitingSince ??= this.now(); s.now = 'Asked you a question';
@@ -423,11 +437,34 @@ export class Store {
           s.card = { kind: 'asking', summary: oneLine(lines.at(-1)) };
           break;
         }
+        // Background work runs on, or a wake-up is scheduled: Claude comes back by itself, so it is still at its desk.
+        const tasks = Array.isArray(p.background_tasks) ? p.background_tasks.length : 0;
+        const crons = Array.isArray(p.session_crons) ? p.session_crons : [];
+        if (tasks || crons.length) {
+          const t = this.now(), nextAt = nextWake(crons, t);
+          s.state = 'working'; s.waitingSince = null; s.card = null;
+          s.busy = { kind: 'background', tasks, nextAt };
+          s.busyEnd = { at: Math.max(tasks || !nextAt ? t + BUSY_TTL : 0, nextAt ? nextAt + WAKE_GRACE : 0), summary: oneLine(p.last_assistant_message) };
+          s.now = tasks ? `Waiting on ${tasks} background task${tasks > 1 ? 's' : ''}` : 'Scheduled to come back';
+          break;
+        }
         s.state = 'done'; s.waitingSince = null; s.now = 'Done';
         s.card = { kind: 'done', summary: oneLine(p.last_assistant_message), review: null };
         break;
+      }
+      case 'PreCompact':
+        s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Compacting…';
+        s.busy = { kind: 'compact' }; s.busyEnd = null;
+        break;
+      case 'PostCompact':
+        if (s.busy?.kind !== 'compact') break;
+        s.busy = null; s.now = 'Compacted';
+        // /compact by hand returns to the prompt; an automatic one carries on with the turn
+        if (p.trigger === 'manual') this.afterPending(s, 'idle');
+        break;
       case 'StopFailure': {
         this.settleAll(s);
+        s.busy = null; s.busyEnd = null;
         const msg = oneLine(p.error ?? p.error_message ?? p.message ?? p.last_assistant_message) ?? 'Stopped with an error';
         s.state = 'error'; s.waitingSince = null; s.now = msg;
         s.testing.clear();
@@ -555,6 +592,18 @@ export class Store {
    * Esc mid-turn fires no hook (Stop "does not run if the stoppage occurred due to a user interrupt"):
    * Claude only appends "[Request interrupted by user…]" to its transcript. Polled for working sessions.
    */
+  /** Background work that never reported back: show the turn as done after all. */
+  checkBusy() {
+    const t = this.now();
+    for (const s of this.sessions.values()) {
+      if (!s.busyEnd || t < s.busyEnd.at) continue;
+      s.state = 'done'; s.now = 'Done'; s.waitingSince = null;
+      s.card = { kind: 'done', summary: s.busyEnd.summary, review: null };
+      s.busy = null; s.busyEnd = null;
+      this.push(s);
+    }
+  }
+
   async checkInterrupts() {
     for (const s of [...this.sessions.values()]) {
       if (s.state !== 'working' || s.pending.length || !s.transcriptPath) continue;
@@ -583,4 +632,23 @@ export function workDirOf(tool: string, input: Record<string, unknown>): string 
   if (tool !== 'Bash' || typeof cmd !== 'string' || !/\bgit\b[^;&|]*\bcommit\b/.test(cmd)) return null;
   const m = cmd.match(/^\s*cd\s+(["']?)(\/[^"'\s;&|]+)\1\s*(?:&&|;)/) ?? cmd.match(/\bgit\s+-C\s+(["']?)(\/[^"'\s;&|]+)\1/);
   return m ? m[2] : null;
+}
+
+/**
+ * When the next one-shot wake-up (ScheduleWakeup) fires, from its cron expression "M H D Mo *" in local time.
+ * Recurring crons are not worked out; null when there is none.
+ */
+export function nextWake(crons: unknown[], now: number): number | null {
+  let best: number | null = null;
+  for (const c of crons as { schedule?: unknown; recurring?: unknown }[]) {
+    if (c?.recurring !== false || typeof c.schedule !== 'string') continue;
+    const m = /^(\d+) (\d+) (\d+) (\d+) \*$/.exec(c.schedule.trim());
+    if (!m) continue;
+    const [min, hour, day, month] = m.slice(1).map(Number);
+    const year = new Date(now).getFullYear();
+    let at = new Date(year, month - 1, day, hour, min).getTime();
+    if (at < now - 60_000) at = new Date(year + 1, month - 1, day, hour, min).getTime();
+    if (best === null || at < best) best = at;
+  }
+  return best;
 }

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { LABEL, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
+import { stateLabel, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
 import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import type { Turn } from '../types'
@@ -162,7 +162,7 @@ watch(termFocusTick, async () => {
   <section ref="root" :class="['term', { typing: hasTmux && termFocused }]" aria-label="Session terminal" :style="{ '--tint': world?.color ?? '#8a92a0' }">
     <div class="term-head">
       <template v-if="s">
-        <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ world?.name }} · {{ LABEL[s.state] }}
+        <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ world?.name }} · {{ stateLabel(s, state.now) }}
         <span v-if="s.context"> · {{ s.context.pct }}% context</span>
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into Claude</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>

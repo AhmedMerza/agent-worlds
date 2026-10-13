@@ -8,7 +8,7 @@ const HOOK = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw
 const HOLD_TIMEOUT = 3600;
 const FAST_TIMEOUT = 10;
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest',
-  'Notification', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'SessionEnd'];
+  'Notification', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd'];
 
 export function hooksBlock(hookPath = HOOK) {
   const command = /^[\w./-]+$/.test(hookPath) ? hookPath : `'${hookPath.replace(/'/g, `'\\''`)}'`;

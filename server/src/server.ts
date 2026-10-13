@@ -13,7 +13,7 @@ import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
-import { readHead, readTail, conversation } from './transcript.ts';
+import { readHead, readTail, conversation, midTurn } from './transcript.ts';
 import { readFileSync } from 'node:fs';
 import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
@@ -189,7 +189,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /**
    * A session we started (its AGENT_WORLDS_HOME is ours, and it runs in a tmux pane) but don't know, because the server
-   * restarted and it has been idle since: take it back instead of showing it as a plain-terminal ghost.
+   * restarted and it sent no hook since (idle, or deep in one long tool call): take it back instead of showing it as a
+   * plain-terminal ghost. Its transcript says which.
    */
   async function adopt(p: ClaudeProc) {
     const transcript = findTranscript(cfg.claudeProjectsDir, p.sessionId!);
@@ -197,6 +198,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const s = store.sessions.get(p.sessionId!);
     if (!s) return;
     s.now = 'Picked up again after a server restart';
+    if (transcript && midTurn(await readTail(transcript, 65536).catch(() => []))) s.state = 'working';
     if (transcript) s.lastPrompt = (await transcriptSummary(transcript)).lastPrompt ?? s.lastPrompt;
     store.push(s);
   }
@@ -595,7 +597,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
-      interrupts = setInterval(() => void store.checkInterrupts(), 2_000);
+      interrupts = setInterval(() => { void store.checkInterrupts(); store.checkBusy(); }, 2_000);
       interrupts.unref();
       const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
       void rescan();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, reviewView, screenOrder } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, reviewView, screenOrder } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -340,5 +340,17 @@ describe('plain wording', () => {
     expect(nowText('Task')).toBe('Working with helpers')
     expect(nowText('Write the migration')).toBe('Write the migration')
     expect(nowText('Editing the orders table')).toBe('Editing the orders table')
+  })
+})
+
+describe('stateLabel', () => {
+  it('names the busy-but-not-you variants of working', () => {
+    const now = 1_000_000
+    expect(stateLabel(mk('a', { state: 'working' }), now)).toBe('Working')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'compact' } }), now)).toBe('Compacting')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'background', tasks: 2, nextAt: null } }), now)).toBe('2 in background')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'background', tasks: 0, nextAt: now + 4.5 * 60000 } }), now)).toBe('Back in 5 min')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'background', tasks: 0, nextAt: null } }), now)).toBe('Coming back')
+    expect(stateLabel(mk('a', { state: 'done', busy: { kind: 'compact' } }), now)).toBe('Done')
   })
 })

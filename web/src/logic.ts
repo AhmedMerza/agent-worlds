@@ -8,6 +8,15 @@ export const LABEL: Record<SessionState, string> = {
   starting: 'Starting', working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
 }
 
+/** The state label, with the busy-but-not-you variants of 'working'. */
+export function stateLabel(s: Session, now: number): string {
+  const b = s.busy
+  if (s.state !== 'working' || !b) return LABEL[s.state]
+  if (b.kind === 'compact') return 'Compacting'
+  if (b.tasks) return `${b.tasks} in background`
+  return b.nextAt ? `Back in ${Math.max(1, Math.ceil((b.nextAt - now) / 60000))} min` : 'Coming back'
+}
+
 /** When did this session start needing the user? Falls back to updatedAt for cards without a waiting time. */
 export const since = (s: Session): number => s.waitingSince ?? s.updatedAt
 
