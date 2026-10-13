@@ -13,10 +13,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: server/package-lock.json
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
       - run: sudo apt-get update && sudo apt-get install -y tmux git
       - run: git config --global user.name ci && git config --global user.email ci@example.com && git config --global init.defaultBranch main
       - run: npm --prefix server ci
+      - run: npm --prefix web ci # the Update now tests build the web app for real
       - run: npm --prefix server run typecheck
       - run: npm --prefix server test
 
