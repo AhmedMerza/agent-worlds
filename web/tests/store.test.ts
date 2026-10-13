@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { modeField, modeOptions } from '../src/logic'
-import { applyMessage, newState, backoffMs, createSession, resumeSession } from '../src/store'
+import { applyMessage, keepSelection, newState, backoffMs, createSession, resumeSession } from '../src/store'
 import { mk, perm } from './helpers'
 
 const worlds = [{ id: 'web', name: 'Web', color: '#fff', repos: [] }]
@@ -26,13 +26,35 @@ describe('applyMessage', () => {
   })
   it('removal reselects when the selected session goes away', () => {
     const st = newState()
-    applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('a'), mk('b')] })
+    applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('a', { tmux: null }), mk('b', { tmux: null })] })
     st.selectedId = 'a'
     applyMessage(st, { type: 'session-removed', id: 'a' })
     expect(st.order).toEqual(['b'])
     expect(st.selectedId).toBe('b')
     applyMessage(st, { type: 'session-removed', id: 'b' })
     expect(st.selectedId).toBeNull()
+  })
+  it('/clear in the selected terminal: follows its new session, never jumps to another terminal', () => {
+    const st = newState()
+    const term = { session: 'aw-oreem', pane: '%7' }
+    applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('old', { tmux: term }), mk('other', { state: 'waiting', card: { kind: 'asking', summary: 'x?' } })] })
+    st.selectedId = 'old'
+    applyMessage(st, { type: 'session-removed', id: 'old' })
+    expect(st.selectedId).toBe('old')
+    applyMessage(st, { type: 'session', session: mk('other', { state: 'working' }) })
+    expect(st.selectedId).toBe('old')
+    applyMessage(st, { type: 'session', session: mk('new', { tmux: term }) })
+    expect(st.selectedId).toBe('new')
+    expect(st.pending).toBeNull()
+  })
+  it('the selected terminal gets no new session: another is selected once the wait is over', () => {
+    const st = newState()
+    applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('old', { tmux: { session: 'aw-x', pane: '%7' } }), mk('b', { tmux: null })] })
+    st.selectedId = 'old'
+    applyMessage(st, { type: 'session-removed', id: 'old' })
+    expect(st.selectedId).toBe('old')
+    keepSelection(st, st.pending!.until + 1)
+    expect(st.selectedId).toBe('b')
   })
   it('toast bumps a counter so repeated text still shows', () => {
     const st = newState()

@@ -2,19 +2,20 @@
 import { onMounted, ref, computed } from 'vue'
 import type { FsListing } from '../types'
 import { browseFs, state } from '../store'
-import { breadcrumbs, cleanPath, repoStatus, visibleEntries } from '../fsbrowser'
+import { breadcrumbs, cleanPath, matchEntries, repoStatus, visibleEntries } from '../fsbrowser'
 
 /** Browses for folders (git repos or plain ones) to put into world `worldId`. Stays open: the parent decides when to leave. */
-const props = defineProps<{ worldId: string }>()
+const props = defineProps<{ worldId: string; start?: string }>()
 const emit = defineEmits<{ pick: [path: string]; move: [path: string, fromWorldId: string]; back: [] }>()
 const listing = ref<FsListing | null>(null)
 const error = ref('')
 const loading = ref(false)
 const typed = ref('')
+const find = ref('')
 /** Which folders we have seen listed, and whether they are repos (a listing does not say so about its own folder). */
 const known = ref<Record<string, boolean>>({})
 const crumbs = computed(() => (listing.value ? breadcrumbs(listing.value.path) : []))
-const entries = computed(() => (listing.value ? visibleEntries(listing.value.entries) : []))
+const entries = computed(() => (listing.value ? matchEntries(visibleEntries(listing.value.entries), find.value) : []))
 const here = computed(() => listing.value?.path ?? null)
 const status = (path: string) => repoStatus(path, props.worldId, state.worlds)
 const other = (path: string) => { const s = status(path); return s.kind === 'elsewhere' ? s : null }
@@ -24,12 +25,13 @@ async function go(path: string) {
   loading.value = true; error.value = ''
   const r = await browseFs(path)
   if (r.ok) {
-    listing.value = r.data; typed.value = r.data.path; learn(r.data)
+    listing.value = r.data; typed.value = r.data.path; find.value = ''; learn(r.data)
     if (!(r.data.path in known.value) && r.data.parent) { const p = await browseFs(r.data.parent); if (p.ok) learn(p.data) }
   } else error.value = r.error
   loading.value = false
 }
-onMounted(() => go(''))
+// open next to the folder the dialog had picked, so its siblings and sub-folders are one click away
+onMounted(() => go(props.start ? props.start.replace(/\/[^/]+$/, '') || '/' : ''))
 </script>
 
 <template>
@@ -51,6 +53,7 @@ onMounted(() => go(''))
       </template>
       <button v-else class="btn" @click="emit('pick', here)">Add this path</button>
     </div>
+    <input v-if="listing?.entries.length" v-model="find" class="reply-in find" type="search" aria-label="Search folders here" placeholder="Search folders here" autocomplete="off">
     <p v-if="error" class="err" role="alert">{{ error }}</p>
     <p v-if="loading" class="why">Loading…</p>
     <ul v-else-if="listing" class="fs">
@@ -65,7 +68,7 @@ onMounted(() => go(''))
         </template>
         <button v-else class="btn end" @click="emit('pick', e.path)">Add</button>
       </li>
-      <li v-if="!entries.length" class="why">No folders here.</li>
+      <li v-if="!entries.length" class="why">{{ find ? 'No folder here matches.' : 'No folders here.' }}</li>
     </ul>
   </div>
 </template>

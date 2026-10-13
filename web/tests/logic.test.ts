@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, reviewView, screenOrder } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, reviewView, screenOrder } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -340,5 +340,30 @@ describe('plain wording', () => {
     expect(nowText('Task')).toBe('Working with helpers')
     expect(nowText('Write the migration')).toBe('Write the migration')
     expect(nowText('Editing the orders table')).toBe('Editing the orders table')
+  })
+})
+
+describe('stateLabel', () => {
+  it('names the busy-but-not-you variants of working', () => {
+    const now = 1_000_000
+    expect(stateLabel(mk('a', { state: 'working' }), now)).toBe('Working')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'compact' } }), now)).toBe('Compacting')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'background', tasks: 2, nextAt: null } }), now)).toBe('2 in background')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'background', tasks: 0, nextAt: now + 4.5 * 60000 } }), now)).toBe('Back in 5 min')
+    expect(stateLabel(mk('a', { state: 'working', busy: { kind: 'background', tasks: 0, nextAt: null } }), now)).toBe('Coming back')
+    expect(stateLabel(mk('a', { state: 'done', busy: { kind: 'compact' } }), now)).toBe('Done')
+  })
+})
+
+describe('groupByFolder', () => {
+  it('groups by folder, newest folder first, labelled from the repo parent', () => {
+    const h = (id: string, cwd: string | null, repo: string | null) => ({ sessionId: id, cwd, repo, worldId: null, lastPrompt: null, lastActivity: 0, running: false, managed: false })
+    const g = groupByFolder([
+      h('1', '/r/oreem/worktrees/aw-x', '/r/oreem'), h('2', '/r/oreem', '/r/oreem'), h('3', '/r/oreem/worktrees/aw-x', '/r/oreem'),
+      h('4', '/r/oreem-worktrees/feat', '/r/oreem'), h('5', '/tmp/x', null), h('6', null, null),
+    ])
+    expect(g.map((x) => [x.label, x.items.map((i) => i.sessionId).join()])).toEqual([
+      ['oreem/worktrees/aw-x', '1,3'], ['oreem', '2'], ['oreem-worktrees/feat', '4'], ['x', '5'], ['Unknown folder', '6'],
+    ])
   })
 })

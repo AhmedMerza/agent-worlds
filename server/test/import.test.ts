@@ -5,9 +5,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, utimesSync, chmodSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { history, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
+import { history, inRepo, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
 import { startServer, spawnTmuxPty } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
+import { midTurn } from '../src/transcript.ts';
 import { createSession } from '../src/sys.ts';
 import { awSessions, formatRows, pick } from '../src/cli.ts';
 import { ev } from './fixtures.ts';
@@ -237,7 +238,7 @@ test('attach listing: our prefix only, number or name picks, server state when r
   }
 });
 
-test('server restart: our own idle sessions in tmux are taken back, not shown as ghosts', async () => {
+test('server restart: our own sessions in tmux are taken back, not shown as ghosts', async () => {
   const root = tmp();
   const repo = join(root, 'repo-a');
   mkdirSync(repo);
@@ -260,8 +261,43 @@ test('server restart: our own idle sessions in tmux are taken back, not shown as
     assert.equal(s.worldId, 'web');
     assert.ok(s.transcriptPath, 'catch-up and scroll back work again');
     assert.ok(s.lastPrompt, 'shows what it was last asked');
+    assert.equal(s.state, 'working', 'its transcript ends on a tool result: still mid-turn');
     assert.equal(app.store.sessions.has(b), false, 'not ours: stays a ghost');
     const st = await (await fetch(`http://127.0.0.1:${(app.server.address() as any).port}/api/state`, { headers: { 'x-aw-token': 'i'.repeat(64) } })).json() as any;
     assert.deepEqual(st.unmanaged.map((u: any) => u.pid), [302]);
   } finally { await app.close(); }
+});
+
+test('midTurn: an unanswered prompt or tool result, or a running tool call, is mid-turn; an answer or Esc is not', () => {
+  const u = (content: unknown, extra = {}) => ({ type: 'user', ...extra, message: { role: 'user', content } });
+  const a = (content: unknown) => ({ type: 'assistant', message: { role: 'assistant', content } });
+  const tail = { type: 'last-prompt', lastPrompt: 'x' };
+  assert.equal(midTurn([u('run the tests'), tail]), true);
+  assert.equal(midTurn([u('run'), a([{ type: 'tool_use', name: 'Bash', input: {} }])]), true, 'a long Bash still running');
+  assert.equal(midTurn([a([{ type: 'tool_use' }]), u([{ type: 'tool_result', content: 'ok' }])]), true);
+  assert.equal(midTurn([u('run'), a([{ type: 'text', text: 'Done.' }]), tail]), false);
+  assert.equal(midTurn([a([{ type: 'tool_use' }]), u([{ type: 'text', text: '[Request interrupted by user for tool use]' }])]), false);
+  assert.equal(midTurn([u('<local-command-stdout></local-command-stdout>')]), false);
+  assert.equal(midTurn([u('meta', { isMeta: true })]), false);
+  assert.equal(midTurn([]), false);
+});
+
+test('history for one repo: its folder, folders inside it and its worktrees; not a look-alike repo', async () => {
+  const dir = join(tmp(), 'projects');
+  const put = (cwd: string, id: string, mtime: number) => {
+    const p = join(dir, projectDirName(cwd));
+    mkdirSync(p, { recursive: true });
+    const f = join(p, `${id}.jsonl`);
+    writeFileSync(f, line({ type: 'user', cwd, sessionId: id, message: { role: 'user', content: `in ${cwd}` } }));
+    utimesSync(f, mtime, mtime);
+  };
+  put('/r/oreem', 'aaaaaaaa-0001', 1000);
+  put('/r/oreem/worktrees/aw-x', 'aaaaaaaa-0002', 3000);
+  put('/r/oreem-worktrees/feat', 'aaaaaaaa-0003', 2000);
+  put('/r/oreem-admin', 'aaaaaaaa-0004', 4000);
+  put('/r/other', 'aaaaaaaa-0005', 5000);
+  assert.deepEqual((await history(dir, 10, '/r/oreem')).map((h) => h.cwd), ['/r/oreem/worktrees/aw-x', '/r/oreem-worktrees/feat', '/r/oreem']);
+  assert.deepEqual((await history(dir, 2, '/r/oreem')).map((h) => h.sessionId), ['aaaaaaaa-0002', 'aaaaaaaa-0003']);
+  assert.equal((await history(dir, 10)).length, 5);
+  assert.equal(inRepo('/r/oreem-admin', '/r/oreem'), false);
 });

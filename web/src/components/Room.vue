@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { roomHeight, type Walker } from '../zones'
-import { LABEL, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
+import { stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
 import { state, select, focusTerminal } from '../store'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
@@ -99,7 +99,7 @@ const onMove = (e: MouseEvent) => { const h = at(e); hoverId.value = h?.id ?? nu
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
+        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
         <span class="dot ghost" />{{ ghostChipText(split.ghosts.length) }} <span class="st">{{ ghostsOpen ? 'Hide' : 'Show' }}</span>

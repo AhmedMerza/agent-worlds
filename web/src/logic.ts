@@ -8,6 +8,15 @@ export const LABEL: Record<SessionState, string> = {
   starting: 'Starting', working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
 }
 
+/** The state label, with the busy-but-not-you variants of 'working'. */
+export function stateLabel(s: Session, now: number): string {
+  const b = s.busy
+  if (s.state !== 'working' || !b) return LABEL[s.state]
+  if (b.kind === 'compact') return 'Compacting'
+  if (b.tasks) return `${b.tasks} in background`
+  return b.nextAt ? `Back in ${Math.max(1, Math.ceil((b.nextAt - now) / 60000))} min` : 'Coming back'
+}
+
 /** When did this session start needing the user? Falls back to updatedAt for cards without a waiting time. */
 export const since = (s: Session): number => s.waitingSince ?? s.updatedAt
 
@@ -372,6 +381,25 @@ export function filterHistory(list: HistorySession[], q: string): HistorySession
     const hay = [h.repo ?? '', h.cwd ?? '', h.lastPrompt ?? '', h.sessionId].join(' ').toLowerCase()
     return words.every((w) => hay.includes(w))
   })
+}
+export interface FolderGroup { cwd: string; label: string; items: HistorySession[] }
+/**
+ * Sessions by the folder they ran in, newest folder first (the list comes newest first). The label is the path from
+ * the repo's parent, so a worktree reads "oreem/worktrees/aw-x" or "oreem-worktrees/feat".
+ */
+export function groupByFolder(list: HistorySession[]): FolderGroup[] {
+  const groups = new Map<string, FolderGroup>()
+  for (const h of list) {
+    const cwd = h.cwd ?? ''
+    let g = groups.get(cwd)
+    if (!g) {
+      const parent = h.repo ? h.repo.replace(/\/[^/]+$/, '') : ''
+      const label = !cwd ? 'Unknown folder' : parent && cwd.startsWith(parent + '/') ? cwd.slice(parent.length + 1) : baseName(cwd)
+      groups.set(cwd, (g = { cwd, label, items: [] }))
+    }
+    g.items.push(h)
+  }
+  return [...groups.values()]
 }
 export function ageText(ms: number, now: number): string {
   const min = Math.max(0, Math.floor((now - ms) / 60000))

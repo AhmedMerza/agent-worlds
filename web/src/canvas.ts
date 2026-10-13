@@ -82,6 +82,18 @@ function bubble(ctx: CanvasRenderingContext2D, cx: number, top: number, glyph: s
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(glyph, cx, by + bh / 2 + 1)
 }
 
+/** A bubble with a clock face whose hand ticks round: waiting on background work. */
+function clockBubble(ctx: CanvasRenderingContext2D, cx: number, top: number, t: number) {
+  bubble(ctx, cx, top, '', STATE_COLOR.working, 0)
+  const x = Math.round(cx), y = top - 12
+  ctx.fillStyle = '#14110b'
+  ctx.fillRect(x - 2, y - 4, 5, 1); ctx.fillRect(x - 2, y + 4, 5, 1); ctx.fillRect(x - 4, y - 2, 1, 5); ctx.fillRect(x + 4, y - 2, 1, 5)
+  ctx.fillRect(x - 3, y - 3, 1, 1); ctx.fillRect(x + 3, y - 3, 1, 1); ctx.fillRect(x - 3, y + 3, 1, 1); ctx.fillRect(x + 3, y + 3, 1, 1)
+  ctx.fillRect(x, y - 2, 1, 3)
+  const [hx, hy] = ([[1, 0], [0, 1], [-1, 0], [0, -1]] as const)[Math.floor(t / 1000) % 4]
+  ctx.fillRect(x + hx, y + hy, 1, 1); ctx.fillRect(x + hx * 2, y + hy * 2, 1, 1)
+}
+
 function brackets(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
   ctx.fillStyle = '#ece6d9'
   const L = 5, x2 = x + w, y2 = y + h
@@ -127,9 +139,13 @@ function drawStation(ctx: CanvasRenderingContext2D, s: Session, zone: Zone, x: n
     const bob = moving ? 0 : Math.floor(tt / 260 + l.seed) % 2
     hb = { x: x - 12, y: top, w: 24, h: 30 }
     if (moving) drawSprite(ctx, x - 12, top, 3, pal(l), step)
-    else drawSprite(ctx, x - 12, top + bob, 3, pal(l), false)
+    else drawSprite(ctx, x - 12, top + (s.busy ? 0 : bob), 3, pal(l), false) // busy elsewhere: sits still
     drawDesk(ctx, dx, deskY, Math.min(64, slotWidth('desks', n) - 6), s, l.shirt)
-    for (let k = 0; k < 3 && !moving; k++) {
+    if (s.busy && !moving) {
+      if (s.busy.kind === 'compact') bubble(ctx, x, top, '…', STATE_COLOR.working, 0)
+      else clockBubble(ctx, x, top, tt)
+    }
+    for (let k = 0; k < 3 && !moving && !s.busy; k++) {
       const ph = ((tt / 1100) + k / 3 + l.seed) % 1
       ctx.fillStyle = rgba(l.shirt, 1 - ph)
       ctx.fillRect(dx - 6 + ((k * 5 + Math.floor(l.seed * 7)) % 12), deskY - 14 - ph * 22, 2, 2)

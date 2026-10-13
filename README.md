@@ -28,7 +28,7 @@ room, and each session stands in the zone that matches what it is doing:
 | Zone | Who is there |
 |---|---|
 | **Lounge** (left, dim) | idle sessions, resting |
-| **Desks** (middle) | working sessions, with their helpers (subagents) underneath |
+| **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, background commands, a scheduled wake-up) runs on after its turn. If that work never reports back, it moves to the Help desk as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
 | **Help desk** (right, amber) | sessions that need you: waiting, finished or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
 
 Characters walk between zones when their state changes. Click a character (or its chip) to select it
@@ -337,7 +337,8 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
   and restart to rotate. The PWA manifest and icons are the only files served without it.
 - Requests that carry an `Origin` header, and the `Host` of every request, must be the server's
   own host:port or an `extraHosts` entry (otherwise 421 "unknown host").
-- Session state is in memory only. After a restart, a session reappears on its next hook event.
+- Session state is in memory only. After a restart, a session reappears on its next hook event;
+  one the app started is taken back at once, at its desk if its transcript shows it mid-turn.
 
 ## Troubleshooting
 
@@ -349,6 +350,9 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
 - **A card says "Answer this in the terminal".** That request is no longer held by the server
   (no browser was open when it arrived, or the hold timed out). Click **Open its terminal** and
   answer Claude's own prompt.
+- **A session stays in the lounge while compacting.** The compacting hooks (`PreCompact`,
+  `PostCompact`) are newer than your global hooks block. Sessions started from the app pick them
+  up by themselves; if you installed the hooks globally, print the block again and merge it in.
 - **A new session seems stuck.** Claude may be asking to trust the folder. The session shows as
   "starting" until its first event; answer the question in its terminal panel once.
 - **The terminal says the session is view-only.** You started it by hand in a terminal that is not

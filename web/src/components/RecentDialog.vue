@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { HistorySession } from '../types'
-import { fetchHistory, select, state } from '../store'
-import { ageText, baseName, filterHistory } from '../logic'
+import { fetchHistory, select, state, ui } from '../store'
+import { ageText, baseName, filterHistory, groupByFolder } from '../logic'
 import { type ModeChoice } from '../logic'
 import ResumeButton from './ResumeButton.vue'
 import PermissionSelect from './PermissionSelect.vue'
@@ -14,12 +14,20 @@ const q = ref('')
 const mode = ref<ModeChoice>('claude')
 const search = ref<HTMLInputElement | null>(null)
 const shown = computed(() => filterHistory(list.value ?? [], q.value))
-onMounted(async () => {
-  search.value?.focus()
-  const r = await fetchHistory()
+const folders = computed(() => groupByFolder(shown.value))
+/** Folders folded shut, by cwd. */
+const folded = reactive(new Set<string>())
+const toggle = (cwd: string) => (folded.has(cwd) ? folded.delete(cwd) : folded.add(cwd))
+async function load() {
+  list.value = null; error.value = ''
+  const repo = ui.recentRepo
+  const r = await fetchHistory(repo ?? undefined)
+  if (repo !== ui.recentRepo) return // switched while loading
   if (r.ok) list.value = r.data.sessions
   else error.value = r.error
-})
+}
+onMounted(() => { search.value?.focus(); void load() })
+watch(() => ui.recentRepo, load)
 // A session this server already manages is open here: show it instead of resuming a second copy.
 function show(id: string) {
   if (state.sessions[id]) { select(id); emit('close') }
@@ -29,27 +37,34 @@ function show(id: string) {
 <template>
   <div class="overlay" @click.self="emit('close')">
     <div class="dialog recent" role="dialog" aria-modal="true" aria-label="Recent sessions">
-      <h2>Recent sessions</h2>
-      <p class="why">Claude sessions on this computer, including ones started before Agent Worlds. Resuming keeps the whole conversation.</p>
-      <input ref="search" v-model="q" type="text" class="search" placeholder="Search by repo or last prompt" aria-label="Search recent sessions" autocomplete="off">
+      <h2>{{ ui.recentRepo ? `Past sessions in ${baseName(ui.recentRepo)}` : 'Recent sessions' }}</h2>
+      <p v-if="ui.recentRepo" class="why">Every folder of {{ ui.recentRepo }}, its worktrees included. <button class="linkbtn" @click="ui.recentRepo = null">Show all folders</button></p>
+      <p v-else class="why">Claude sessions on this computer by folder, including ones started before Agent Worlds. Resuming keeps the whole conversation.</p>
+      <input ref="search" v-model="q" type="text" class="search" placeholder="Search by folder or last prompt" aria-label="Search recent sessions" autocomplete="off">
       <div class="form"><PermissionSelect v-model="mode" /></div>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
       <p v-else-if="!list" class="why">Loading…</p>
       <p v-else-if="!shown.length" class="why">{{ list.length ? 'No session matches.' : 'No past sessions found.' }}</p>
-      <ul class="recent-list">
-        <li v-for="h in shown" :key="h.sessionId">
-          <div class="r-main">
-            <b>{{ h.repo ? baseName(h.repo) : h.cwd ? baseName(h.cwd) : h.sessionId.slice(0, 8) }}</b>
-            <span class="r-age">{{ ageText(h.lastActivity, state.now) }}</span>
-            <span v-if="h.running" class="badge run">running</span>
-            <span v-if="h.managed" class="badge mgd">in Agent Worlds</span>
-            <p v-if="h.cwd" class="r-path" :title="h.cwd">{{ h.cwd }}</p>
-            <p class="r-prompt">{{ h.lastPrompt ?? 'No prompt recorded' }}</p>
-          </div>
-          <button v-if="h.managed && state.sessions[h.sessionId]" class="btn" @click="show(h.sessionId)">Show</button>
-          <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" @started="emit('close')" />
-        </li>
-      </ul>
+      <div class="recent-groups">
+        <section v-for="g in folders" :key="g.cwd" class="r-folder">
+          <button class="r-fhead" :aria-expanded="!folded.has(g.cwd)" :title="g.cwd" @click="toggle(g.cwd)">
+            <span aria-hidden="true">{{ folded.has(g.cwd) ? '▸' : '▾' }}</span><b>{{ g.label }}</b>
+            <span class="r-age">{{ g.items.length }} · {{ ageText(g.items[0].lastActivity, state.now) }}</span>
+          </button>
+          <ul v-if="!folded.has(g.cwd)" class="recent-list">
+            <li v-for="h in g.items" :key="h.sessionId">
+              <div class="r-main">
+                <span class="r-age">{{ ageText(h.lastActivity, state.now) }}</span>
+                <span v-if="h.running" class="badge run">running</span>
+                <span v-if="h.managed" class="badge mgd">in Agent Worlds</span>
+                <p class="r-prompt">{{ h.lastPrompt ?? 'No prompt recorded' }}</p>
+              </div>
+              <button v-if="h.managed && state.sessions[h.sessionId]" class="btn" @click="show(h.sessionId)">Show</button>
+              <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" @started="emit('close')" />
+            </li>
+          </ul>
+        </section>
+      </div>
       <div class="actions"><button class="btn" @click="emit('close')">Close</button></div>
     </div>
   </div>

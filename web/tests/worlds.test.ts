@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { applyMessage, newState, moveRepo, state } from '../src/store'
-import { breadcrumbs, cleanPath, visibleEntries, moveRepoPatches, repoStatus } from '../src/fsbrowser'
+import { breadcrumbs, cleanPath, visibleEntries, moveRepoPatches, repoStatus, matchEntries } from '../src/fsbrowser'
 import { groupSessions, moveId, nextColor, withRepo, PALETTE, routeKey } from '../src/logic'
 import { mk } from './helpers'
 
@@ -89,5 +89,16 @@ describe('folder picker owners', () => {
     expect(calls[1]).toContain('/api/worlds/a')
     expect(calls[2]).toBe('/api/worlds/b {"repos":["/r/three"]}')
     vi.unstubAllGlobals()
+  })
+})
+
+describe('matchEntries', () => {
+  it('keeps folders whose name holds every word, any case', () => {
+    const e = (name: string) => ({ name, path: `/p/${name}`, isRepo: false })
+    const all = [e('oreem'), e('oreem-admin'), e('Agent-Worlds'), e('pos-ops')]
+    expect(matchEntries(all, '').length).toBe(4)
+    expect(matchEntries(all, 'OREEM').map((x) => x.name)).toEqual(['oreem', 'oreem-admin'])
+    expect(matchEntries(all, 'oreem adm').map((x) => x.name)).toEqual(['oreem-admin'])
+    expect(matchEntries(all, 'zzz')).toEqual([])
   })
 })

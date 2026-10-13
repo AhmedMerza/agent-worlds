@@ -60,7 +60,7 @@ async function submit() {
     <div v-if="browsing && world" class="dialog form" role="dialog" aria-modal="true" aria-label="Add a folder">
       <h2>Add a folder to {{ world.name }}</h2>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
-      <FolderBrowser :world-id="world.id" @pick="addFolder" @move="moveFolder" @back="browsing = false" />
+      <FolderBrowser :world-id="world.id" :start="repo" @pick="addFolder" @move="moveFolder" @back="browsing = false" />
     </div>
     <form v-else ref="box" class="dialog form" role="dialog" aria-modal="true" aria-label="New session" @submit.prevent="submit">
       <h2>New session{{ world ? ` in ${world.name}` : '' }}</h2>
@@ -71,9 +71,12 @@ async function submit() {
         <p class="why">This world has no folders yet.</p>
         <button type="button" class="btn" @click="browsing = true">Add a folder</button>
       </div>
-      <label v-else-if="wid">Folder
-        <select v-model="repo"><option v-for="r in world?.repos ?? []" :key="r" :value="r">{{ baseName(r) }} ({{ r }})</option></select>
-      </label>
+      <div v-else-if="wid" class="folder-row">
+        <label>Folder
+          <select v-model="repo"><option v-for="r in world?.repos ?? []" :key="r" :value="r">{{ baseName(r) }} ({{ r }})</option></select>
+        </label>
+        <button type="button" class="btn" @click="browsing = true">Another folder…</button>
+      </div>
       <label>Task (optional)
         <textarea v-model="task" placeholder="Leave empty to start a blank session" />
       </label>
