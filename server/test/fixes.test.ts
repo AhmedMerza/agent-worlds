@@ -124,6 +124,11 @@ test('a GUI-started session shows at once as starting, then becomes the real ses
     assert.equal(app.store.list().length, 2);
     app.store.sweep(['aw-repo-1']);
     assert.deepEqual(app.store.list().map((x: any) => x.id), ['sess-1']);
+
+    // Claude's first hook arrives before addStarting (a fast start): no second 'starting' card
+    await fetch(`${base}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': '%57' }, body: JSON.stringify({ ...ev.start, session_id: 'sess-fast', cwd: repo }) });
+    assert.equal(await app.store.addStarting({ tmuxSession: 'aw-repo-3', pane: '%57', dir: repo, task: 'quick one' }), 'sess-fast');
+    assert.deepEqual(app.store.list().map((x: any) => [x.id, x.task]), [['sess-1', 'fix the bug'], ['sess-fast', 'quick one']]);
   } finally { ws.close(); await app.close(); }
 });
 

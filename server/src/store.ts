@@ -212,6 +212,9 @@ export class Store {
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
   async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null }): Promise<string> {
+    // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
+    const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
+    if (live) { if (o.task && !live.task) { live.task = oneLine(o.task, 200); this.push(live); } return live.id; }
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir);
     s.state = 'starting';

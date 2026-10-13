@@ -108,7 +108,7 @@ async function reattach(id: string | null) {
     // and a selection made with Shift+drag (past tmux's mouse mode) is copied on release.
     const copy = async (text: string) => showToast(await copyText(text) ? 'Copied to your clipboard.' : 'The browser blocked the clipboard.')
     term.parser.registerOscHandler(52, (data) => { const t = osc52Text(data); if (t) void copy(t); return true })
-    host.value.addEventListener('mouseup', () => { const t = term?.getSelection(); if (t) void copy(t) })
+    host.value.addEventListener('mouseup', () => { const t = term?.getSelection().replace(/[ \t]+$/gm, ''); if (t) void copy(t) }) // no padding a terminal row adds
     term.textarea?.addEventListener('focus', () => { termFocused.value = true })
     term.textarea?.addEventListener('blur', () => { termFocused.value = false })
     term.onData((d) => { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d })) })
@@ -150,7 +150,7 @@ watch(termFocusTick, async () => {
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
         <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
-        <span v-if="s?.direct" class="term-state" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">· no tmux: ends if Agent Worlds restarts</span>
+        <span v-if="s?.direct" class="term-note" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">Runs without tmux · stops if Agent Worlds restarts</span>
       </template>
       <template v-else>No session selected</template>
     </div>

@@ -222,6 +222,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   // A newer version of the code on disk shows an "Update now" banner; the click restarts into it.
   let update = false, restarting = false;
   const stopWatch = opts.onRestart ? watchCode(() => { update = true; broadcast({ type: 'update' }); }) : null;
+  /** Drops sessions whose tmux session is gone (also run at once when a terminal's tmux attach ends). */
+  const sweepNow = async () => { const alive = await sys.tmuxSessions(); if (alive) store.sweep(alive); };
   const waitingCount = () => [...store.sessions.values()].filter((s) => s.pending.length).length;
   const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
   let installed: string | null = null;
@@ -556,7 +558,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!s?.tmux?.session && !(s?.direct && direct.has(s.direct))) return reject(404, 'Not Found');
       if (ptys.clients.size >= MAX_PTYS) return reject(503, 'Service Unavailable');
       const [name, spawn] = s.direct ? [s.direct, (n: string) => direct.view(n)] : [s.tmux!.session!, opts.spawnPty ?? spawnTmuxPty];
-      return ptys.handleUpgrade(req, socket, head, (ws) => { track(ws); attachPty(ws, name, spawn); });
+      // A tmux attach that ends may mean the session died (or tmux did): sweep now instead of showing it as alive for 15 s.
+      return ptys.handleUpgrade(req, socket, head, (ws) => { track(ws); attachPty(ws, name, spawn, s.direct ? undefined : () => void sweepNow()); });
     }
     reject(404, 'Not Found');
   };
@@ -569,10 +572,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   return {
     server: servers[0], servers, store, scan,
     listen(): Promise<void> {
-      sweeper = setInterval(async () => {
-        const alive = await sys.tmuxSessions();
-        if (alive) store.sweep(alive);
-      }, 15_000);
+      sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
       const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
       void rescan();
@@ -609,7 +609,7 @@ const MAX_PTYS = 16;
 
 const dim = (v: unknown, d: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) <= 1000 ? (v as number) : d);
 
-async function attachPty(ws: WebSocket, session: string, spawn: (session: string, cols: number, rows: number) => Promise<PtyLike>) {
+async function attachPty(ws: WebSocket, session: string, spawn: (session: string, cols: number, rows: number) => Promise<PtyLike>, onEnd?: () => void) {
   let term: PtyLike | null = null;
   const early: string[] = [];
   let size: [number, number] = [80, 24];
@@ -629,7 +629,7 @@ async function attachPty(ws: WebSocket, session: string, spawn: (session: string
   }
   if (closed) return term.kill();
   term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
-  term.onExit(() => { if (ws.readyState === 1) ws.close(1000, 'detached'); });
+  term.onExit(() => { onEnd?.(); if (ws.readyState === 1) ws.close(1000, 'detached'); });
   term.resize(...size);
   for (const d of early.splice(0)) term.write(d);
 }
