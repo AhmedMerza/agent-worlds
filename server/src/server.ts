@@ -15,6 +15,7 @@ import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installClou
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { readHead, readTail, conversation } from './transcript.ts';
 import { readFileSync } from 'node:fs';
+import { watchCode, prepareRestart } from './update.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -32,6 +33,8 @@ type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
   home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
+  /** Set by `agent-worlds start`: exits so the launcher starts the new code. Enables watching for code changes. */
+  onRestart?: () => void; prepareRestart?: typeof prepareRestart;
   /** Path to cloudflared; null = not installed. Default: looked up on PATH and in ~/.local/bin. */
   cloudflared?: string | null;
   /** Where to download cloudflared from (tests serve a fake one). */
@@ -209,6 +212,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const password = new Password(join(opts.home ?? homeDir(), 'password.json'));
   const limiter = new LoginLimiter();
   const tunnel = new Tunnel();
+  // A newer version of the code on disk shows an "Update now" banner; the click restarts into it.
+  let update = false, restarting = false;
+  const stopWatch = opts.onRestart ? watchCode(() => { update = true; broadcast({ type: 'update' }); }) : null;
+  const waitingCount = () => [...store.sessions.values()].filter((s) => s.pending.length).length;
   const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
   let installed: string | null = null;
   const cloudflared = () => installed ?? (opts.cloudflared !== undefined ? opts.cloudflared : findCloudflared());
@@ -346,6 +353,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       let permissionMode: string | null = null;
       try { const m = JSON.parse(readFileSync(cfg.userSettingsPath, 'utf8'))?.permissions?.defaultMode; if (typeof m === 'string') permissionMode = m; } catch { /* no settings file */ }
       return send(res, 200, { permissionMode });
+    }
+    if (method === 'POST' && url.pathname === '/api/restart') {
+      if (!opts.onRestart) return send(res, 501, { error: 'updating needs the server started with `agent-worlds start`' });
+      if (restarting) return send(res, 409, { error: 'already updating' });
+      const body = await readBody(req).catch(() => ({} as Record<string, unknown>));
+      const busy = () => { const n = waitingCount(); return n ? `${n} session${n > 1 ? 's are' : ' is'} waiting for your answer. Answer first, then update.` : null; };
+      if (busy()) return send(res, 409, { error: busy() });
+      restarting = true;
+      const err = await (opts.prepareRestart ?? prepareRestart)() ?? busy();
+      if (err) { restarting = false; return send(res, 409, { error: err }); }
+      send(res, 202, { ok: true });
+      setTimeout(opts.onRestart, 200);
+      return;
     }
     if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), unmanaged });
     if (method === 'GET' && url.pathname === '/api/history') {
@@ -518,7 +538,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
-        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged }));
+        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged, update }));
       });
     }
     if (url.pathname === '/pty') {
@@ -565,6 +585,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (scanner) clearInterval(scanner);
       if (heartbeat) clearInterval(heartbeat);
       tunnel.stop();
+      stopWatch?.();
       for (const s of [...store.sessions.values()]) store.remove(s);
       for (const c of [...wss.clients, ...ptys.clients]) c.terminate();
       return Promise.all(servers.map((srv) => new Promise<void>((ok) => { srv.close(() => ok()); srv.closeAllConnections(); }))).then(() => {});

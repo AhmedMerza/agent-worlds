@@ -6,6 +6,7 @@ import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type C
 import { startServer } from './server.ts';
 import { hooksBlock, writeHooksFile } from './hooks.ts';
 import { createSession } from './sys.ts';
+import { RESTART_CODE } from './update.ts';
 
 const urlOf = (cfg: Config, token: string) => {
   const host = cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host;
@@ -80,7 +81,7 @@ async function main(argv: string[]) {
     case 'start': {
       const cfg = load();
       const token = ensureToken();
-      const app = startServer(cfg, token);
+      const app = startServer(cfg, token, { onRestart: () => void app.close().then(() => process.exit(RESTART_CODE)) });
       try { await app.listen(); } catch (e) {
         if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') die(`port ${cfg.port} is busy — another Agent Worlds? change "port" in ${join(homeDir(), 'config.json')}`);
         die(`cannot listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`);

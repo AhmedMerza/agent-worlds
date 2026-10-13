@@ -59,7 +59,8 @@ export interface Unmanaged { pid: number; cwd: string; repo: string | null; worl
 export interface HistorySession { sessionId: string; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean }
 
 export type ServerMessage =
-  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; unmanaged?: Unmanaged[] }
+  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; unmanaged?: Unmanaged[]; update?: boolean }
+  | { type: 'update' }
   | { type: 'unmanaged'; unmanaged: Unmanaged[] }
   | { type: 'session'; session: Session }
   | { type: 'session-removed'; id: string }

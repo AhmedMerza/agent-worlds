@@ -116,6 +116,8 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-
 .hdr-btn{font:inherit;font-size:13px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 .hdr-btn:hover{color:var(--ink);border-color:var(--muted)}
 .banner{background:var(--err);color:var(--dark-ink);font-weight:700;padding:8px 14px;border-radius:6px;font-size:14px}
+.banner.update{background:var(--panel);color:var(--ink);border:1px solid var(--ok);display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.banner.update .err{flex-basis:100%;margin:0;white-space:pre-wrap;font:12px var(--f-mono);color:var(--err);max-height:200px;overflow:auto}
 .loading{color:var(--muted);padding:40px 0;text-align:center}
 .term-body{height:300px;padding:6px 0 6px 8px;min-width:0;overflow:hidden}
 .term-body .xterm{height:100%}

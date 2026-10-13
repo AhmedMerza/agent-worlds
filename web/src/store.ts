@@ -21,11 +21,13 @@ export interface StoreState {
   pending: { tmux: string; until: number } | null
   /** Claude processes running outside Agent Worlds. */
   unmanaged: Unmanaged[]
+  /** Newer code is on disk: offer "Update now". */
+  update: boolean
 }
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, order: [], loaded: false, connected: false,
-  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [],
+  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false,
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -48,6 +50,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.order = []
       for (const s of msg.sessions) { st.sessions[s.id] = s; st.order.push(s.id) }
       st.unmanaged = msg.unmanaged ?? []
+      st.update = msg.update ?? false
       st.loaded = true
       break
     case 'unmanaged':
@@ -69,6 +72,9 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
     }
     case 'worlds':
       st.worlds = msg.worlds
+      break
+    case 'update':
+      st.update = true
       break
     case 'toast':
       st.toast = { text: msg.text, n: (st.toast?.n ?? 0) + 1 }
@@ -226,13 +232,22 @@ export const acknowledge = (id: string) => post(`${base(id)}/ack`)
 // ---- websocket with backoff ----
 let ws: WebSocket | null = null
 let retry = 0
+/** Set once the server accepted "Update now": the next connection is the new server, so load the new page. */
+let reloadOnConnect = false
+/** Restarts the server into the newer code on disk; the page reloads when it is back. Returns an error or null. */
+export async function updateNow(force = false): Promise<string | null> {
+  const r = await api<{ ok: true }>('POST', '/api/restart', { force })
+  if (!r.ok) return r.error
+  reloadOnConnect = true
+  return null
+}
 let timer: ReturnType<typeof setTimeout> | undefined
 export const backoffMs = (n: number): number => Math.min(15000, 500 * 2 ** n)
 
 export function connect(): void {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   ws = new WebSocket(`${proto}://${location.host}/ws`)
-  ws.onopen = () => { retry = 0; state.connected = true }
+  ws.onopen = () => { retry = 0; state.connected = true; if (reloadOnConnect) location.reload() }
   ws.onmessage = (e) => {
     let m: ServerMessage
     try { m = JSON.parse(String(e.data)) as ServerMessage } catch { return /* ignore a malformed frame */ }

@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
 # Agent Worlds CLI. Runs the TypeScript sources directly (Node >= 24 strips types natively).
 here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-exec node --disable-warning=ExperimentalWarning "$here/../server/src/cli.ts" "$@"
+run() { node --disable-warning=ExperimentalWarning "$here/../server/src/cli.ts" "$@"; }
+[ "$1" = start ] || { run "$@"; exit; }
+# "Update now" in the web app exits the server with 75: start it again on the new code.
+while :; do
+  run "$@"; code=$?
+  [ "$code" = 75 ] || exit "$code"
+  echo "agent-worlds: restarting on the new code"
+done

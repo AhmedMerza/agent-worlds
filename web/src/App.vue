@@ -11,7 +11,7 @@ import PhoneDialog from './components/PhoneDialog.vue'
 import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui } from './store'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui, updateNow } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -34,6 +34,13 @@ function openNewTask(worldId?: string) {
   else ui.worldsOpen = true // no worlds yet: creating one is the next step
 }
 const menuOpen = ref(false)
+const updating = ref(false)
+const updateError = ref('')
+async function onUpdate(force = false) {
+  updating.value = true; updateError.value = ''
+  const err = await updateNow(force)
+  if (err) { updateError.value = err; updating.value = false }
+}
 watch(phone, () => { menuOpen.value = false })
 async function onNotify() {
   const r = await toggleNotifications()
@@ -107,7 +114,13 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
         <button class="hdr-btn" aria-label="Keyboard shortcuts" @click="help = true"><kbd>?</kbd> Shortcuts</button>
       </div>
     </header>
-    <div v-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
+    <div v-if="state.update || updating" class="banner update" role="status">
+      <span>{{ updating ? 'Updating… the page reloads when the new version is up. Your sessions keep running.' : 'A new version of Agent Worlds is ready.' }}</span>
+      <button v-if="!updating" class="btn primary" @click="onUpdate()">Update now</button>
+      <button v-if="!updating && /will end/.test(updateError)" class="btn" @click="onUpdate(true)">Update anyway</button>
+      <pre v-if="updateError" class="err">{{ updateError }}</pre>
+    </div>
+    <div v-else-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
     <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
       <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'inbox' && needsYou.length" class="count">{{ needsYou.length }}</span></button>
