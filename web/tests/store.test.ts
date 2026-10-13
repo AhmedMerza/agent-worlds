@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { applyMessage, newState, backoffMs } from '../src/store'
+import { describe, expect, it, afterEach, vi } from 'vitest'
+import { modeField, modeOptions } from '../src/logic'
+import { applyMessage, newState, backoffMs, createSession, resumeSession } from '../src/store'
 import { mk, perm } from './helpers'
 
 const worlds = [{ id: 'web', name: 'Web', color: '#fff', repos: [] }]
@@ -81,5 +82,32 @@ describe('claimPending', () => {
     st.pending = { tmux: 'aw-n', until: Date.now() + 60000 }
     applyMessage(st, { type: 'session', session: s })
     expect(st.selectedId).toBe('n')
+  })
+})
+
+describe('permission mode', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const stub = () => { const fn = vi.fn(async () => ({ ok: true, status: 201, json: async () => ({ tmuxSession: 'aw-x' }) })); vi.stubGlobal('fetch', fn); return fn }
+  const sent = (fn: ReturnType<typeof stub>) => JSON.parse((fn.mock.calls[0] as unknown as [string, { body: string }])[1].body)
+  it('"Your Claude default" sends no field; the others send their mode', () => {
+    expect(modeField('claude')).toEqual({})
+    expect(modeField('plan')).toEqual({ permissionMode: 'plan' })
+    expect(modeOptions('acceptEdits')[0].label).toBe('Your Claude default (auto-accept edits)')
+    expect(modeOptions(null)[0].label).toBe('Your Claude default (not set)')
+    expect(modeOptions(null).map((o) => o.value)).toEqual(['claude', 'default', 'acceptEdits', 'plan', 'auto'])
+  })
+  it('New session and Resume put permissionMode in the body only when chosen', async () => {
+    let fn = stub()
+    await createSession({ worldId: 'w', repo: '/r', task: '', worktree: true, ...modeField('claude') })
+    expect(sent(fn)).not.toHaveProperty('permissionMode')
+    fn = stub()
+    await createSession({ worldId: 'w', repo: '/r', task: '', worktree: true, ...modeField('acceptEdits') })
+    expect(sent(fn).permissionMode).toBe('acceptEdits')
+    fn = stub()
+    await resumeSession('s1', false, undefined)
+    expect(sent(fn)).toEqual({ sessionId: 's1' })
+    fn = stub()
+    await resumeSession('s1', true, 'plan')
+    expect(sent(fn)).toEqual({ sessionId: 's1', stop: true, permissionMode: 'plan' })
   })
 })

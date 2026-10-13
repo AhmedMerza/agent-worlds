@@ -7,10 +7,16 @@
   },
   "scripts": {
     "start": "node src/cli.ts",
-    "test": "AGENT_WORLDS_HOME=$(mktemp -d) node --test"
+    "test": "AGENT_WORLDS_HOME=$(mktemp -d) TMUX_TMPDIR=$(mktemp -d) TMUX= node --test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "node-pty": "^1.1.0",
     "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2"
   }
 }
