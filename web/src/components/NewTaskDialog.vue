@@ -85,6 +85,15 @@ async function submit() {
         </label>
       </template>
       <p v-else class="why">Not a git repo, so the session starts right in this folder.</p>
+      <details v-if="!state.tmux" class="why no-tmux">
+        <summary>tmux is not installed: this session runs inside Agent Worlds</summary>
+        It works, and you never have to touch tmux. With tmux installed you would also get:
+        <ul>
+          <li>Sessions that keep running when Agent Worlds restarts or updates. Without it they end (you can resume them from Recent sessions).</li>
+          <li>The same live session in your own terminal (<code>agent-worlds attach</code>), not only in the browser.</li>
+        </ul>
+        Install it with <code>sudo dnf install tmux</code>, <code>sudo apt install tmux</code> or <code>brew install tmux</code>, then restart Agent Worlds.
+      </details>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
       <div class="actions">
         <button class="btn primary" :disabled="sending || !repo">{{ sending ? 'Starting…' : 'Start' }}</button>

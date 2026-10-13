@@ -16,6 +16,7 @@ import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, 
 import { readHead, readTail, conversation } from './transcript.ts';
 import { readFileSync } from 'node:fs';
 import { watchCode, prepareRestart } from './update.ts';
+import { Direct, type PtyLike } from './direct.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -148,6 +149,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
   const createSession = opts.createSession ?? sys.createSession;
+  // Without tmux, sessions run in ptys this server owns; one ending removes its card.
+  const direct = new Direct((name) => { for (const s of [...store.sessions.values()]) if (s.direct === name) store.remove(s); });
+  const spawnDirect: sys.SpawnDirect = (...a) => direct.spawn(...a);
+  /** Whether tmux is installed; the page explains what it adds when it is not. Installing it needs a restart. */
+  let tmux = true;
+  if (opts.onRestart) void sys.hasTmux().then((v) => { tmux = v; });
   // Claude runs identical hook commands once, but the same hook installed under two different
   // command strings (say a symlinked path globally plus our --settings file) would report every
   // event twice. A byte-identical payload within a few seconds gets the first one's reply instead.
@@ -164,7 +171,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (repoCache.size > 500) repoCache.delete(repoCache.keys().next().value!);
     return repoCache.get(cwd)!;
   };
-  const isManaged = (p: ClaudeProc) => [...store.sessions.values()].some((s) => (p.pane && s.tmux?.pane === p.pane) || s.id === p.sessionId);
+  const isManaged = (p: ClaudeProc) => [...store.sessions.values()].some((s) => (p.pane && s.tmux?.pane === p.pane) || (p.direct && s.direct === p.direct) || s.id === p.sessionId);
   /** What a plain-terminal session is doing: its last prompt and when its transcript last changed. Re-read only on change. */
   const ghostInfo = new Map<string, { mtime: number; lastPrompt: string | null }>();
   async function ghostOf(sessionId: string | null): Promise<{ lastPrompt: string | null; lastActivity: number | null }> {
@@ -330,14 +337,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (method === 'POST' && url.pathname === '/api/hook') {
       const body = await readBody(req);
       const pane = req.headers['x-aw-pane'];
+      const pty = req.headers['x-aw-pty'];
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       const now = Date.now();
       for (const [k, v] of recent) if (v.at && now - v.at > DEDUPE_MS) recent.delete(k);
-      const key = createHash('sha1').update(String(pane)).update('\0').update(JSON.stringify(body)).digest('hex');
+      const key = createHash('sha1').update(String(pane)).update('\0').update(String(pty)).update('\0').update(JSON.stringify(body)).digest('hex');
       let reply = recent.get(key)?.reply;
       if (!reply) {
-        reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal);
+        reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal, typeof pty === 'string' && direct.has(pty) ? pty : null);
         const entry = { at: 0, reply };
         recent.set(key, entry);
         reply.finally(() => { entry.at = Date.now(); }).catch(() => {});
@@ -360,6 +368,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = await readBody(req).catch(() => ({} as Record<string, unknown>));
       const busy = () => { const n = waitingCount(); return n ? `${n} session${n > 1 ? 's are' : ' is'} waiting for your answer. Answer first, then update.` : null; };
       if (busy()) return send(res, 409, { error: busy() });
+      if (direct.size && body.force !== true) return send(res, 409, { error: `${direct.size} session${direct.size > 1 ? 's run' : ' runs'} without tmux and will end. You can resume ${direct.size > 1 ? 'them' : 'it'} from Recent sessions afterwards.`, direct: direct.size });
       restarting = true;
       const err = await (opts.prepareRestart ?? prepareRestart)() ?? busy();
       if (err) { restarting = false; return send(res, 409, { error: err }); }
@@ -401,8 +410,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         } else if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
       }
       try {
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: null });
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -476,8 +485,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.branch !== undefined && b.branch !== '' && (typeof b.branch !== 'string' || !b.worktree)) return send(res, 400, { error: 'branch must be a string and needs worktree: true' });
       if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       try {
-        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: (b.task as string) || null });
+        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -511,6 +520,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const s = store.sessions.get(id);
       if (!s) return send(res, 404, { error: 'no such session' });
       if (typeof body.text !== 'string' || body.text.length > 10000) return send(res, 400, { error: 'text must be a string up to 10000 chars' });
+      if (s.direct) return direct.type(s.direct, body.text.replace(/\r\n?/g, '\n')) ? send(res, 200, { ok: true }) : send(res, 409, { error: 'session has ended' });
       if (!s.tmux) return send(res, 409, { error: 'session is not running in tmux' });
       return (await sys.typeInto(s.tmux.pane, body.text.replace(/\r\n?/g, '\n')))
         ? send(res, 200, { ok: true }) : send(res, 502, { error: 'tmux send-keys failed' });
@@ -538,15 +548,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
-        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged, update }));
+        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged, update, tmux }));
       });
     }
     if (url.pathname === '/pty') {
       const s = store.sessions.get(url.searchParams.get('session') ?? '');
-      if (!s?.tmux?.session) return reject(404, 'Not Found');
+      if (!s?.tmux?.session && !(s?.direct && direct.has(s.direct))) return reject(404, 'Not Found');
       if (ptys.clients.size >= MAX_PTYS) return reject(503, 'Service Unavailable');
-      const name = s.tmux.session;
-      return ptys.handleUpgrade(req, socket, head, (ws) => { track(ws); attachPty(ws, name, opts.spawnPty ?? spawnTmuxPty); });
+      const [name, spawn] = s.direct ? [s.direct, (n: string) => direct.view(n)] : [s.tmux!.session!, opts.spawnPty ?? spawnTmuxPty];
+      return ptys.handleUpgrade(req, socket, head, (ws) => { track(ws); attachPty(ws, name, spawn); });
     }
     reject(404, 'Not Found');
   };
@@ -586,6 +596,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (heartbeat) clearInterval(heartbeat);
       tunnel.stop();
       stopWatch?.();
+      direct.killAll();
       for (const s of [...store.sessions.values()]) store.remove(s);
       for (const c of [...wss.clients, ...ptys.clients]) c.terminate();
       return Promise.all(servers.map((srv) => new Promise<void>((ok) => { srv.close(() => ok()); srv.closeAllConnections(); }))).then(() => {});
@@ -598,8 +609,8 @@ const MAX_PTYS = 16;
 
 const dim = (v: unknown, d: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) <= 1000 ? (v as number) : d);
 
-async function attachPty(ws: WebSocket, session: string, spawn: typeof spawnTmuxPty) {
-  let term: Awaited<ReturnType<typeof spawnTmuxPty>> | null = null;
+async function attachPty(ws: WebSocket, session: string, spawn: (session: string, cols: number, rows: number) => Promise<PtyLike>) {
+  let term: PtyLike | null = null;
   const early: string[] = [];
   let size: [number, number] = [80, 24];
   let closed = false;

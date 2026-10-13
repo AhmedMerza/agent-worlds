@@ -65,7 +65,7 @@ export interface KeyInfo {
 }
 export type KeyAction =
   | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' }
-  | { kind: 'new-task' } | { kind: 'recent' } | { kind: 'leave-terminal' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | null
+  | { kind: 'new-task' } | { kind: 'recent' } | { kind: 'leave-terminal' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | { kind: 'terminal' } | null
 
 /** Decides what a keypress means. Never claims a key while the user is typing (or in the terminal). */
 export function routeKey(k: KeyInfo): KeyAction {
@@ -80,6 +80,7 @@ export function routeKey(k: KeyInfo): KeyAction {
   if (k.key === 'm' || k.key === 'M') return { kind: 'mute' }
   if (k.key === 'c' || k.key === 'C') return { kind: 'catchup' }
   if (k.key === 'w' || k.key === 'W') return { kind: 'worlds' }
+  if (k.key === 't' || k.key === 'T' || (k.key === 'Enter' && !k.onControl)) return { kind: 'terminal' }
   if (/^[1-9]$/.test(k.key)) return { kind: 'jump', index: Number(k.key) - 1 }
   return null
 }

@@ -23,11 +23,13 @@ export interface StoreState {
   unmanaged: Unmanaged[]
   /** Newer code is on disk: offer "Update now". */
   update: boolean
+  /** tmux is installed on the server (false: sessions run inside Agent Worlds and end when it restarts). */
+  tmux: boolean
 }
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, order: [], loaded: false, connected: false,
-  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false,
+  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true,
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -35,7 +37,7 @@ export const newState = (): StoreState => ({
 export function claimPending(st: StoreState, s: Session, now = Date.now()): boolean {
   if (!st.pending) return false
   if (now > st.pending.until) { st.pending = null; return false }
-  if (s.tmux?.session !== st.pending.tmux) return false
+  if ((s.tmux?.session ?? s.direct) !== st.pending.tmux) return false
   st.pending = null
   return true
 }
@@ -51,6 +53,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       for (const s of msg.sessions) { st.sessions[s.id] = s; st.order.push(s.id) }
       st.unmanaged = msg.unmanaged ?? []
       st.update = msg.update ?? false
+      st.tmux = msg.tmux ?? true
       st.loaded = true
       break
     case 'unmanaged':
@@ -65,7 +68,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
     case 'session-removed': {
       // A 'starting:<tmux>' placeholder is replaced by the real session on its first hook: keep following it.
       const gone = st.sessions[msg.id]
-      if (st.selectedId === msg.id && gone?.state === 'starting' && gone.tmux) st.pending = { tmux: gone.tmux.session, until: Date.now() + 10000 }
+      if (st.selectedId === msg.id && gone?.state === 'starting' && (gone.tmux || gone.direct)) st.pending = { tmux: gone.tmux?.session ?? gone.direct!, until: Date.now() + 10000 }
       delete st.sessions[msg.id]
       st.order = st.order.filter((i) => i !== msg.id)
       break
@@ -196,7 +199,7 @@ export async function fetchClaudeDefault(): Promise<string | null> {
 function followNew(name: unknown): void {
   if (typeof name !== 'string') return
   state.pending = { tmux: name, until: Date.now() + 60000 }
-  const known = Object.values(state.sessions).find((x) => x.tmux?.session === name)
+  const known = Object.values(state.sessions).find((x) => (x.tmux?.session ?? x.direct) === name)
   if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */

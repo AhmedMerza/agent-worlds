@@ -103,3 +103,62 @@ test('the same hook reported twice (two command strings) is handled once and bot
 test('createSession refuses a worktree in a plain (non-git) folder', async () => {
   await assert.rejects(createSession({ repo: tmp(), worktree: true }), /not a git repo, so it cannot use a worktree/);
 });
+
+test('without tmux: the server runs claude itself; the CLI (no server to own it) says to install tmux', async () => {
+  const path = process.env.PATH;
+  process.env.PATH = tmp(); // an empty folder: no tmux, no git
+  try {
+    await assert.rejects(createSession({ repo: tmp(), worktree: false }), /needs tmux, which is not installed/);
+    const calls: unknown[][] = [];
+    const repo = tmp();
+    const r = await createSession({ repo, task: 'hi', worktree: false, home: '/h', prefix: 'awtest-', spawnDirect: async (...a) => { calls.push(a); } });
+    assert.equal(r.direct, true);
+    assert.equal(r.pane, null);
+    assert.deepEqual(calls, [[r.tmuxSession, 'claude', ['--settings', '/h/hooks.json', '--', 'hi'], repo, { AGENT_WORLDS_HOME: '/h', AGENT_WORLDS_PTY: r.tmuxSession }]]);
+  } finally { process.env.PATH = path; }
+});
+
+test('a direct (no tmux) session: starts, links its hooks, shows in the web terminal, takes replies, ends with its process', async () => {
+  const path = process.env.PATH;
+  const repo = tmp();
+  const bin = join(tmp(), 'claude-stub');
+  writeFileSync(bin, '#!/bin/bash\necho "READY $AGENT_WORLDS_PTY"\nwhile read -r l; do echo "GOT:$l"; [ "$l" = bye ] && exit 0; done\n');
+  chmodSync(bin, 0o755);
+  const token = 'q'.repeat(64);
+  const cfg = { ...parseConfig({ claudeBin: bin, worlds: [{ id: 'w', name: 'W', repos: [repo] }] }), port: 0 };
+  const app = startServer(cfg, token, { home: tmp(), onRestart: () => {}, prepareRestart: async () => null });
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  const H = { 'x-aw-token': token, 'content-type': 'application/json' };
+  process.env.PATH = tmp(); // no tmux
+  try {
+    const r = await fetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ worldId: 'w', repo }) });
+    assert.equal(r.status, 201);
+    const name = (await r.json() as any).tmuxSession;
+    assert.equal(app.store.sessions.get(`starting:${name}`)?.direct, name);
+
+    // aw-hook sends the pty name; the first event replaces the 'starting' card
+    await fetch(`${base}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pty': name }, body: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'd-1', cwd: repo }) });
+    const s = app.store.sessions.get('d-1')!;
+    assert.equal(s.direct, name);
+    assert.equal(app.store.sessions.has(`starting:${name}`), false);
+
+    const pty = new WebSocket(`${base.replace('http', 'ws')}/pty?session=d-1`, { headers: { 'x-aw-token': token } });
+    let out = '';
+    pty.on('message', (d) => { out += d.toString(); });
+    await waitFor(() => out.includes(`READY ${name}`));
+    assert.ok(out.includes(`READY ${name}`), 'replays what was printed before the browser attached');
+    pty.send(JSON.stringify({ t: 'in', d: 'hello\r' }));
+    await waitFor(() => out.includes('GOT:hello'));
+    assert.ok(out.includes('GOT:hello'));
+
+    const restart = await fetch(`${base}/api/restart`, { method: 'POST', headers: H, body: '{}' });
+    assert.equal(restart.status, 409);
+    assert.match((await restart.json() as any).error, /without tmux and will end/);
+
+    assert.equal((await fetch(`${base}/api/sessions/d-1/input`, { method: 'POST', headers: H, body: JSON.stringify({ text: 'bye' }) })).status, 200);
+    await waitFor(() => !app.store.sessions.has('d-1'));
+    assert.equal(app.store.sessions.has('d-1'), false, 'the card goes when claude exits');
+    pty.close();
+  } finally { process.env.PATH = path; await app.close(); }
+});

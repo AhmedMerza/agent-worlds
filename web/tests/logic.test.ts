@@ -54,6 +54,12 @@ describe('routeKey', () => {
     expect(routeKey({ ...base, onControl: true })).toBeNull()
     expect(routeKey({ ...base, key: '2', onControl: true })).toEqual({ kind: 'jump', index: 1 })
   })
+  it('T or Enter goes to the terminal; Enter on a focused button stays the button\'s', () => {
+    expect(routeKey({ ...base, key: 't' })).toEqual({ kind: 'terminal' })
+    expect(routeKey({ ...base, key: 'Enter' })).toEqual({ kind: 'terminal' })
+    expect(routeKey({ ...base, key: 'Enter', onControl: true })).toBeNull()
+    expect(routeKey({ ...base, key: 't', typing: true })).toBeNull()
+  })
   it('ignores modifier combos', () => {
     expect(routeKey({ ...base, key: '1', ctrl: true })).toBeNull()
   })

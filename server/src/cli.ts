@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type Config } from './config.ts';
 import { startServer } from './server.ts';
 import { hooksBlock, writeHooksFile } from './hooks.ts';
-import { createSession } from './sys.ts';
+import { createSession, hasTmux, TMUX_MISSING } from './sys.ts';
 import { RESTART_CODE } from './update.ts';
 
 const urlOf = (cfg: Config, token: string) => {
@@ -88,6 +88,7 @@ async function main(argv: string[]) {
       }
       writeEndpoint(cfg);
       writeHooksFile(homeDir());
+      if (!(await hasTmux())) console.warn(`warning: ${TMUX_MISSING}`);
       if (!existsSync(join(homeDir(), 'config.json'))) console.log(`no config yet: run \`agent-worlds init\` and edit ${join(homeDir(), 'config.json')}`);
       console.log(`agent-worlds listening on ${cfg.host}:${cfg.port}\nopen: ${urlOf(cfg, token)}`);
       const stop = () => app.close().then(() => process.exit(0));

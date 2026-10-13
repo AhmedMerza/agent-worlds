@@ -100,6 +100,8 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-
 .detail ol li{font-family:var(--f-mono);font-size:12.5px;color:var(--muted)}
 .detail ol li::before{content:"›";color:var(--tint)}
 .term{background:#0c0f14;border:1px solid var(--line);border-top:4px solid var(--tint);border-radius:6px;display:flex;flex-direction:column;min-width:0}
+.term.typing{border-color:var(--wait);box-shadow:0 0 0 2px var(--wait)}
+.term:not(.typing) .term-body{opacity:.85}
 .term-head{display:flex;align-items:center;gap:8px 10px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted);flex-wrap:wrap}
 .term-head b{font-family:var(--f-mono);color:var(--ink)}
 .term-head .live{margin-left:auto;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
@@ -218,7 +220,8 @@ pre.diff{max-height:320px;overflow:auto}
 .recent-list li .resume{flex:none}
 .attach-cmd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .attach-cmd code{font-family:var(--f-mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
-.term-paused{margin-left:auto;font-size:11px;color:var(--wait)}
+.term-paused{margin-left:auto;font-size:12px;color:var(--wait)}
+.term-paused.idle{color:var(--muted)}
 
 /* Fixed app shell on desktop: the page never scrolls, each region scrolls on its own. */
 @media (min-width:1000px){

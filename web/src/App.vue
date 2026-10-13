@@ -11,7 +11,7 @@ import PhoneDialog from './components/PhoneDialog.vue'
 import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui, updateNow } from './store'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui, updateNow, focusTerminal } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -68,6 +68,7 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'catchup') { if (selected.value && !selected.value.catchupRunning) requestCatchup(selected.value.id) }
   else if (a.kind === 'worlds') ui.worldsOpen = true
   else if (a.kind === 'recent') ui.recentOpen = true
+  else if (a.kind === 'terminal') focusTerminal()
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
   else if (a.kind === 'mute') onMute()
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return

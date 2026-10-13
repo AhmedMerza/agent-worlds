@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from '../clipboard'
 import { computed } from 'vue'
 import { LABEL, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText } from '../logic'
 import { selected, groups, focusTerminal, askClaude, showToast, ui, state } from '../store'
@@ -13,14 +14,7 @@ const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmu
 async function copyAttach() {
   const text = attachText.value
   if (!text) return
-  try { await navigator.clipboard.writeText(text); showToast('Copied: ' + text); return } catch { /* fall back below */ }
-  const ta = document.createElement('textarea')
-  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
-  document.body.appendChild(ta); ta.select()
-  let ok = false
-  try { ok = document.execCommand('copy') } catch { /* ignore */ }
-  ta.remove()
-  showToast(ok ? 'Copied: ' + text : 'Could not copy. Run: ' + text)
+  showToast(await copyText(text) ? 'Copied: ' + text : 'Could not copy. Run: ' + text)
 }
 </script>
 
