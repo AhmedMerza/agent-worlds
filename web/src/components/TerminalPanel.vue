@@ -46,6 +46,8 @@ async function loadHistory() {
   await nextTick()
   if (historyBox.value) historyBox.value.scrollTop = historyBox.value.scrollHeight
 }
+/** Claude's full-screen view jumps to the latest output on Ctrl+End; phones and Mac keyboards have no such key. */
+function jumpToLatest() { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: '\x1b[1;5F' })) }
 function openHistory() { historyOpen.value = true; history.value = null; void loadHistory() }
 watch(() => s.value?.id, () => { historyOpen.value = false; history.value = null })
 
@@ -148,6 +150,7 @@ watch(termFocusTick, async () => {
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into Claude</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
+        <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" title="Jump to Claude's latest output (Ctrl+End)" @click="jumpToLatest">Jump to latest</button>
         <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
         <span v-if="s?.direct" class="term-note" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">Runs without tmux · stops if Agent Worlds restarts</span>
