@@ -74,4 +74,10 @@ export interface FsEntry { name: string; path: string; isRepo: boolean }
 export interface FsListing { path: string; parent: string | null; entries: FsEntry[] }
 
 /** GET /api/phone: addresses a phone could use, and whether phones are allowed on each. */
-export type PhoneInfo = { port: number; addresses: { address: string; kind: 'tailscale' | 'lan'; iface: string; allowed: boolean }[] }
+export type PhoneInfo = { port: number; addresses: { address: string; kind: 'tailscale' | 'lan'; iface: string; allowed: boolean }[]; passwordSet: boolean; cloudflared: boolean; canInstall?: boolean; tunnel: string | null }
+/** GET /api/access: devices that signed in and every sign-in or failed try, newest first. `you` is this browser's device id. */
+export type AccessInfo = {
+  devices: { device: string; first: number; last: number; ip: string; route: string; via: string; agent: string }[]
+  entries: { at: number; device: string | null; ip: string; route: string; via: string; ok: boolean; agent: string }[]
+  you: string | null
+}

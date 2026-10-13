@@ -231,6 +231,13 @@ export const diffClass = (l: string): string => (l.startsWith('@@') ? 'h' : l[0]
 /** 0 none, 1 getting heavy (>=50), 2 nearly full (>=80). */
 export const ctxLevel = (pct: number): 0 | 1 | 2 => (pct >= 80 ? 2 : pct >= 50 ? 1 : 0)
 
+/** "Chrome on Android" from a user-agent string; good enough to tell your own devices apart. */
+export function deviceText(agent: string): string {
+  const os = /iPhone|iPad/.test(agent) ? (agent.includes('iPad') ? 'iPad' : 'iPhone') : /Android/.test(agent) ? 'Android' : /Mac OS X/.test(agent) ? 'Mac' : /Windows/.test(agent) ? 'Windows' : /Linux/.test(agent) ? 'Linux' : null
+  const browser = /Edg\//.test(agent) ? 'Edge' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome' : /Safari\//.test(agent) ? 'Safari' : null
+  if (!os && !browser) return agent ? agent.slice(0, 40) : 'Unknown device'
+  return [browser, os].filter(Boolean).join(' on ')
+}
 export const baseName = (p: string): string => p.replace(/\/+$/, '').split('/').pop() || p
 
 /** Permission/question cards the GUI can answer. `live:false` means only the terminal can (no GUI was connected, or the hold timed out). */

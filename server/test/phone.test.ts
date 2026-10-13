@@ -44,7 +44,7 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
   const home = tmp();
   const cfg = { ...parseConfig({}), port: 0 };
   // 127.0.0.2 stands in for a LAN address: Linux answers on all of 127/8.
-  const app = startServer(cfg, TOKEN, { home, procRoot: join(home, 'none'), phoneAddresses: () => [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1' }] });
+  const app = startServer(cfg, TOKEN, { home, procRoot: join(home, 'none'), cloudflared: null, phoneAddresses: () => [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1' }] });
   await app.listen();
   const port = (app.server.address() as { port: number }).port;
   const H = { 'x-aw-token': TOKEN, 'content-type': 'application/json' };
@@ -53,7 +53,7 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
     return { status: r.status, body: await r.json() as any };
   };
   try {
-    assert.deepEqual((await call('/api/phone')).body, { port, addresses: [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1', allowed: false }] });
+    assert.deepEqual((await call('/api/phone')).body, { port, addresses: [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1', allowed: false }], passwordSet: false, cloudflared: false, canInstall: true, tunnel: null });
     assert.equal((await call('/api/phone/pair', { address: '127.0.0.2' })).status, 400, 'no code before phones are allowed');
     assert.equal((await call('/api/phone/allow', { address: '8.8.8.8', allow: true })).status, 400, 'only our own addresses');
 

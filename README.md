@@ -134,16 +134,24 @@ answer cards one-handed.
 
 ### Connect a phone
 
-Press **Connect a phone** in the header and pick how the phone reaches this computer:
+Press **Connect a phone** in the header. Nothing is reachable from other devices until you turn it on:
 
-- **Tailscale** (recommended): private and encrypted, works from anywhere. If Tailscale isn't
-  running here yet, the dialog walks you through installing it on both devices.
-- **This network only**: same Wi-Fi only, and the connection isn't encrypted, so use it only on
-  a network you trust.
+- **At the office, on the same Wi-Fi** (the default route): **Allow phones** starts answering on this
+  computer's network address (remembered in `listen`). Plain HTTP, so only on a network you trust.
+- **From anywhere, with a public link** (opt-in): set a password, then **Turn on the public link**. It
+  starts a free Cloudflare quick tunnel and gives an `https://….trycloudflare.com` address. It needs
+  Cloudflare's `cloudflared` program on this computer: **Install cloudflared** in the dialog downloads the
+  official release into `~/.local/bin` (no account, no admin rights; or install it yourself). Anyone
+  with the link reaches a login page; the password protects it, and 5 wrong tries lock logins for 15
+  minutes. The link changes, and is off, after every server restart. **Turn off** closes it at once.
+- **Tailscale** (private alternative): needs the Tailscale app on this computer *and* the phone.
 
-**Allow phones** starts answering on that address straight away (and remembers it in `listen`).
-Then scan the QR code with the phone's camera: it logs the phone in, with no token to type. Each
-code works once and expires after 5 minutes, so a photo of it is useless later.
+Then scan the QR code with the phone's camera: it logs the phone in, with no token to type. Each code
+works once and expires after 5 minutes. With a password set you can also just open the link and log in.
+
+**Who signed in** lists every device that logged in (browser, IP, public link or network, how: password,
+QR or token link, first and last visit) and every failed try. Behind the public link the IP is the
+caller's real address as reported by Cloudflare.
 
 ### Install as an app
 
