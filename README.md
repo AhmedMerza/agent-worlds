@@ -15,14 +15,14 @@ CLI in a real terminal.
   one is waiting for you. Rooms, timers and a "needs you" count make that visible at a glance.
 - **Answer everything from one inbox.** Permission requests, questions, errors and finished
   turns from every session, oldest first. Allow, deny, answer or review without switching windows.
-- **A real terminal underneath.** Every session is the real `claude` CLI in tmux, so skills,
+- **A real terminal underneath.** Every session is the real `claude` CLI in a real terminal, so skills,
   slash commands and your own keybindings all work. The GUI adds to the terminal, it does not replace it.
 
 ## Features
 
 ### Worlds and rooms
 
-A **world** is a named group of git repos (for example "Web" or "Mobile"). Each world gets a
+A **world** is a named group of folders: git repos, or any folder such as a workspace of repos (for example "Web" or "Mobile"). Each world gets a
 room, and each session stands in the zone that matches what it is doing:
 
 | Zone | Who is there |
@@ -35,8 +35,9 @@ Characters walk between zones when their state changes. Click a character (or it
 press `1`-`9`) to select it.
 
 Press `W` to create, rename, recolour, reorder or delete worlds, and to pick each world's repos
-with a folder browser. Nothing is fixed: a fresh install has no worlds, and sessions whose repo
-is in no world sit in an **Unsorted** room. Deleting a world never stops its sessions.
+with a folder browser. Nothing is fixed: a fresh install has no worlds, and sessions whose folder
+is in no world sit in an **Unsorted** room. A session joins the world whose folder holds it most
+closely, so `~/ws/repoX` beats `~/ws` beats `~`; a world that lists the repo itself wins. Deleting a world never stops its sessions.
 
 ![Creating a world and adding repos with the folder browser](docs/media/worlds.gif)
 
@@ -66,13 +67,17 @@ The list holds still while your pointer is over it, so a click never lands on a 
 
 ### Live terminal
 
-The panel under the rooms is the session's real terminal (xterm.js attached to its tmux
-session). Type to it directly; the catch-up box above it tells you where it stands.
+The panel under the rooms is the session's real terminal (xterm.js attached to the session).
+Press `T` or `Enter` (or click) to type into it; the panel is outlined and says "Typing into
+Claude" while it has the keyboard. The catch-up box above it tells you where it stands.
+
+Copying works from the terminal: what Claude Code or tmux copies reaches your clipboard, and
+`Shift`+drag (`Option`+drag on a Mac) selects text past tmux's mouse mode and copies it on release.
 
 ![Selecting a session, asking for a catch-up, then typing a slash command in the live terminal](docs/media/terminal.gif)
 
-Sessions that are not inside tmux still show up and their cards still work, but they have no
-live terminal (see [Sessions started outside tmux](#sessions-started-outside-tmux)).
+Sessions you started by hand outside tmux still show up and their cards still work, but they have
+no live terminal (see [Sessions started outside tmux](#sessions-started-outside-tmux)).
 
 ### Existing sessions and Resume
 
@@ -80,7 +85,7 @@ Agent Worlds also knows about Claude sessions you started before it, or outside 
 
 - **Recent sessions** (header button or `R`) lists sessions from `~/.claude/projects`, newest
   first, with the repo, your last prompt and how long ago. Search narrows the list.
-- **Resume here** runs `claude --resume <id>` in a new tmux session, in the session's original
+- **Resume here** runs `claude --resume <id>` in a new session, in the session's original
   folder, with its full conversation. If that session is still open in another terminal, you are
   asked first; **Stop it and resume here** quits that copy (it keeps the conversation) and then
   resumes, so two copies never write to one conversation.
@@ -98,8 +103,9 @@ Agent Worlds also knows about Claude sessions you started before it, or outside 
 
 ### Terminal and browser together
 
-Every session is a tmux session named `aw-<repo>-<id>`, so you can use it from a terminal as
-well as the browser, at the same time.
+With tmux installed, every session is a tmux session named `aw-<repo>-<id>`, so you can use it
+from a terminal as well as the browser, at the same time, and it keeps running when Agent Worlds
+restarts.
 
 ```sh
 bin/agent-worlds ls        # list Agent Worlds tmux sessions
@@ -111,6 +117,14 @@ of nesting. This is the way to use a terminal such as Ghostty. The panel also sh
 `tmux attach -t <name>` command with a copy button. The window size follows whichever client
 typed last.
 
+### Without tmux
+
+tmux is optional. Without it, sessions started from the app run inside Agent Worlds itself: the
+live terminal, replies and recent output all work, and every browser watching a session shares it.
+The terminal says "Runs without tmux". Such sessions end when Agent Worlds restarts or updates
+(you can resume them from Recent sessions), and you cannot open them from your own terminal.
+`bin/agent-worlds new` and `attach` still need tmux.
+
 ### Sessions started outside tmux
 
 A session you started by hand in a plain terminal (with the hooks installed) still shows up: its
@@ -119,8 +133,9 @@ it is view-only; answer its cards from the inbox, or in the terminal it runs in.
 
 ### Start sessions from the app
 
-**+ New session** in a room starts a session in one of that world's repos, optionally in a new
+**+ New session** in a room starts a session in one of that world's folders, optionally in a new
 git worktree and with an optional first task. The task field can stay empty for a blank session.
+In a folder that is not a git repo the session starts right there, with no worktree or branch option.
 
 ### Ultrawide and phone
 
@@ -162,10 +177,20 @@ Notifications (opt-in, header button) and a short sound per world tell you when 
 you while the tab is in the background. Phones only offer installation over **https** (or on
 localhost); see [Troubleshooting](#troubleshooting).
 
+### Updating
+
+When the code under `server/src` or `web/src` changes on disk (for example after `git pull`), the
+page shows "A new version of Agent Worlds is ready" with **Update now**. It rebuilds the web app if
+needed, checks the new server code loads, restarts the server and reloads the page. It needs the
+server started with `bin/agent-worlds start`, and it waits while a session is waiting on a
+permission prompt. Sessions in tmux keep running; sessions running without tmux end, and the page
+asks first (**Update anyway**).
+
 ## Requirements
 
 - Node.js 24 or newer (the server is TypeScript run directly by Node; there is no build step)
-- tmux, git, curl
+- git, curl
+- tmux (optional, recommended): keeps sessions running across restarts and lets you open them from your own terminal
 - [Claude Code](https://claude.com/claude-code) (`claude` on your PATH)
 - A C/C++ toolchain for `node-pty` if no prebuilt binary matches your platform
 
@@ -192,7 +217,7 @@ Click **+ New session** in a room, or from a shell:
 bin/agent-worlds new <worldId> ~/code/repo-a "fix the failing login test"
 ```
 
-This creates a tmux session `aw-<repo>-<id>` running `claude` in that folder. Find a world's
+This needs tmux. It creates a tmux session `aw-<repo>-<id>` running `claude` in that folder. Find a world's
 id in `~/.config/agent-worlds/config.json`.
 
 ## Sessions you start by hand
@@ -223,7 +248,7 @@ installed: when the server is not running it exits silently within about a secon
 
 ```mermaid
 flowchart LR
-  subgraph tmux["one tmux session per Claude"]
+  subgraph tmux["one tmux session per Claude (or a pty run by the server, without tmux)"]
     C["claude (the real CLI)"]
   end
   C -- "hook events" --> H["bin/aw-hook (curl)"]
@@ -232,7 +257,7 @@ flowchart LR
   B -- "Allow, answer, type" --> S
   S -. "held PermissionRequest answered" .-> H
   B <-- "WebSocket /pty (xterm.js)" --> S
-  S -- "node-pty runs tmux attach" --> C
+  S -- "node-pty runs tmux attach, or shares the server's own pty" --> C
 ```
 
 - **State** comes from Claude Code hooks. `aw-hook` posts each event to the server, which keeps
@@ -245,14 +270,16 @@ flowchart LR
 - **Questions** (`AskUserQuestion`) are answered through the same held `PermissionRequest`
   (`behavior: "allow"` with `updatedInput.answers`), which keeps the terminal question usable too.
 - **Typing** from the browser goes in with `tmux send-keys -l` (literal, never through a shell),
-  followed by Enter.
+  followed by Enter. Without tmux the server writes the text to the session's pty instead.
+- **Without tmux** the server starts `claude` itself in a pty and `aw-hook` sends
+  `AGENT_WORLDS_PTY` so each event lands on the right session.
 - **Catch-up** runs `claude -p --model haiku` on the transcript with `AGENT_WORLDS_DISABLE=1`,
   in restricted mode in an empty temp directory, at most two at a time.
 
 ## Keyboard shortcuts
 
 Press `?` in the app for this list. Shortcuts pause while you type in the terminal or a field; the terminal header says
-"Shortcuts paused" while it has focus.
+"Typing into Claude" and "shortcuts paused" while it has focus.
 
 | Key | Action |
 |---|---|
@@ -263,6 +290,7 @@ Press `?` in the app for this list. Shortcuts pause while you type in the termin
 | `C` | catch me up on the selected session |
 | `W` | open the Worlds panel |
 | `M` | mute or unmute the alert sound |
+| `T` or `Enter` | type into the selected session's terminal |
 | `Ctrl` + `]` | leave the terminal and get the shortcuts back (`Esc` still goes to Claude) |
 | `?` | show the shortcuts |
 | `Esc` | close the dialog or panel |
@@ -323,8 +351,8 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
   answer Claude's own prompt.
 - **A new session seems stuck.** Claude may be asking to trust the folder. The session shows as
   "starting" until its first event; answer the question in its terminal panel once.
-- **The terminal says the session is view-only.** The session is not running inside tmux. Cards
-  still work; start it in tmux (or from the app) for a live terminal.
+- **The terminal says the session is view-only.** You started it by hand in a terminal that is not
+  tmux. Cards still work; start it in tmux (or from the app) for a live terminal.
 - **No permission cards appear.** Your Claude default permission mode is `auto` or bypass, so
   Claude never asks. Pick "Ask before every action" under **Permissions** when you start a session
   to override it for that session. `acceptEdits` mode also gives no cards for file edits. Agent Worlds only
