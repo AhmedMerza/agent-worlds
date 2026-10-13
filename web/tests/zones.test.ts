@@ -59,14 +59,14 @@ describe('walking', () => {
   })
 })
 
-import { roomHeight } from '../src/zones'
+import { roomHeight, ROOM_H } from '../src/zones'
 describe('roomHeight', () => {
   it('grows with the busiest zone and is bounded', () => {
     const one = roomHeight([mk('a')])
     const eight = roomHeight(Array.from({ length: 8 }, (_, i) => mk('s' + i)))
     expect(eight).toBeGreaterThan(one)
     expect(roomHeight([])).toBeGreaterThanOrEqual(150)
-    expect(roomHeight(Array.from({ length: 30 }, (_, i) => mk('s' + i)))).toBeLessThanOrEqual(250)
+    expect(roomHeight(Array.from({ length: 30 }, (_, i) => mk('s' + i)))).toBeLessThanOrEqual(ROOM_H)
   })
 })
 
@@ -77,5 +77,12 @@ describe('walking sprites', () => {
     const before = at(400)
     pauseWalker(w, 300)
     expect(at(700)).toBeCloseTo(before)
+  })
+})
+
+import { look } from '../src/canvas'
+describe('look', () => {
+  it('gives every session a hair and skin colour, whatever its id hashes to', () => {
+    for (let i = 0; i < 500; i++) { const l = look('session-' + i); expect(l.hair).toMatch(/^#/); expect(l.skin).toMatch(/^#/); expect(l.shirt).toMatch(/^#/) }
   })
 })

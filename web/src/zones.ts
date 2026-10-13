@@ -2,13 +2,13 @@ import type { Session, SessionState } from './types'
 
 export type Zone = 'lounge' | 'desks' | 'help'
 export const ROOM_W = 480
-export const ROOM_H = 250
+export const ROOM_H = 300
 export const FLOOR_TOP = 48
 /** Horizontal extent of each zone in room coordinates. */
 export const ZONE_X: Record<Zone, [number, number]> = { lounge: [0, 120], desks: [120, 360], help: [360, 480] }
 const MAX_COLS: Record<Zone, number> = { lounge: 3, desks: 4, help: 3 }
 const MAX_ROWS: Record<Zone, number> = { lounge: 3, desks: 2, help: 3 }
-const ROW_H: Record<Zone, number> = { lounge: 66, desks: 98, help: 66 }
+const ROW_H: Record<Zone, number> = { lounge: 80, desks: 112, help: 80 }
 const FIRST_TOP: Record<Zone, number> = { lounge: 76, desks: 68, help: 76 }
 export const WALK_MS = 1000
 
@@ -66,7 +66,7 @@ export function roomHeight(sessions: Session[]): number {
     const n = Math.min(z[zone].length, capacity(zone))
     if (!n) continue
     const rows = Math.ceil(n / Math.min(n, MAX_COLS[zone]))
-    const bottom = FIRST_TOP[zone] + (rows - 1) * ROW_H[zone] + (zone === 'desks' ? 118 : 56)
+    const bottom = FIRST_TOP[zone] + (rows - 1) * ROW_H[zone] + (zone === 'desks' ? 124 : 66)
     need = Math.max(need, bottom)
   }
   return Math.min(ROOM_H, Math.max(150, need + 8))
