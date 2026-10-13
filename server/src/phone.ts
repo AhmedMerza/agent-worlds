@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import { execFile } from 'node:child_process';
 
 export type Address = { address: string; kind: 'tailscale' | 'lan'; iface: string };
 
@@ -40,4 +41,11 @@ export class Pairing {
     this.codes.delete(code);
     return exp !== undefined && exp > this.now();
   }
+}
+
+/** Which host firewall is running (no admin rights needed to ask). Its rules usually aren't readable, so whether the
+ * port is open stays unknown; a phone that signs in over the network is the real proof. */
+export function detectFirewall(): Promise<'firewalld' | 'ufw' | null> {
+  const active = (unit: string) => new Promise<boolean>((ok) => execFile('systemctl', ['is-active', '--quiet', unit], { timeout: 3000 }, (err) => ok(!err)));
+  return active('firewalld').then(async (f) => (f ? 'firewalld' : (await active('ufw')) ? 'ufw' : null));
 }

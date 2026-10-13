@@ -33,9 +33,9 @@ test('Pairing: a code works once and expires', () => {
   assert.equal(p.redeem('nope'), false);
 });
 
-/** GET with an explicit Host, returning status and set-cookie. */
+/** GET with an explicit Host, returning status and set-cookie. Sent from 127.0.0.3 so it counts as another device. */
 const getRaw = (host: string, port: number, path: string) => new Promise<{ status: number; cookie: string | undefined }>((ok, fail) => {
-  const r = request({ host, port, path, headers: { host: `${host}:${port}` } }, (res) => { res.resume(); ok({ status: res.statusCode!, cookie: res.headers['set-cookie']?.[0] }); });
+  const r = request({ host, port, path, localAddress: '127.0.0.3', headers: { host: `${host}:${port}` } }, (res) => { res.resume(); ok({ status: res.statusCode!, cookie: res.headers['set-cookie']?.[0] }); });
   r.on('error', fail);
   r.end();
 });
@@ -44,7 +44,7 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
   const home = tmp();
   const cfg = { ...parseConfig({}), port: 0 };
   // 127.0.0.2 stands in for a LAN address: Linux answers on all of 127/8.
-  const app = startServer(cfg, TOKEN, { home, procRoot: join(home, 'none'), cloudflared: null, phoneAddresses: () => [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1' }] });
+  const app = startServer(cfg, TOKEN, { home, procRoot: join(home, 'none'), cloudflared: null, detectFirewall: async () => 'firewalld', phoneAddresses: () => [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1' }] });
   await app.listen();
   const port = (app.server.address() as { port: number }).port;
   const H = { 'x-aw-token': TOKEN, 'content-type': 'application/json' };
@@ -53,7 +53,7 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
     return { status: r.status, body: await r.json() as any };
   };
   try {
-    assert.deepEqual((await call('/api/phone')).body, { port, addresses: [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1', allowed: false }], passwordSet: false, cloudflared: false, canInstall: true, tunnel: null });
+    assert.deepEqual((await call('/api/phone')).body, { port, addresses: [{ address: '127.0.0.2', kind: 'lan', iface: 'eno1', allowed: false }], firewall: 'firewalld', lanReached: false, passwordSet: false, cloudflared: false, canInstall: true, tunnel: null });
     assert.equal((await call('/api/phone/pair', { address: '127.0.0.2' })).status, 400, 'no code before phones are allowed');
     assert.equal((await call('/api/phone/allow', { address: '8.8.8.8', allow: true })).status, 400, 'only our own addresses');
 
@@ -66,6 +66,7 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
     assert.equal(first.status, 302);
     assert.match(first.cookie!, new RegExp(`^aw_token=${TOKEN};.*HttpOnly`));
     assert.equal((await getRaw('127.0.0.2', port, path)).status, 401, 'the code is single use');
+    assert.equal((await call('/api/phone')).body.lanReached, true, 'a phone got through over the network');
 
     assert.equal((await call('/api/phone/allow', { address: '127.0.0.2', allow: false })).status, 200);
     assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).listen, ['127.0.0.1']);

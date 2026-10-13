@@ -32,6 +32,11 @@ const qr = computed(() => {
   data.forEach((row, y) => row.forEach((on, x) => { if (on) d += `M${x} ${y}h1v1h-1z` }))
   return { size: data.length, d }
 })
+/** The command that opens the server's port in the running firewall (needs the user's admin password). */
+const openPort = computed(() => !info.value?.firewall ? null : info.value.firewall === 'ufw'
+  ? `sudo ufw allow ${info.value.port}/tcp`
+  : `sudo firewall-cmd --add-port=${info.value.port}/tcp --permanent && sudo firewall-cmd --reload`)
+function copy(text: string) { navigator.clipboard?.writeText(text).catch(() => {}) }
 const CLOUDFLARED = 'mkdir -p ~/.local/bin && curl -fL -o ~/.local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x ~/.local/bin/cloudflared'
 
 async function load() {
@@ -106,6 +111,31 @@ onMounted(load)
             </template>
             <button v-else class="btn primary" :disabled="busy" @click="setAllowed(a.address, true)">Allow phones on {{ a.address }} ({{ a.iface }})</button>
           </div>
+        <div v-if="code && qr && lan.some((a) => a.address === code!.address)" class="qr" role="group" aria-label="Login code for your phone">
+          <svg :viewBox="`0 0 ${qr.size} ${qr.size}`" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect :width="qr.size" :height="qr.size" fill="#fff" /><path :d="qr.d" fill="#000" /></svg>
+          <div>
+            <template v-if="left > 0">
+              <p><b>Scan this with your phone's camera.</b></p>
+              <p class="why">Works once, for the next {{ leftText }}. Then add it to your home screen to open it like an app.</p>
+              <p class="soon">Or open on the phone: <code>{{ code.url }}</code></p>
+            </template>
+            <template v-else>
+              <p><b>This code has expired.</b></p>
+              <button class="btn primary" :disabled="busy" @click="showCode(code.address)">New code</button>
+            </template>
+          </div>
+        </div>
+          <template v-if="lan.some((a) => a.allowed)">
+            <p v-if="info.lanReached" class="ok-note">✓ A phone has connected over Wi-Fi.</p>
+            <div v-else class="hint">
+              <p><b>Phone says "can't be reached"?</b></p>
+              <template v-if="openPort">
+                <p class="why">This computer's firewall ({{ info.firewall }}) is on and probably blocks it. Open the port once, in a terminal on this computer (it asks for your password):</p>
+                <div class="cmd-row"><code class="cmd">{{ openPort }}</code><button class="btn" @click="copy(openPort)">Copy</button></div>
+              </template>
+              <p class="why">Still nothing? Some Wi-Fi networks keep devices apart (guest networks often do). Use the public link below instead: it works on any network.</p>
+            </div>
+          </template>
         </section>
 
         <section class="route">
@@ -147,9 +177,7 @@ onMounted(load)
               <p v-if="!info.passwordSet" class="soon">Set a password first.</p>
             </template>
           </div>
-        </section>
-
-        <div v-if="code && qr" class="qr" role="group" aria-label="Login code for your phone">
+        <div v-if="code && qr && code.address === 'tunnel'" class="qr" role="group" aria-label="Login code for your phone">
           <svg :viewBox="`0 0 ${qr.size} ${qr.size}`" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect :width="qr.size" :height="qr.size" fill="#fff" /><path :d="qr.d" fill="#000" /></svg>
           <div>
             <template v-if="left > 0">
@@ -163,6 +191,8 @@ onMounted(load)
             </template>
           </div>
         </div>
+        </section>
+
 
         <details class="route">
           <summary>Prefer a private network? Use Tailscale</summary>
@@ -180,6 +210,20 @@ onMounted(load)
             <p class="why">Private and encrypted, but it needs the free Tailscale app on <b>both</b> this computer and your phone, signed in with the same account: <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>. Then press <b>Check again</b>.</p>
             <button class="btn" :disabled="busy" @click="load">Check again</button>
           </template>
+        <div v-if="code && qr && tailscale.some((a) => a.address === code!.address)" class="qr" role="group" aria-label="Login code for your phone">
+          <svg :viewBox="`0 0 ${qr.size} ${qr.size}`" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect :width="qr.size" :height="qr.size" fill="#fff" /><path :d="qr.d" fill="#000" /></svg>
+          <div>
+            <template v-if="left > 0">
+              <p><b>Scan this with your phone's camera.</b></p>
+              <p class="why">Works once, for the next {{ leftText }}. Then add it to your home screen to open it like an app.</p>
+              <p class="soon">Or open on the phone: <code>{{ code.url }}</code></p>
+            </template>
+            <template v-else>
+              <p><b>This code has expired.</b></p>
+              <button class="btn primary" :disabled="busy" @click="showCode(code.address)">New code</button>
+            </template>
+          </div>
+        </div>
         </details>
 
         <section v-if="access" class="route">

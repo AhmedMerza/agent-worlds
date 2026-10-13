@@ -138,6 +138,8 @@ Press **Connect a phone** in the header. Nothing is reachable from other devices
 
 - **At the office, on the same Wi-Fi** (the default route): **Allow phones** starts answering on this
   computer's network address (remembered in `listen`). Plain HTTP, so only on a network you trust.
+  If the phone says "can't be reached", the computer's firewall usually blocks the port: the dialog
+  detects firewalld or ufw and shows the one command to open it, until a phone gets through.
 - **From anywhere, with a public link** (opt-in): set a password, then **Turn on the public link**. It
   starts a free Cloudflare quick tunnel and gives an `https://….trycloudflare.com` address. It needs
   Cloudflare's `cloudflared` program on this computer: **Install cloudflared** in the dialog downloads the

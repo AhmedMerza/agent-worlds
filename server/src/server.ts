@@ -10,7 +10,7 @@ import { Stats } from './rules.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
-import { phoneAddresses, Pairing, type Address } from './phone.ts';
+import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { readHead } from './transcript.ts';
@@ -36,6 +36,7 @@ type Opts = {
   cloudflared?: string | null;
   /** Where to download cloudflared from (tests serve a fake one). */
   installCloudflared?: () => Promise<string>;
+  detectFirewall?: () => Promise<'firewalld' | 'ufw' | null>;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -371,7 +372,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
     if (url.pathname === '/api/phone' && method === 'GET') {
-      return send(res, 200, { port: port(), addresses: addresses().map((a) => ({ ...a, allowed: cfg.listen.includes(a.address) })), passwordSet: password.isSet(), cloudflared: !!cloudflared(), canInstall: !!opts.installCloudflared || !!cloudflaredAsset(), tunnel: tunnel.url });
+      return send(res, 200, { port: port(), addresses: addresses().map((a) => ({ ...a, allowed: cfg.listen.includes(a.address) })), firewall: await (opts.detectFirewall ?? detectFirewall)(), lanReached: access.entries.some((e) => e.route === 'network'), passwordSet: password.isSet(), cloudflared: !!cloudflared(), canInstall: !!opts.installCloudflared || !!cloudflaredAsset(), tunnel: tunnel.url });
     }
     if (url.pathname === '/api/access' && method === 'GET') {
       return send(res, 200, { devices: access.devices(), entries: access.entries.slice(0, 100), you: cookie(req, 'aw_dev') });

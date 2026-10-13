@@ -317,3 +317,8 @@ pre.diff{max-height:320px;overflow:auto}
 .dialog.phone .access li{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline;border-bottom:1px dashed var(--line);padding-bottom:4px}
 .dialog.phone .access li.bad b{color:var(--err)}
 .dialog.phone details.manual summary{font-weight:normal;font-size:13px;color:var(--muted)}
+.dialog.phone .hint{border:1px solid var(--wait);border-radius:6px;padding:10px 12px;width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:6px}
+.dialog.phone .hint p{margin:0}
+.dialog.phone .cmd-row{display:flex;gap:8px;align-items:center}
+.dialog.phone .cmd-row .cmd{flex:1}
+.dialog.phone .ok-note{margin:0;color:var(--ok);font-size:13.5px}
