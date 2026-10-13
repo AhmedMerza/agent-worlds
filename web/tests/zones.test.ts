@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assignZones, zoneOf, slotPos, walkPos, retarget, capacity, ZONE_X, WALK_MS } from '../src/zones'
+import { assignZones, zoneOf, slotPos, walkPos, retarget, capacity, ZONE_X, WALK_MS, pauseWalker } from '../src/zones'
 import { mk, perm } from './helpers'
 
 describe('zones', () => {
@@ -67,5 +67,15 @@ describe('roomHeight', () => {
     expect(eight).toBeGreaterThan(one)
     expect(roomHeight([])).toBeGreaterThanOrEqual(150)
     expect(roomHeight(Array.from({ length: 30 }, (_, i) => mk('s' + i)))).toBeLessThanOrEqual(250)
+  })
+})
+
+describe('walking sprites', () => {
+  it('a held walk resumes where it stopped', () => {
+    const w = { from: { x: 0, top: 0 }, to: { x: 100, top: 0 }, start: 0 }
+    const at = (t: number) => walkPos(w.from, w.to, t - w.start, false).x
+    const before = at(400)
+    pauseWalker(w, 300)
+    expect(at(700)).toBeCloseTo(before)
   })
 })

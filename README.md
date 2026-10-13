@@ -345,15 +345,31 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
 
 ## Development
 
+From the repo root:
+
 ```sh
-cd server && node --test             # server unit and HTTP tests
-cd web && npm test                   # web unit tests (vitest)
-cd web && npm run build              # type-check and build the UI into web/dist
-cd web && npm run mock               # fake server on :4322 (random state changes)
-cd web && npm run dev                # Vite on :5190, proxying to the mock
+npm run install:all                  # npm ci in server/ and web/
+npm test                             # server + web tests
+npm run typecheck                    # tsc (server) and vue-tsc (web)
+npm run build                        # type-check and build the UI into web/dist
+```
+
+Or per package:
+
+```sh
+npm --prefix server test             # server unit and HTTP tests (isolated tmux and home)
+npm --prefix server run typecheck    # tsc --noEmit
+npm --prefix web test                # web unit tests (vitest)
+npm --prefix web run build           # type-check and build the UI into web/dist
+npm --prefix web run mock            # fake server on :4322 (random state changes)
+npm --prefix web run dev             # Vite on :5190, proxying to the mock
 ```
 
 The mock server (`web/mock/server.mjs`) is what the media above was recorded from. Useful
 switches: `MOCK_DEMO=1` (a fixed two-world scenario driven by `POST /api/demo/ask` and
 `/api/demo/done`), `MOCK_DEMO=worlds` (the same sessions with no worlds yet), `MOCK_EMPTY=1`
 (no worlds), `MOCK_NOTICK=1` (no random state changes) and `MOCK_ECHO=1` (plain echo terminal).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

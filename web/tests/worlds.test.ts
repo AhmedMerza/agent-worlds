@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { applyMessage, newState } from '../src/store'
-import { breadcrumbs, cleanPath, visibleEntries } from '../src/fsbrowser'
+import { describe, expect, it, vi } from 'vitest'
+import { applyMessage, newState, moveRepo, state } from '../src/store'
+import { breadcrumbs, cleanPath, visibleEntries, moveRepoPatches, repoStatus } from '../src/fsbrowser'
 import { groupSessions, moveId, nextColor, withRepo, PALETTE, routeKey } from '../src/logic'
 import { mk } from './helpers'
 
@@ -61,5 +61,33 @@ describe('world helpers', () => {
     const k = { ctrl: false, meta: false, alt: false, typing: false, overlayOpen: false }
     expect(routeKey({ ...k, key: 'w' })).toEqual({ kind: 'worlds' })
     expect(routeKey({ ...k, key: 'W', typing: true })).toBeNull()
+  })
+})
+
+describe('folder picker owners', () => {
+  const worlds = [{ id: 'a', name: 'Alpha', color: '#1', repos: ['/r/one', '/r/two'] }, { id: 'b', name: 'Beta', color: '#2', repos: ['/r/three'] }]
+  it('reports free, added and owned elsewhere', () => {
+    expect(repoStatus('/r/new', 'a', worlds)).toEqual({ kind: 'free' })
+    expect(repoStatus('/r/one', 'a', worlds)).toEqual({ kind: 'added' })
+    expect(repoStatus('/r/three', 'a', worlds)).toEqual({ kind: 'elsewhere', worldId: 'b', worldName: 'Beta' })
+  })
+  it('a move removes from the old world, then adds to the new one', () => {
+    expect(moveRepoPatches(worlds, '/r/three', 'b', 'a')).toEqual([{ id: 'b', repos: [] }, { id: 'a', repos: ['/r/one', '/r/two', '/r/three'] }])
+    expect(moveRepoPatches(worlds, '/r/three', 'x', 'a')).toEqual([])
+  })
+  it('moveRepo patches both worlds in order and restores the old one if the add fails', async () => {
+    state.worlds = worlds
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: { body: string }) => {
+      calls.push(`${url} ${init.body}`)
+      const ok = calls.length !== 2
+      return { ok, status: ok ? 200 : 400, json: async () => (ok ? {} : { error: 'nope' }) }
+    }))
+    expect(await moveRepo('/r/three', 'b', 'a')).toBe('nope')
+    expect(calls).toHaveLength(3)
+    expect(calls[0]).toContain('/api/worlds/b')
+    expect(calls[1]).toContain('/api/worlds/a')
+    expect(calls[2]).toBe('/api/worlds/b {"repos":["/r/three"]}')
+    vi.unstubAllGlobals()
   })
 })
