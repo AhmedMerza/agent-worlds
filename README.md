@@ -81,8 +81,9 @@ Agent Worlds also knows about Claude sessions you started before it, or outside 
 - **Recent sessions** (header button or `R`) lists sessions from `~/.claude/projects`, newest
   first, with the repo, your last prompt and how long ago. Search narrows the list.
 - **Resume here** runs `claude --resume <id>` in a new tmux session, in the session's original
-  folder, with its full conversation. If that session still looks open somewhere else, you are
-  asked first; **Resume anyway** goes ahead.
+  folder, with its full conversation. If that session is still open in another terminal, you are
+  asked first; **Stop it and resume here** quits that copy (it keeps the conversation) and then
+  resumes, so two copies never write to one conversation.
 - Claudes running in plain terminals appear as faded **ghosts** with a dashed outline, in their
   world's lounge (or Unsorted). Each room folds them into one chip, "N other Claude sessions on
   this computer"; open it, select one, quit that terminal's Claude, then **Move into Agent
@@ -130,6 +131,19 @@ answer cards one-handed.
 ![Ultrawide layout: rooms, terminal and inbox side by side](docs/media/ultrawide.png)
 
 <img src="docs/media/phone.png" alt="Phone layout with the inbox tab open" width="280">
+
+### Connect a phone
+
+Press **Connect a phone** in the header and pick how the phone reaches this computer:
+
+- **Tailscale** (recommended): private and encrypted, works from anywhere. If Tailscale isn't
+  running here yet, the dialog walks you through installing it on both devices.
+- **This network only**: same Wi-Fi only, and the connection isn't encrypted, so use it only on
+  a network you trust.
+
+**Allow phones** starts answering on that address straight away (and remembers it in `listen`).
+Then scan the QR code with the phone's camera: it logs the phone in, with no token to type. Each
+code works once and expires after 5 minutes, so a photo of it is useless later.
 
 ### Install as an app
 
@@ -274,8 +288,9 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
 
 - The server binds `127.0.0.1` by default. **Do not expose it on a network**: the terminal view
   is a full shell as your user, and allowing a permission runs commands on your machine. If you
-  add an address to `listen` for phone use, make it one only you can reach (a private VPN such
-  as Tailscale), never a LAN or public address. Anyone holding the token on that network has your shell.
+  add an address to `listen` for phone use (**Connect a phone** does this for you), prefer one only
+  you can reach (a private VPN such as Tailscale). A LAN address is plain HTTP: anyone on that
+  network who can watch the traffic can take the login cookie, and with it your shell.
 - **Why a token on localhost?** Anyone else logged in to the same machine can reach `127.0.0.1`,
   and the terminal is a shell as you.
 - Every HTTP route and both websockets require the token (cookie `aw_token` or header

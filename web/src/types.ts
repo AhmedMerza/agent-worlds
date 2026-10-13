@@ -72,3 +72,6 @@ export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypa
 
 export interface FsEntry { name: string; path: string; isRepo: boolean }
 export interface FsListing { path: string; parent: string | null; entries: FsEntry[] }
+
+/** GET /api/phone: addresses a phone could use, and whether phones are allowed on each. */
+export type PhoneInfo = { port: number; addresses: { address: string; kind: 'tailscale' | 'lan'; iface: string; allowed: boolean }[] }

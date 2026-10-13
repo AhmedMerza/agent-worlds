@@ -69,17 +69,8 @@ export class Worlds {
 
   /** Write worlds into config.json atomically, keeping every other key. */
   private save(worlds: World[]): Result | null {
-    let raw: Record<string, unknown> = {};
-    if (existsSync(this.file)) {
-      try { raw = JSON.parse(readFileSync(this.file, 'utf8')); } catch { return [500, { error: `${this.file} is not valid JSON; not changing it` }]; }
-    }
-    raw.worlds = worlds;
-    try {
-      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
-      const tmp = `${this.file}.${process.pid}.tmp`;
-      writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', { mode: 0o600 });
-      renameSync(tmp, this.file);
-    } catch (e) { return [500, { error: `cannot save config: ${(e as Error).message}` }]; }
+    const err = saveConfigKey(this.file, 'worlds', worlds);
+    if (err) return [500, { error: err }];
     this.cfg.worlds = worlds;
     return null;
   }
@@ -167,3 +158,19 @@ export class Worlds {
 }
 
 const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+
+/** Set one top-level key of config.json atomically, keeping every other key. Returns an error message or null. */
+export function saveConfigKey(file: string, key: string, value: unknown): string | null {
+  let raw: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    try { raw = JSON.parse(readFileSync(file, 'utf8')); } catch { return `${file} is not valid JSON; not changing it`; }
+  }
+  raw[key] = value;
+  try {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', { mode: 0o600 });
+    renameSync(tmp, file);
+  } catch (e) { return `cannot save config: ${(e as Error).message}`; }
+  return null;
+}

@@ -57,8 +57,8 @@ defineExpose({ escape })
 <template>
   <div class="overlay" @click.self="emit('close')">
     <div ref="box" class="dialog worlds" role="dialog" aria-modal="true" aria-label="Worlds" tabindex="-1">
-      <h2>Worlds</h2>
-      <p class="why">A world is a named group of repos. Sessions in those repos show up in its room.</p>
+      <h2>Manage worlds</h2>
+      <p class="why">A world is a named group of repos. Sessions in those repos show up in its room. Rename, recolour, reorder or delete each one here.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
 
       <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
@@ -67,8 +67,9 @@ defineExpose({ escape })
         <p v-if="!state.worlds.length" class="why">No worlds yet. Create one below.</p>
         <ul class="wlist">
           <li v-for="(w, i) in state.worlds" :key="w.id" class="winfo" :style="{ '--tint': w.color }">
+            <label class="soon" :for="`wname-${w.id}`">Name (click to rename)</label>
             <div class="wrow">
-              <input class="reply-in" :value="w.name" :aria-label="`Name of ${w.name}`" @change="rename(w, ($event.target as HTMLInputElement).value)" @keydown.enter="($event.target as HTMLInputElement).blur()">
+              <input :id="`wname-${w.id}`" class="reply-in wname" :value="w.name" :aria-label="`Name of ${w.name}`" @change="rename(w, ($event.target as HTMLInputElement).value)" @keydown.enter="($event.target as HTMLInputElement).blur()">
               <button class="btn" :disabled="i === 0" :aria-label="`Move ${w.name} up`" @click="move(w.id, -1)">↑</button>
               <button class="btn" :disabled="i === state.worlds.length - 1" :aria-label="`Move ${w.name} down`" @click="move(w.id, 1)">↓</button>
             </div>

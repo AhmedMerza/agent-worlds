@@ -7,6 +7,7 @@ import TerminalPanel from './components/TerminalPanel.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import WorldsPanel from './components/WorldsPanel.vue'
+import PhoneDialog from './components/PhoneDialog.vue'
 import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
@@ -49,7 +50,7 @@ const count = (st: string) => sessionList.value.filter((s) => s.state === st).le
 function onKey(e: KeyboardEvent) {
   const a = routeKey({
     key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
-    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.putSession !== null,
+    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null,
   })
   if (!a) return
   e.preventDefault()
@@ -63,7 +64,7 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
   else if (a.kind === 'mute') onMute()
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return
-  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.putSession = null }
+  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.phoneOpen = false; ui.putSession = null }
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -98,10 +99,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
           <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All worlds</button>
           <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
         </nav>
-        <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Worlds</button>
+        <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Manage worlds</button>
         <button class="hdr-btn" @click="ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
         <button class="hdr-btn toggle" :aria-pressed="!prefs.muted" title="Sound for new requests (M)" @click="onMute"><i aria-hidden="true" />Sound {{ prefs.muted ? 'off' : 'on' }}</button>
         <button v-if="notifySupported" class="hdr-btn toggle" :aria-pressed="prefs.notify" @click="onNotify"><i aria-hidden="true" />Notifications {{ prefs.notify ? 'on' : 'off' }}</button>
+        <button class="hdr-btn" @click="ui.phoneOpen = true">Connect a phone</button>
         <button class="hdr-btn" aria-label="Keyboard shortcuts" @click="help = true"><kbd>?</kbd> Shortcuts</button>
       </div>
     </header>
@@ -129,6 +131,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
     </div>
     <HelpOverlay v-if="help" @close="help = false" />
     <WorldsPanel v-if="ui.worldsOpen" ref="worldsPanel" @close="ui.worldsOpen = false" />
+    <PhoneDialog v-if="ui.phoneOpen" @close="ui.phoneOpen = false" />
     <PutInWorldDialog v-if="ui.putSession" :session-id="ui.putSession" @close="ui.putSession = null" @open-worlds="ui.worldsOpen = true" />
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
     <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" @close="newTaskWorld = null" />
