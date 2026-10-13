@@ -92,14 +92,14 @@ const onMove = (e: MouseEvent) => { const h = at(e); hoverId.value = h?.id ?? nu
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span>
+        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ s.repoName }} <span class="st">{{ LABEL[s.state] }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
         <span class="dot ghost" />{{ ghostChipText(split.ghosts.length) }} <span class="st">{{ ghostsOpen ? 'Hide' : 'Show' }}</span>
       </button>
       <template v-if="ghostsOpen">
         <button v-for="s in split.ghosts" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="select(s.id)">
-          <span class="dot ghost" />{{ s.repoName }} <span class="st">plain terminal</span>
+          <span class="dot ghost" />{{ s.repoName }} <span class="st chip-task" :title="s.task ?? undefined">{{ s.task ?? 'plain terminal' }}</span>
         </button>
       </template>
     </div>

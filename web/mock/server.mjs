@@ -8,6 +8,7 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const PORT = Number(process.env.MOCK_PORT || 4322)
+let phoneAllowed = false
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist')
 const MIN = 60000
 const now = () => Date.now()
@@ -160,12 +161,16 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
   if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
+  // Phone: one made-up LAN address, no Tailscale; the QR link points nowhere real.
+  if (req.method === 'GET' && url.pathname === '/api/phone') return json(200, { port: PORT, addresses: [{ address: '192.168.1.20', kind: 'lan', iface: 'wlan0', allowed: phoneAllowed }] })
+  if (req.method === 'POST' && url.pathname === '/api/phone/allow') { phoneAllowed = (await readBody(req)).allow === true; return json(200, { ok: true }) }
+  if (req.method === 'POST' && url.pathname === '/api/phone/pair') return phoneAllowed ? json(200, { url: `http://192.168.1.20:${PORT}/pair/demo-${Date.now().toString(36)}`, expiresAt: Date.now() + 300_000 }) : json(400, { error: 'phones are not allowed on that address' })
   if (req.method === 'POST' && url.pathname === '/api/sessions/resume') {
     const b = await readBody(req)
     console.log('resume', JSON.stringify(b))
     const h = history.find((x) => x.sessionId === b.sessionId)
     if (!h) return json(404, { error: 'No transcript for that session.' })
-    if (h.running && !b.force) return json(409, { error: 'that session is still running', pid: unmanaged.find((u) => u.sessionId === h.sessionId)?.pid ?? null })
+    if (h.running && !b.force && !b.stop) return json(409, { error: 'that session is still running', pid: unmanaged.find((u) => u.sessionId === h.sessionId)?.pid ?? null })
     unmanaged = unmanaged.filter((u) => u.sessionId !== h.sessionId); pushUnmanaged()
     h.running = true; h.managed = true
     const id = h.sessionId, tmux = `aw-${id}`

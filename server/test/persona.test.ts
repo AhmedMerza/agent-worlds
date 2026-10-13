@@ -194,3 +194,37 @@ test('permissionMode: argv, validation on both endpoints, /api/claude-defaults',
     assert.deepEqual(await (await fetch(base + '/api/claude-defaults', { headers: h })).json(), { permissionMode: null });
   } finally { await app.close(); }
 });
+
+test('workDirOf: edited files and cd/-C git commits; nothing else', async () => {
+  const { workDirOf } = await import('../src/store.ts');
+  assert.equal(workDirOf('Edit', { file_path: '/w/other/src/a.ts' }), '/w/other/src');
+  assert.equal(workDirOf('Bash', { command: 'cd /w/other-wt && git add . && git commit -m x' }), '/w/other-wt');
+  assert.equal(workDirOf('Bash', { command: 'git -C "/w/other wt" commit -m x' }), null, 'quoted paths with spaces are skipped, not mangled');
+  assert.equal(workDirOf('Bash', { command: 'git -C /w/o commit -m x' }), '/w/o');
+  assert.equal(workDirOf('Bash', { command: 'cd /w/other && ls' }), null, 'looking is not working there');
+  assert.equal(workDirOf('Read', { file_path: '/w/other/a.ts' }), null);
+});
+
+test('review follows the worktree a session committed in, with its branch', async () => {
+  const main = gitRepo();
+  const wt = join(tmp(), 'wt');
+  git(main, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
+  writeFileSync(join(main, 'unrelated.txt'), 'someone else\n'); // dirty main checkout: not this session's work
+  const store = new Store(parseConfig({}), {
+    repoInfo, branchOf: async () => 'main', tmuxSessionOf: async () => null, clientsConnected: () => false, holdMs: 1000,
+    stats: { get: () => 0, inc: () => 1 }, onEvent: (s, e) => ins.onEvent(s, e),
+  }, () => {});
+  const ins = new Insights(store, 'unused', { summarise: async () => ({ did: '', needs: '' }) });
+  await store.handle({ ...ev.prompt, cwd: main }, null);
+  writeFileSync(join(wt, 'b.txt'), 'b\n'); git(wt, 'add', '.'); git(wt, 'commit', '-q', '-m', 'journey screen');
+  await store.handle({ ...ev.postBash, cwd: main, tool_input: { command: `cd ${wt} && git commit -m 'journey screen'` } }, null);
+  await waitFor(() => store.sessions.get('sess-1')!.reviewTop === wt);
+  await store.handle({ ...ev.stop, cwd: main }, null);
+  const s = store.sessions.get('sess-1')! as any;
+  await waitFor(() => !!s.card?.review);
+  assert.equal(s.card.review.dir, wt);
+  assert.equal(s.card.review.branch, 'feat/x');
+  assert.equal(s.card.review.elsewhere, true);
+  assert.deepEqual(s.card.review.commits.map((c: any) => c.subject), ['journey screen']);
+  assert.ok(!s.card.review.uncommitted.some((f: any) => f.path === 'unrelated.txt'), 'the main checkout is not reviewed');
+});

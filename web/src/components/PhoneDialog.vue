@@ -14,6 +14,8 @@ const now = ref(Date.now())
 const tick = setInterval(() => { now.value = Date.now() }, 1000)
 onUnmounted(() => clearInterval(tick))
 
+/** Opened from the phone itself (not this computer): a QR to scan is useless here, keeping the page is what matters. */
+const elsewhere = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
 const tailscale = computed(() => info.value?.addresses.filter((a) => a.kind === 'tailscale') ?? [])
 const lan = computed(() => info.value?.addresses.filter((a) => a.kind === 'lan') ?? [])
 const left = computed(() => Math.max(0, Math.round(((code.value?.expiresAt ?? 0) - now.value) / 1000)))
@@ -56,6 +58,10 @@ onMounted(load)
   <div class="overlay" @click.self="emit('close')">
     <div class="dialog phone" role="dialog" aria-modal="true" aria-label="Connect a phone">
       <h2>Connect a phone</h2>
+      <div v-if="elsewhere" class="here">
+        <p><b>You're already connected on this device.</b></p>
+        <p class="why">To come back later, add this page to your home screen: in the browser menu, choose <b>Add to Home Screen</b>. It stays logged in for a year; then scan a new code on your computer.</p>
+      </div>
       <p class="why">Answer requests from your phone. Scan a code with the phone's camera and it is logged in, no token to type.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
       <p v-if="!info && !error" class="why">Loading…</p>

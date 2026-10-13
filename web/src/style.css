@@ -184,21 +184,20 @@ pre.diff{max-height:320px;overflow:auto}
 
 /* Ultrawide: rooms | terminal (full height, sticky) | inbox + detail */
 @media (min-width:2200px){
-  .layout{grid-template-columns:minmax(0,1fr) clamp(700px,35vw,900px) 420px}
+  .layout{grid-template-columns:clamp(560px,30vw,900px) minmax(0,1fr) 420px}
   .main-col{display:contents}
   .term{position:sticky;top:16px;height:calc(100vh - 32px);align-self:start}
   .term-body{flex:1;height:auto;min-height:0}
   aside{position:static}
 }
 @media (min-width:3400px){
-  .layout{grid-template-columns:minmax(0,1fr) clamp(900px,30vw,1100px) 440px}
+  .layout{grid-template-columns:clamp(700px,26vw,1000px) minmax(0,1fr) 440px}
 }
 
 @media (min-width:2200px){
   .worlds{align-content:start}
 }
-@media (min-width:2200px){.worlds{grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr))}}
-@media (min-width:3400px){.worlds{grid-template-columns:repeat(auto-fit,minmax(min(100%,700px),1fr))}}
+@media (min-width:2200px){.worlds{grid-template-columns:minmax(0,1fr)}}
 
 /* import: ghosts, recent sessions, resume */
 .dot.starting{background:var(--idle);box-shadow:0 0 0 2px rgba(138,146,160,.35)} .pill.starting{background:var(--idle)}
@@ -292,7 +291,7 @@ pre.diff{max-height:320px;overflow:auto}
   .ctrl.menu .hdr-btn{text-align:left;min-height:40px}
   .ctrl.menu .hdr-btn kbd{display:inline}
 }
-@media (min-width:2200px){.worlds{align-content:stretch;grid-auto-rows:minmax(max-content,1fr)}}
+@media (min-width:2200px){.worlds{align-content:start;grid-auto-rows:max-content}}
 .dialog.phone{max-width:560px}
 .dialog.phone .route{border-top:1px dashed var(--line);padding-top:12px;margin-top:12px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .dialog.phone h3{font-size:15px;margin:0}
@@ -306,3 +305,7 @@ pre.diff{max-height:320px;overflow:auto}
 .dialog.phone .qr code{word-break:break-all}
 .wname{border-style:dashed}
 .wname:hover,.wname:focus{border-style:solid}
+.chip .chip-task{max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+.rv-where{margin:0 0 6px}
+.dialog.phone .here{border:1px solid var(--ok);border-radius:6px;padding:10px 12px;margin-bottom:10px}
+.dialog.phone .here p{margin:0 0 4px}

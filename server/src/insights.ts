@@ -108,7 +108,9 @@ export class Insights {
   async updateReview(s: Session) {
     const card = s.card;
     try {
-      const review = await reviewOf(s.top, s.tests, s.baseSha);
+      const dir = s.reviewTop ?? s.top;
+      const review = await reviewOf(dir, s.tests, s.baseSha);
+      if (review) review.elsewhere = dir !== s.top;
       if (review && this.alive(s) && s.card === card && card?.kind === 'done') { card.review = review; this.store.push(s); }
     } catch (e) { console.error(`[agent-worlds] review for ${s.id}: ${(e as Error).message}`); }
   }
