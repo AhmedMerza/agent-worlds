@@ -135,7 +135,7 @@ describe('permission mode', () => {
     expect(sent(fn)).toEqual({ sessionId: 's1' })
     fn = stub()
     await resumeSession('s1', true, 'plan')
-    expect(sent(fn)).toEqual({ sessionId: 's1', force: true, permissionMode: 'plan' })
+    expect(sent(fn)).toEqual({ sessionId: 's1', stop: true, permissionMode: 'plan' })
   })
 })
 

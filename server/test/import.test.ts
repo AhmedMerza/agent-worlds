@@ -111,11 +111,14 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
     { pid: 202, argv: ['claude'], env: { TMUX_PANE: '%7' }, cwd: root },    // managed: its pane belongs to a hook session
   ]);
   const calls: any[] = [];
+  const stopped: number[] = [];
+  let quits = false;
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: dir }), port: 0 };
   const app = startServer(cfg, 'i'.repeat(64), {
     home: root, procRoot: proc,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
     createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-a-1', dir: o.repo, branch: null }; },
+    stopProcess: async (pid) => { stopped.push(pid); return quits; },
   });
   await app.store.handle({ ...ev.start, session_id: 'managed-1', cwd: root }, '%7');
   await app.listen();
@@ -147,12 +150,19 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
     assert.equal(busy.status, 409);
     assert.equal(busy.body.pid, 201);
     assert.equal(calls.length, 0);
+    const stuck = await post('/api/sessions/resume', { sessionId: a, stop: true });
+    assert.equal(stuck.status, 409, 'it would not quit: nothing resumed');
+    assert.match(stuck.body.error, /did not quit \(pid 201\)/);
+    assert.equal(calls.length, 0);
+    quits = true;
+    assert.equal((await post('/api/sessions/resume', { sessionId: a, stop: true })).status, 201, 'stopped, then resumed');
+    assert.deepEqual(stopped, [201, 201]);
     const forced = await post('/api/sessions/resume', { sessionId: a, force: true });
     assert.equal(forced.status, 201);
     const ok = await post('/api/sessions/resume', { sessionId: b });
     assert.equal(ok.status, 201);
     assert.deepEqual(ok.body, { tmuxSession: 'aw-repo-a-1' });
-    assert.deepEqual(calls[1], { repo, worktree: false, resume: b, claudeBin: 'claude', home: root, prefix: undefined });
+    assert.deepEqual(calls[2], { repo, worktree: false, resume: b, claudeBin: 'claude', home: root, prefix: undefined });
   } finally { await app.close(); }
 });
 

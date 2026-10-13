@@ -377,8 +377,8 @@ export function ageText(ms: number, now: number): string {
 export type ResumeResult = { kind: 'ok'; tmuxSession: string | null } | { kind: 'running'; pid: number | null } | { kind: 'error'; message: string }
 /** Reads the answer of POST /api/sessions/resume. 409 means the session is still open somewhere else. */
 export function resumeOutcome(status: number, body: unknown): ResumeResult {
-  const b = (body ?? {}) as { tmuxSession?: unknown; pid?: unknown }
+  const b = (body ?? {}) as { tmuxSession?: unknown; pid?: unknown; stopFailed?: unknown }
   if (status >= 200 && status < 300) return { kind: 'ok', tmuxSession: typeof b.tmuxSession === 'string' ? b.tmuxSession : null }
-  if (status === 409) return { kind: 'running', pid: typeof b.pid === 'number' ? b.pid : null }
+  if (status === 409 && b.stopFailed !== true) return { kind: 'running', pid: typeof b.pid === 'number' ? b.pid : null }
   return { kind: 'error', message: errorText(status, body) }
 }

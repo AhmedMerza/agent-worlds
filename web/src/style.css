@@ -293,3 +293,16 @@ pre.diff{max-height:320px;overflow:auto}
   .ctrl.menu .hdr-btn kbd{display:inline}
 }
 @media (min-width:2200px){.worlds{align-content:stretch;grid-auto-rows:minmax(max-content,1fr)}}
+.dialog.phone{max-width:560px}
+.dialog.phone .route{border-top:1px dashed var(--line);padding-top:12px;margin-top:12px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.dialog.phone h3{font-size:15px;margin:0}
+.dialog.phone h3 small{font-weight:normal;color:var(--ok);margin-left:6px}
+.dialog.phone .warn{font-size:13px;color:var(--wait);margin:0}
+.dialog.phone .steps{margin:0;padding-left:20px;font-size:13.5px;color:var(--muted)}
+.dialog.phone .addr{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.dialog.phone .qr{display:flex;gap:16px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.dialog.phone .qr svg{width:200px;height:200px;flex:none;border-radius:6px}
+.dialog.phone .qr p{margin:0 0 6px}
+.dialog.phone .qr code{word-break:break-all}
+.wname{border-style:dashed}
+.wname:hover,.wname:focus{border-style:solid}

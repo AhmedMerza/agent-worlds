@@ -75,16 +75,16 @@ describe('resume 409 then force', () => {
     expect(resumeOutcome(409, { error: 'x', pid: null })).toEqual({ kind: 'running', pid: null })
     expect(resumeOutcome(422, { error: 'folder gone' })).toEqual({ kind: 'error', message: 'folder gone' })
   })
-  it('asks without force first; with force the second call succeeds and selects the new session', async () => {
+  it('asks without stop first; with stop the second call succeeds and selects the new session', async () => {
     const calls: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (_u: string, init: { body: string }) => {
       const body = JSON.parse(init.body); calls.push(body)
-      return body.force ? { status: 201, ok: true, json: async () => ({ tmuxSession: 'aw-r' }) } : { status: 409, ok: false, json: async () => ({ error: 'still running', pid: 9 }) }
+      return body.stop ? { status: 201, ok: true, json: async () => ({ tmuxSession: 'aw-r' }) } : { status: 409, ok: false, json: async () => ({ error: 'still running', pid: 9 }) }
     }))
     expect(await resumeSession('s1')).toEqual({ kind: 'running', pid: 9 })
     expect(state.pending).toBeNull()
     expect(await resumeSession('s1', true)).toEqual({ kind: 'ok', tmuxSession: 'aw-r' })
-    expect(calls).toEqual([{ sessionId: 's1' }, { sessionId: 's1', force: true }])
+    expect(calls).toEqual([{ sessionId: 's1' }, { sessionId: 's1', stop: true }])
     expect(state.pending?.tmux).toBe('aw-r')
   })
 })

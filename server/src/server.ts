@@ -9,7 +9,8 @@ import { Store } from './store.ts';
 import { Stats } from './rules.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
-import { Worlds } from './worlds.ts';
+import { Worlds, saveConfigKey } from './worlds.ts';
+import { phoneAddresses, Pairing, type Address } from './phone.ts';
 import { history, findTranscript, scanClaude, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { readHead } from './transcript.ts';
 import { readFileSync } from 'node:fs';
@@ -29,6 +30,7 @@ const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.
 type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
   home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
+  phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -54,6 +56,21 @@ const BAD_TOKEN_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewpor
 <p>The link comes from an older install, or the access token has changed.</p>
 <p>On the machine running the server, run <code>agent-worlds open</code> (or <code>agent-worlds url</code>) to get a fresh link.</p>
 </body>`;
+
+const BAD_PAIR_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Worlds: code expired</title>
+<body style="font:16px/1.5 system-ui,sans-serif;max-width:34em;margin:4em auto;padding:0 1em">
+<h1>This code has expired</h1>
+<p>Each phone code works once and only for 5 minutes.</p>
+<p>On your computer, open Agent Worlds, press <b>Connect a phone</b> and scan the new code.</p>
+</body>`;
+
+/** SIGTERM a Claude process and wait up to 5 s for it to exit. */
+async function stopProcess(pid: number): Promise<boolean> {
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  try { process.kill(pid, 'SIGTERM'); } catch { return !alive(); }
+  for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+  return !alive();
+}
 
 function sendHtml(res: ServerResponse, status: number, html: string) {
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
@@ -141,13 +158,38 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
+  const pairing = new Pairing();
+  const addresses = opts.phoneAddresses ?? phoneAddresses;
+  const port = () => (servers[0].address() as { port?: number } | null)?.port ?? cfg.port;
+  const login = (req: IncomingMessage, res: ServerResponse) => {
+    const secure = (req.socket as { encrypted?: boolean }).encrypted || req.headers['x-forwarded-proto'] === 'https';
+    res.writeHead(302, { 'set-cookie': `aw_token=${token}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/${secure ? '; Secure' : ''}`, location: '/' });
+    res.end();
+  };
+  /** Start or stop answering on a phone address, and remember it in config.json. 127.0.0.1 is never touched. */
+  async function setListening(address: string, on: boolean): Promise<string | null> {
+    const i = cfg.listen.indexOf(address);
+    if (on === (i >= 0)) return null;
+    if (on) {
+      const srv = createServer(onRequest).on('upgrade', onUpgrade);
+      try {
+        await new Promise<void>((ok, fail) => { srv.once('error', fail); srv.listen(port(), address, () => ok()); });
+      } catch (e) { return `cannot listen on ${address}: ${(e as Error).message}`; }
+      servers.push(srv); cfg.listen.push(address);
+    } else {
+      const [srv] = servers.splice(i, 1); cfg.listen.splice(i, 1);
+      srv.close(); srv.closeAllConnections();
+    }
+    allowed = null;
+    return saveConfigKey(join(opts.home ?? homeDir(), 'config.json'), 'listen', cfg.listen);
+  }
   // host:port names this server answers to. The port is read once listening (config may say 0 in tests).
   let allowed: Set<string> | null = null;
   const allowedHosts = () => {
     if (allowed) return allowed;
-    const port = (servers[0].address() as { port?: number } | null)?.port ?? cfg.port;
-    const hp = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${port}`;
-    const set = new Set([...cfg.listen.map(hp), `localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, ...cfg.extraHosts].map((h) => h.toLowerCase()));
+    const p = port();
+    const hp = (h: string) => `${h.includes(':') ? `[${h}]` : h}:${p}`;
+    const set = new Set([...cfg.listen.map(hp), `localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`, ...cfg.extraHosts].map((h) => h.toLowerCase()));
     if (servers[0].listening) allowed = set;
     return set;
   };
@@ -180,9 +222,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (!hostOk(req)) return send(res, 421, { error: 'unknown host; add it to extraHosts in the config' });
     if (url.pathname === '/' && url.searchParams.has('token')) {
       if (!same(url.searchParams.get('token'), token)) return sendHtml(res, 401, BAD_TOKEN_PAGE);
-      const secure = (req.socket as { encrypted?: boolean }).encrypted || req.headers['x-forwarded-proto'] === 'https';
-      res.writeHead(302, { 'set-cookie': `aw_token=${token}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/${secure ? '; Secure' : ''}`, location: '/' });
-      return res.end();
+      return login(req, res);
+    }
+    if (method === 'GET' && url.pathname.startsWith('/pair/')) {
+      return pairing.redeem(url.pathname.slice('/pair/'.length)) ? login(req, res) : sendHtml(res, 401, BAD_PAIR_PAGE);
     }
     if (!originOk(req)) return send(res, 403, { error: 'origin not allowed' });
     if ((method === 'GET' || method === 'HEAD') && PUBLIC_RE.test(url.pathname)) {
@@ -246,13 +289,31 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
         const live = store.sessions.get(b.sessionId);
         const proc = procs.find((p) => p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane));
-        if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
+        // stop: quit the copy running in another terminal first (only ours: scanClaude keeps this user's processes).
+        if (b.stop === true && proc && !live) {
+          if (!(await (opts.stopProcess ?? stopProcess)(proc.pid))) return send(res, 409, { error: `it did not quit (pid ${proc.pid}); close it in its terminal`, pid: proc.pid, stopFailed: true });
+        } else if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
       }
       try {
         const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix });
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, dir: r.dir, task: null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
+    }
+    if (url.pathname === '/api/phone' && method === 'GET') {
+      return send(res, 200, { port: port(), addresses: addresses().map((a) => ({ ...a, allowed: cfg.listen.includes(a.address) })) });
+    }
+    if (url.pathname === '/api/phone/allow' && method === 'POST') {
+      const b = await readBody(req);
+      if (typeof b.address !== 'string' || !addresses().some((a) => a.address === b.address)) return send(res, 400, { error: 'not a network address of this computer' });
+      const err = await setListening(b.address, b.allow === true);
+      return err ? send(res, 500, { error: err }) : send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/phone/pair' && method === 'POST') {
+      const b = await readBody(req);
+      if (typeof b.address !== 'string' || !cfg.listen.includes(b.address) || !addresses().some((a) => a.address === b.address)) return send(res, 400, { error: 'phones are not allowed on that address' });
+      const { code, expiresAt } = pairing.issue();
+      return send(res, 200, { url: `http://${b.address}:${port()}/pair/${code}`, expiresAt });
     }
     if (url.pathname === '/api/fs' && method === 'GET') {
       const [code, body] = worlds.list(url.searchParams.get('path'));

@@ -1,5 +1,5 @@
 import { reactive, computed, ref } from 'vue'
-import type { ServerMessage, Session, World, FsListing, Unmanaged, HistorySession, PermissionMode } from './types'
+import type { ServerMessage, Session, World, FsListing, PhoneInfo, Unmanaged, HistorySession, PermissionMode } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
@@ -146,6 +146,9 @@ export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'col
 export const deleteWorld = (id: string) => api<unknown>('DELETE', `/api/worlds/${encodeURIComponent(id)}`)
 export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/worlds/order', { ids })
 export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
+export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
+export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
+export const pairPhone = (address: string) => api<{ url: string; expiresAt: number }>('POST', '/api/phone/pair', { address })
 
 export type Scope = 'once' | 'repo' | 'world' | 'all'
 export const decidePermission = (id: string, requestId: string, decision: 'allow' | 'deny', scope: Scope = 'once') =>
@@ -184,10 +187,10 @@ function followNew(name: unknown): void {
   const known = Object.values(state.sessions).find((x) => x.tmux?.session === name)
   if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
 }
-/** Opens a past session in a new tmux session here. `force` resumes even if it is still open elsewhere. */
-export async function resumeSession(sessionId: string, force = false, permissionMode?: PermissionMode): Promise<ResumeResult> {
+/** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */
+export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode): Promise<ResumeResult> {
   try {
-    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(force ? { force: true } : {}), ...(permissionMode ? { permissionMode } : {}) }) })
+    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(stop ? { stop: true } : {}), ...(permissionMode ? { permissionMode } : {}) }) })
     let body: unknown = null
     try { body = await r.json() } catch { /* empty body */ }
     const res = resumeOutcome(r.status, body)
@@ -246,4 +249,4 @@ export const termFocusTick = ref(0)
 export const focusTerminal = (): void => { termFocusTick.value++ }
 
 /** Dialog state shared by the header, rooms and detail panel. */
-export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false })
+export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, phoneOpen: false })
