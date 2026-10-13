@@ -455,3 +455,15 @@ test('placements are saved to a private file and read back after a restart', asy
   assert.equal(again.get('sess-2'), undefined);
   assert.equal(again.get('constructor'), undefined, 'only ids it holds');
 });
+
+test('a session first heard of mid-turn (after a restart) is working, not idle', async () => {
+  const { store, view } = setup();
+  await store.handle({ ...ev.subStop, agent_id: 'agent-3' }, '%5');
+  assert.equal(view().state, 'working', 'a helper reported first: the turn is running');
+  const b = setup();
+  await b.store.handle(ev.start, '%5');
+  assert.equal(b.view().state, 'idle', 'a fresh start is idle');
+  const c = setup();
+  await c.store.handle(ev.stop, '%5');
+  assert.equal(c.view().state, 'done', 'Stop still decides for itself');
+});

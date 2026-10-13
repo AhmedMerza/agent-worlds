@@ -327,7 +327,11 @@ export class Store {
       return '';
     }
     const cwd = typeof p.cwd === 'string' && p.cwd.startsWith('/') ? p.cwd : '/';
-    const s = this.sessions.get(id) ?? (await this.create(id, cwd, pane, direct));
+    const known = this.sessions.get(id);
+    const s = known ?? (await this.create(id, cwd, pane, direct));
+    // First heard of mid-turn (the server restarted while it worked, a helper reported first): it is working.
+    // Events that set the state themselves (Stop, a question, idle_prompt…) still do so below.
+    if (!known && ev !== 'SessionStart' && s.state === 'idle') s.state = 'working';
     s.hookAt = this.now();
     if (direct) s.direct = direct;
     if (pane && s.tmux?.pane !== pane) {
