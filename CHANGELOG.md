@@ -3,6 +3,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-13
+- `/clear` (or a skill that clears) keeps the same terminal selected: the page follows that terminal's new session instead of jumping to another one.
 - Recent sessions are grouped by folder (fold a folder shut); "Past sessions here" in a session's panel shows only its repo: its folder, the folders inside it and its worktrees (`GET /api/history?repo=`).
 - New session: "Another folder…" is always there, not only for an empty world; the folder browser opens next to the chosen folder and can search the folders it lists.
 - Busy but not needing you: a turn that ends with background work running, or a scheduled wake-up, stays at the desks with a clock; compacting shows "…" at the desks. New hooks: `PreCompact`, `PostCompact` (re-merge a global hooks block).

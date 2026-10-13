@@ -66,9 +66,11 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.sessions[msg.session.id] = msg.session
       break
     case 'session-removed': {
-      // A 'starting:<tmux>' placeholder is replaced by the real session on its first hook: keep following it.
+      // The selected session's terminal gets a new session: a 'starting:<tmux>' placeholder's first hook, or /clear
+      // (and /resume) starting a new conversation in the same pane. Keep following that terminal.
       const gone = st.sessions[msg.id]
-      if (st.selectedId === msg.id && gone?.state === 'starting' && (gone.tmux || gone.direct)) st.pending = { tmux: gone.tmux?.session ?? gone.direct!, until: Date.now() + 10000 }
+      const term = gone?.tmux?.session ?? gone?.direct
+      if (st.selectedId === msg.id && term) st.pending = { tmux: term, until: Date.now() + (gone.state === 'starting' ? 10000 : 3000) }
       delete st.sessions[msg.id]
       st.order = st.order.filter((i) => i !== msg.id)
       break
@@ -83,13 +85,19 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.toast = { text: msg.text, n: (st.toast?.n ?? 0) + 1 }
       break
   }
-  // Keep the selection valid: default to the oldest session needing you, else the first one.
-  if (!st.selectedId || !(st.sessions[st.selectedId] || st.unmanaged.some((u) => ghostId(u.pid) === st.selectedId))) {
+  keepSelection(st)
+  return alert
+}
+
+/** Keep the selection valid: default to the oldest session needing you, else the first one. */
+export function keepSelection(st: StoreState, now = Date.now()): void {
+  // Not while waiting for the selected terminal's next session: that would jump to another terminal and back.
+  const waiting = st.pending && now <= st.pending.until && st.selectedId && !st.sessions[st.selectedId]
+  if (!waiting && (!st.selectedId || !(st.sessions[st.selectedId] || st.unmanaged.some((u) => ghostId(u.pid) === st.selectedId)))) {
     const list = st.order.map((i) => st.sessions[i])
     st.selectedId = (queue(list)[0] ?? list[0])?.id ?? null
     st.autoSelected = st.selectedId !== null
   }
-  return alert
 }
 
 export const state = reactive<StoreState>(newState())
@@ -259,6 +267,8 @@ export function connect(): void {
     const waiting = state.pending
     const a = applyMessage(state, m)
     if (waiting && !state.pending && state.selectedId) { select(state.selectedId); focusTerminal() }
+    // the selected terminal's next session never came: select another once the wait is over
+    if (m.type === 'session-removed' && state.pending) setTimeout(() => keepSelection(state), state.pending.until - Date.now() + 50)
     if (a) alertNeedsYou(a, groups.value.findIndex((g) => g.sessions.some((x) => x.id === a.id)), groups.value.find((g) => g.sessions.some((x) => x.id === a.id))?.world.name ?? '')
   }
   ws.onclose = () => {
