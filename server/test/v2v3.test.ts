@@ -35,6 +35,7 @@ function setup(root: string, opts: { clients?: boolean; userSettingsPath?: strin
   const cfg = parseConfig({
     worlds: [{ id: 'web', name: 'Web', repos: [`${root}/repo-a`, `${root}/repo-b`] }],
     userSettingsPath: opts.userSettingsPath ?? join(root, 'user-settings.json'),
+    claudeProjectsDir: realpathSync(tmpdir()),
   });
   const stats = new Stats(join(root, 'stats.json'));
   const store = new Store(cfg, {
@@ -133,8 +134,12 @@ test('scope repo / world / all write the right settings files and tell Claude fo
   assert.deepEqual(allow(`${root}/repo-a/.claude/settings.local.json`), ['Bash(touch hello.txt)'], 'no duplicate');
 
   writeFileSync(join(root, 'user-settings.json'), JSON.stringify({ theme: 'dark' }));
-  await decideWith('all');
-  assert.deepEqual(JSON.parse(readFileSync(join(root, 'user-settings.json'), 'utf8')), { theme: 'dark', permissions: { allow: ['Bash(touch hello.txt)'] } });
+  store.handle(ev.permBash, null);
+  await tick();
+  assert.equal(card(store).everywhere, 'Not offered for shell commands.');
+  assert.deepEqual(store.decide('sess-1', { requestId: card(store).requestId, decision: 'allow', scope: 'all' }), [400, 'Not offered for shell commands.']);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, 'user-settings.json'), 'utf8')), { theme: 'dark' }, 'shell commands never go to user settings');
+  store.decide('sess-1', { requestId: card(store).requestId, decision: 'allow', scope: 'once' });
 
   // seenCount: times this rule was allowed in this repo, across sessions
   store.handle({ ...ev.permBash, session_id: 'sess-9' }, null);
@@ -364,7 +369,7 @@ test('catch-up: manual, one at a time per session, max 2 concurrent, failures ke
 test('context and review are filled on Stop', async () => {
   const d = gitRepo();
   writeFileSync(join(d, 'a.txt'), 'changed\n');
-  const cfg = parseConfig({});
+  const cfg = parseConfig({ claudeProjectsDir: realpathSync(tmpdir()) });
   const store = new Store(cfg, {
     repoInfo: async () => ({ repo: d, branch: 'main', worktree: false, top: d }),
     branchOf: async () => 'main', tmuxSessionOf: async () => null, clientsConnected: () => false, holdMs: 1000,
@@ -457,4 +462,12 @@ test('config: listen, userSettingsPath, claudeBin', () => {
   assert.equal(parseConfig({}).contextLimit, 1_000_000);
   assert.equal(parseConfig({ contextLimit: 200_000 }).contextLimit, 200_000);
   assert.throws(() => parseConfig({ contextLimit: 'big' }), /contextLimit/);
+});
+
+test('transcript_path outside claudeProjectsDir is ignored (the summariser reads it)', async () => {
+  const { store } = setup(tmp());
+  await store.handle({ ...ev.stop, transcript_path: '/etc/passwd' }, null);
+  assert.ok(!store.sessions.get('sess-1')!.transcriptPath);
+  await store.handle({ ...ev.stop, transcript_path: join(realpathSync(tmpdir()), 'x', '..', '..', 'etc', 'a.jsonl') }, null);
+  assert.ok(!store.sessions.get('sess-1')!.transcriptPath);
 });

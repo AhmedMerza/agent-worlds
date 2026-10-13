@@ -47,8 +47,10 @@ header counts "waiting on you" (permissions, questions) apart from "to review" (
 The list holds still while your pointer is over it, so a click never lands on a different card.
 
 - **Permission requests**: the command, a warning for risky ones, **Allow once**, **Deny**, and
-  **Always allow** for this repo, this world or everywhere. "Everywhere" is refused for risky
-  requests (pushes, database changes, deploys, recursive deletes, writes outside the project).
+  **Always allow** for this repo, this world or everywhere. "Everywhere" is refused for shell
+  commands (a command can be reworded to slip past any check) and for rules that would allow a
+  whole tool; this repo and this world still work. Risky requests (pushes, database changes,
+  deploys, recursive deletes, writes outside the project) also get a warning.
 - **Questions**: each option is a button; multi-select and several questions work.
 - **A turn that ends in a question** shows as "asking": the question and a reply box.
 - **Finished turns**: a review of what changed since the session started (files +/-, the commits
