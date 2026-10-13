@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/main.ts",
+    "start": "node src/cli.ts",
     "test": "node --test"
   },
   "dependencies": {

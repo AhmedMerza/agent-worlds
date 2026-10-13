@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import type { Config } from './config.ts';
 import type { RepoInfo } from './sys.ts';
 import type { Review } from './review.ts';
 import { TEST_RE, testLine } from './review.ts';
-import { riskOf, ruleFor, ruleText, addAllowRule, type Rule } from './rules.ts';
+import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, type Rule } from './rules.ts';
 import { computeConflicts, type Conflict } from './conflicts.ts';
 
 export { riskOf };
@@ -149,7 +149,7 @@ export class Store {
     const p = s.pending[0];
     let card: unknown = s.card;
     if (p && p.kind === 'permission') {
-      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), target: targetOf(p.tool, p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, seenCount: p.seenCount, live: p.live };
+      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), target: targetOf(p.tool, p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, everywhere: whyNotEverywhere(p.rule, p.risky), seenCount: p.seenCount, live: p.live };
     } else if (p) {
       card = { kind: 'question', requestId: p.requestId, questions: questionsOf(p.input), live: p.live };
     }
@@ -275,7 +275,9 @@ export class Store {
         if (s.tmux?.pane === pane && name) { s.tmux.session = name; if (this.sessions.has(s.id)) this.push(s); }
       });
     }
-    if (typeof p.transcript_path === 'string' && p.transcript_path.startsWith('/')) s.transcriptPath = p.transcript_path;
+    // Only Claude's own transcripts: the catch-up summariser reads this file.
+    const tp = p.transcript_path;
+    if (typeof tp === 'string' && tp.endsWith('.jsonl') && resolve(tp).startsWith(this.cfg.claudeProjectsDir + '/')) s.transcriptPath = tp;
     const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
     const input = (p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {}) as Record<string, unknown>;
     let reply: Promise<string> | string = '';
@@ -456,7 +458,8 @@ export class Store {
       const rule = ruleText(p!.rule);
       const decision: Record<string, unknown> = { behavior: 'allow' };
       if (scope !== 'once') {
-        if (scope === 'all' && p!.risky) return [400, `not allowed everywhere: this ${p!.risky}`];
+        const why = scope === 'all' ? whyNotEverywhere(p!.rule, p!.risky) : null;
+        if (why) return [400, why];
         const files = this.settingsFiles(s!, scope as string);
         if (typeof files[0] === 'number') return files as [number, string];
         try { for (const f of files as string[]) addAllowRule(f, rule); } catch (e) { return [500, (e as Error).message]; }

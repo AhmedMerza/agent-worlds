@@ -23,7 +23,7 @@ function gitRepo(): string {
 const waitFor = async (f: () => boolean) => { for (let i = 0; i < 200 && !f(); i++) await new Promise((r) => setTimeout(r, 25)); assert.ok(f(), 'timed out'); };
 
 function setup(over: Record<string, unknown> = {}, repo = '/work/repo-a') {
-  const cfg = parseConfig({});
+  const cfg = parseConfig({ claudeProjectsDir: realpathSync(tmpdir()) });
   const store = new Store(cfg, {
     repoInfo: async () => ({ repo, branch: 'main', worktree: false, top: repo, head: 'abc1234' }),
     branchOf: async () => 'main', tmuxSessionOf: async () => null, clientsConnected: () => false, holdMs: 1000,

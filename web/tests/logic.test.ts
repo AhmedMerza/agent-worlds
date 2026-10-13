@@ -89,6 +89,10 @@ describe('permission scopes', () => {
     expect(scopeAvailability(risky).allReason).toContain('changes a database')
     expect(scopeAvailability(perm)).toEqual({ repo: true, world: true, all: true, allReason: null })
   })
+  it('follows the server when it refuses Everywhere', () => {
+    expect(scopeAvailability({ ...perm, everywhere: 'Not offered for shell commands.' })).toMatchObject({ all: false, allReason: 'Not offered for shell commands.' })
+    expect(scopeAvailability({ ...perm, risky: 'pushes to a remote', everywhere: null }).all).toBe(true)
+  })
   it('nudges from the third approval', () => {
     expect([0, 2, 3, 9].map((n) => showLearnNudge({ ...perm, seenCount: n }))).toEqual([false, false, true, true])
   })

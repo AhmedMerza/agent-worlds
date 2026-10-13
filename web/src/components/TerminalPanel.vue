@@ -37,11 +37,13 @@ function attach(id: string, myGen: number) {
   link.value = 'connecting'
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   const ws = new WebSocket(`${proto}://${location.host}/pty?session=${encodeURIComponent(id)}`)
+  ws.binaryType = 'arraybuffer' // synchronous binary frames, so they stay in order with text frames
   sock = ws
-  ws.onopen = () => { link.value = 'live'; refit() }
+  // A late frame from a replaced socket must not reach the shared terminal after it was reset for another session.
+  ws.onopen = () => { if (myGen !== gen) return; link.value = 'live'; refit() }
   ws.onmessage = (e) => {
-    if (typeof e.data === 'string') term?.write(e.data)
-    else if (e.data instanceof Blob) e.data.arrayBuffer().then((b) => term?.write(new Uint8Array(b)))
+    if (myGen !== gen) return
+    term?.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data))
   }
   ws.onclose = () => {
     if (myGen !== gen) return // a newer attach replaced this one

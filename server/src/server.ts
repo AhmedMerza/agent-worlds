@@ -92,6 +92,9 @@ export function spawnTmuxPty(session: string, cols: number, rows: number) {
 export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const ptys = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  // Heartbeat: a socket that misses a ping round is dropped, so half-open connections don't keep tmux clients around.
+  const alive = new WeakSet<WebSocket>();
+  const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
     if (msg.type === 'session-removed' && msg.id) insights?.forget(msg.id);
@@ -330,14 +333,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (!authed(req)) return reject(401, 'Unauthorized');
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
+        track(ws);
         ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged }));
       });
     }
     if (url.pathname === '/pty') {
       const s = store.sessions.get(url.searchParams.get('session') ?? '');
       if (!s?.tmux?.session) return reject(404, 'Not Found');
+      if (ptys.clients.size >= MAX_PTYS) return reject(503, 'Service Unavailable');
       const name = s.tmux.session;
-      return ptys.handleUpgrade(req, socket, head, (ws) => attachPty(ws, name, opts.spawnPty ?? spawnTmuxPty));
+      return ptys.handleUpgrade(req, socket, head, (ws) => { track(ws); attachPty(ws, name, opts.spawnPty ?? spawnTmuxPty); });
     }
     reject(404, 'Not Found');
   };
@@ -346,6 +351,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
 
   let sweeper: NodeJS.Timeout | null = null;
   let scanner: NodeJS.Timeout | null = null;
+  let heartbeat: NodeJS.Timeout | null = null;
   return {
     server: servers[0], servers, store, scan,
     listen(): Promise<void> {
@@ -358,6 +364,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       void rescan();
       scanner = setInterval(rescan, 10_000);
       scanner.unref();
+      heartbeat = setInterval(() => {
+        for (const c of [...wss.clients, ...ptys.clients]) {
+          if (!alive.delete(c)) c.terminate();
+          else c.ping();
+        }
+      }, 30_000);
+      heartbeat.unref();
       return Promise.all(servers.map((srv, i) => new Promise<void>((ok, fail) => {
         srv.once('error', fail);
         srv.listen(cfg.port, cfg.listen[i], () => ok());
@@ -366,12 +379,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     close(): Promise<void> {
       if (sweeper) clearInterval(sweeper);
       if (scanner) clearInterval(scanner);
+      if (heartbeat) clearInterval(heartbeat);
       for (const s of [...store.sessions.values()]) store.remove(s);
       for (const c of [...wss.clients, ...ptys.clients]) c.terminate();
       return Promise.all(servers.map((srv) => new Promise<void>((ok) => { srv.close(() => ok()); srv.closeAllConnections(); }))).then(() => {});
     },
   };
 }
+
+/** Live terminals across all sessions; each one is a `tmux attach` process. */
+const MAX_PTYS = 16;
 
 const dim = (v: unknown, d: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) <= 1000 ? (v as number) : d);
 

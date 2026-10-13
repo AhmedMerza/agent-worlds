@@ -115,9 +115,10 @@ export function buildAnswers(
   return out
 }
 
-/** Which "Always allow" scopes are usable for a permission card. `Everywhere` is refused for risky commands. */
+/** Which "Always allow" scopes are usable for a permission card. The server says when `Everywhere` is refused. */
 export function scopeAvailability(c: Extract<Card, { kind: 'permission' }>): { repo: boolean; world: boolean; all: boolean; allReason: string | null } {
-  return { repo: true, world: true, all: !c.risky, allReason: c.risky ? `Not offered: this command ${c.risky}.` : null }
+  const why = c.everywhere !== undefined ? c.everywhere : c.risky ? `Not offered: this command ${c.risky}.` : null
+  return { repo: true, world: true, all: !why, allReason: why }
 }
 export const showLearnNudge = (c: Extract<Card, { kind: 'permission' }>): boolean => c.seenCount >= 3
 

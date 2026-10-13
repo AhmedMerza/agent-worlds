@@ -52,6 +52,15 @@ export function ruleFor(tool: string, input: Input, suggestions: unknown): Rule 
   return { toolName: tool };
 }
 
+/** Why `rule` may not be saved to user-global settings, else null. A shell command can be reworded to slip past
+ * riskOf, and a bare tool name allows every use of that tool, so neither goes "everywhere"; repo and world still can. */
+export function whyNotEverywhere(rule: Rule, risky: string | null): string | null {
+  if (risky) return `Not offered: this command ${risky}.`;
+  if (rule.toolName === 'Bash') return 'Not offered for shell commands.';
+  if (rule.ruleContent === undefined) return 'Not offered: it would allow every use of this tool.';
+  return null;
+}
+
 export const ruleText = (r: Rule) => (r.ruleContent === undefined ? r.toolName : `${r.toolName}(${r.ruleContent})`);
 
 /** Add `rule` to permissions.allow of a settings file, keeping everything else. Atomic; refuses to touch invalid JSON. */
