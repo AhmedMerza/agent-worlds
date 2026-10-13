@@ -13,7 +13,7 @@ import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
-import { readHead } from './transcript.ts';
+import { readHead, readTail, conversation } from './transcript.ts';
 import { readFileSync } from 'node:fs';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
@@ -177,8 +177,23 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     return { lastPrompt: hit.lastPrompt, lastActivity: mtime };
   }
+  /**
+   * A session we started (its AGENT_WORLDS_HOME is ours, and it runs in a tmux pane) but don't know, because the server
+   * restarted and it has been idle since: take it back instead of showing it as a plain-terminal ghost.
+   */
+  async function adopt(p: ClaudeProc) {
+    const transcript = findTranscript(cfg.claudeProjectsDir, p.sessionId!);
+    await store.handle({ hook_event_name: 'SessionStart', source: 'resume', session_id: p.sessionId, cwd: p.cwd, ...(transcript ? { transcript_path: transcript } : {}) }, p.pane);
+    const s = store.sessions.get(p.sessionId!);
+    if (!s) return;
+    s.now = 'Picked up again after a server restart';
+    if (transcript) s.lastPrompt = (await transcriptSummary(transcript)).lastPrompt ?? s.lastPrompt;
+    store.push(s);
+  }
   async function scan() {
     procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
+    const home = opts.home ?? homeDir();
+    for (const p of procs) if (p.managedHome === home && p.pane && p.sessionId && !isManaged(p)) await adopt(p);
     const next = await Promise.all(procs.filter((p) => !isManaged(p)).map(async (p) => {
       const info = await repoOf(p.cwd);
       return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldOf(info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since, ...(await ghostOf(p.sessionId)) };
@@ -447,6 +462,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
 
+    const hm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/);
+    if (hm && method === 'GET') {
+      const s = store.sessions.get(decodeURIComponent(hm[1]));
+      if (!s) return send(res, 404, { error: 'no such session' });
+      // Claude's full-screen view keeps no terminal scrollback, so read the conversation from its transcript.
+      if (!s.transcriptPath) return send(res, 409, { error: 'no transcript yet for this session' });
+      try { return send(res, 200, { turns: conversation(await readTail(s.transcriptPath, 2 * 1024 * 1024)).slice(-400) }); }
+      catch { return send(res, 502, { error: 'cannot read the transcript' }); }
+    }
     const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack|catchup)$/);
     if (m && method === 'POST') {
       const id = decodeURIComponent(m[1]);

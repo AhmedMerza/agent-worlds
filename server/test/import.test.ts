@@ -236,3 +236,32 @@ test('attach listing: our prefix only, number or name picks, server state when r
     try { execFileSync('tmux', ['kill-session', '-t', '=' + r.tmuxSession]); } catch { /* gone */ }
   }
 });
+
+test('server restart: our own idle sessions in tmux are taken back, not shown as ghosts', async () => {
+  const root = tmp();
+  const repo = join(root, 'repo-a');
+  mkdirSync(repo);
+  const { dir, a, b } = projects(root, repo);
+  const proc = fakeProc(root, [
+    { pid: 301, argv: ['claude', '--resume', a], env: { AGENT_WORLDS_HOME: root, TMUX_PANE: '%9' }, cwd: repo }, // ours
+    { pid: 302, argv: ['claude', '--resume', b], env: { TMUX_PANE: '%10' }, cwd: repo },                          // someone's own tmux
+  ]);
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: dir }), port: 0 };
+  const app = startServer(cfg, 'i'.repeat(64), {
+    home: root, procRoot: proc,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-repo-a-1' },
+  });
+  await app.listen();
+  try {
+    await app.scan();
+    const s = app.store.sessions.get(a)!;
+    assert.ok(s, 'taken back');
+    assert.equal(s.tmux?.pane, '%9');
+    assert.equal(s.worldId, 'web');
+    assert.ok(s.transcriptPath, 'catch-up and scroll back work again');
+    assert.ok(s.lastPrompt, 'shows what it was last asked');
+    assert.equal(app.store.sessions.has(b), false, 'not ours: stays a ghost');
+    const st = await (await fetch(`http://127.0.0.1:${(app.server.address() as any).port}/api/state`, { headers: { 'x-aw-token': 'i'.repeat(64) } })).json() as any;
+    assert.deepEqual(st.unmanaged.map((u: any) => u.pid), [302]);
+  } finally { await app.close(); }
+});

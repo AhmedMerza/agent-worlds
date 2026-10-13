@@ -4,7 +4,8 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { LABEL, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
-import { state, selected, groups, termFocusTick, requestCatchup, needsYou } from '../store'
+import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation } from '../store'
+import type { Turn } from '../types'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
@@ -26,6 +27,30 @@ let sock: WebSocket | null = null
 let ro: ResizeObserver | null = null
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 let gen = 0
+
+/** "Scroll back": Claude's full-screen view keeps no terminal scrollback, so show the conversation from the transcript. */
+const history = ref<Turn[] | null>(null)
+const historyOpen = ref(false)
+const historyErr = ref('')
+const historyBox = ref<HTMLElement | null>(null)
+async function loadHistory() {
+  if (!s.value) return
+  historyErr.value = ''
+  const r = await sessionConversation(s.value.id)
+  if (!r.ok) { historyErr.value = r.error; return }
+  history.value = r.data.turns
+  await nextTick()
+  if (historyBox.value) historyBox.value.scrollTop = historyBox.value.scrollHeight
+}
+function openHistory() { historyOpen.value = true; history.value = null; void loadHistory() }
+watch(() => s.value?.id, () => { historyOpen.value = false; history.value = null })
+
+/** tmux sizes the window to the device used last; nudging our size when this tab comes back takes the window back. */
+function reclaimSize() {
+  if (document.visibilityState !== 'visible' || sock?.readyState !== WebSocket.OPEN || !term) return
+  sock.send(JSON.stringify({ t: 'resize', cols: Math.max(2, term.cols - 1), rows: term.rows }))
+  sendResize()
+}
 
 const sendResize = () => {
   if (sock?.readyState === WebSocket.OPEN && term) sock.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows }))
@@ -88,8 +113,16 @@ async function reattach(id: string | null) {
 }
 
 watch(attachId, (id) => reattach(id), { flush: 'post' })
-onMounted(() => reattach(attachId.value))
-onBeforeUnmount(() => { detach(); ro?.disconnect(); term?.dispose() })
+onMounted(() => {
+  reattach(attachId.value)
+  window.addEventListener('focus', reclaimSize)
+  document.addEventListener('visibilitychange', reclaimSize)
+})
+onBeforeUnmount(() => {
+  detach(); ro?.disconnect(); term?.dispose()
+  window.removeEventListener('focus', reclaimSize)
+  document.removeEventListener('visibilitychange', reclaimSize)
+})
 watch(termFocusTick, async () => {
   await nextTick()
   root.value?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' })
@@ -105,6 +138,7 @@ watch(termFocusTick, async () => {
         <span v-if="s.context"> · {{ s.context.pct }}% context</span>
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
         <span v-if="hasTmux && termFocused" class="term-paused">Shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : 'Ctrl+] to leave' }}</span>
+        <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
       </template>
       <template v-else>No session selected</template>
@@ -126,6 +160,18 @@ watch(termFocusTick, async () => {
     </dl>
     <p v-if="s?.ghost" class="term-view">This Claude is running in a plain terminal outside Agent Worlds, so there is no terminal here. Quit it there, then move it in from the panel on the right.</p>
     <p v-else-if="s && !hasTmux" class="term-view">This session did not start in tmux, so there is no live terminal. It is view-only here: its status shows, and its cards can still be answered from the inbox.</p>
-    <div v-show="hasTmux" ref="host" class="term-body" />
+    <div v-if="historyOpen" ref="historyBox" class="history" aria-label="Conversation so far">
+      <p v-if="historyErr" class="err" role="alert">{{ historyErr }}</p>
+      <p v-else-if="!history" class="why">Loading the conversation…</p>
+      <p v-else-if="!history.length" class="why">Nothing said yet.</p>
+      <template v-else>
+        <p class="why">The conversation so far, newest at the bottom.</p>
+        <div v-for="(t, i) in history" :key="i" :class="['turn', t.who]">
+          <span v-if="t.who !== 'step'" class="who">{{ t.who === 'you' ? 'You' : 'Claude' }}</span>{{ t.text }}
+        </div>
+        <div class="actions"><button class="btn" @click="loadHistory">Refresh</button><button class="btn" @click="historyOpen = false">Back to live terminal</button></div>
+      </template>
+    </div>
+    <div v-show="hasTmux && !historyOpen" ref="host" class="term-body" />
   </section>
 </template>
