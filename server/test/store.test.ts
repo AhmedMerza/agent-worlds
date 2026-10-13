@@ -281,3 +281,25 @@ test('riskOf and oneLine', () => {
   assert.equal(oneLine('x'.repeat(300))!.length, 160);
   assert.equal(oneLine(undefined), null);
 });
+
+test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is the fallback', async () => {
+  const { mkdtempSync, writeFileSync, appendFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { store, view, cfg } = setup();
+  cfg.claudeProjectsDir = mkdtempSync(`${tmpdir()}/awproj-`);
+  const tp = `${cfg.claudeProjectsDir}/s.jsonl`;
+  const line = (text: string, at: number) => JSON.stringify({ type: 'user', timestamp: new Date(at).toISOString(), message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
+  // a marker left by an earlier turn is stale: the new prompt came after it
+  writeFileSync(tp, line('[Request interrupted by user]', Date.now() - 60_000));
+  await store.handle({ ...ev.prompt, transcript_path: tp }, '%5');
+  await store.checkInterrupts();
+  assert.equal(view().state, 'working');
+  appendFileSync(tp, line('[Request interrupted by user for tool use]', Date.now() + 1000));
+  await store.checkInterrupts();
+  assert.equal(view().state, 'idle');
+  assert.equal(view().now, 'Interrupted');
+  // no transcript marker at all: Claude's idle_prompt notification still ends 'working'
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.notifyPerm, notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }, '%5');
+  assert.equal(view().state, 'idle');
+});

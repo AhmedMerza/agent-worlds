@@ -6,6 +6,7 @@ import type { Review } from './review.ts';
 import { TEST_RE, testLine } from './review.ts';
 import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, WRITE_TOOLS, type Rule } from './rules.ts';
 import { computeConflicts, type Conflict } from './conflicts.ts';
+import { readTail } from './transcript.ts';
 
 export { riskOf };
 
@@ -64,8 +65,10 @@ export type Session = {
   transcriptPath: string | null;
   tests: Review['tests'];
   testing: Set<string>;
+  /** When the last hook event arrived: a transcript interrupt marker older than this is stale. */
+  hookAt: number;
 };
-const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing'] as const;
+const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing', 'hookAt'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -241,7 +244,7 @@ export class Store {
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
-      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(),
+      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(), hookAt: t,
     };
     if (starting) {
       s.task = starting.task;
@@ -284,6 +287,7 @@ export class Store {
     }
     const cwd = typeof p.cwd === 'string' && p.cwd.startsWith('/') ? p.cwd : '/';
     const s = this.sessions.get(id) ?? (await this.create(id, cwd, pane, direct));
+    s.hookAt = this.now();
     if (direct) s.direct = direct;
     if (pane && s.tmux?.pane !== pane) {
       s.tmux = { session: null, pane };
@@ -392,6 +396,8 @@ export class Store {
           s.state = 'waiting'; s.waitingSince = this.now();
           if (typeof p.message === 'string') s.now = oneLine(p.message, 120) ?? s.now;
         }
+        // Claude sits at its prompt (~60s): a turn interrupted with Esc that checkInterrupts missed.
+        if (type === 'idle_prompt' && s.state === 'working') this.afterPending(s, 'idle');
         break;
       }
       case 'Stop':
@@ -531,6 +537,24 @@ export class Store {
     for (const s of this.sessions.values()) {
       const w = this.worldOf(s.repo, s.cwd);
       if (w !== s.worldId) { s.worldId = w; this.push(s); }
+    }
+  }
+
+  /**
+   * Esc mid-turn fires no hook (Stop "does not run if the stoppage occurred due to a user interrupt"):
+   * Claude only appends "[Request interrupted by user…]" to its transcript. Polled for working sessions.
+   */
+  async checkInterrupts() {
+    for (const s of [...this.sessions.values()]) {
+      if (s.state !== 'working' || s.pending.length || !s.transcriptPath) continue;
+      const last = (await readTail(s.transcriptPath, 8192).catch(() => [])).at(-1);
+      const c = last?.type === 'user' ? last.message?.content : undefined;
+      const text = typeof c === 'string' ? c : Array.isArray(c) ? c[0]?.text : undefined;
+      if (typeof text !== 'string' || !text.startsWith('[Request interrupted')) continue;
+      if (!(Date.parse(last!.timestamp) >= s.hookAt) || s.state !== 'working' || !this.sessions.has(s.id)) continue;
+      this.afterPending(s, 'idle');
+      s.now = 'Interrupted';
+      this.push(s);
     }
   }
 

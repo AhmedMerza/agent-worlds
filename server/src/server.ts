@@ -587,6 +587,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const servers = cfg.listen.map(() => createServer(onRequest).on('upgrade', onUpgrade));
 
   let sweeper: NodeJS.Timeout | null = null;
+  let interrupts: NodeJS.Timeout | null = null;
   let scanner: NodeJS.Timeout | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
   return {
@@ -594,6 +595,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
+      interrupts = setInterval(() => void store.checkInterrupts(), 2_000);
+      interrupts.unref();
       const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
       void rescan();
       scanner = setInterval(rescan, 10_000);
@@ -612,6 +615,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     },
     close(): Promise<void> {
       if (sweeper) clearInterval(sweeper);
+      if (interrupts) clearInterval(interrupts);
       if (scanner) clearInterval(scanner);
       if (heartbeat) clearInterval(heartbeat);
       tunnel.stop();
