@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -491,6 +491,26 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
+    }
+
+    // A pasted or dropped file: the browser cannot hand the terminal a path, so save it here and return one to type.
+    const um = url.pathname.match(/^\/api\/sessions\/([^/]+)\/upload$/);
+    if (um && method === 'POST') {
+      if (!store.sessions.get(decodeURIComponent(um[1]))) return send(res, 404, { error: 'no such session' });
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const c of req as AsyncIterable<Buffer>) {
+        size += c.length;
+        if (size > MAX_BODY) return send(res, 413, { error: 'file too large (10 MB at most)' });
+        chunks.push(c);
+      }
+      if (!size) return send(res, 400, { error: 'empty file' });
+      const ext = extname(url.searchParams.get('name') ?? '').toLowerCase();
+      const dir = join(opts.home ?? homeDir(), 'uploads');
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      const path = join(dir, `${Date.now()}-${randomBytes(4).toString('hex')}${/^\.[a-z0-9]{1,8}$/.test(ext) ? ext : ''}`);
+      await writeFile(path, Buffer.concat(chunks), { mode: 0o600 });
+      return send(res, 200, { path });
     }
 
     const hm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/);

@@ -231,7 +231,10 @@ export class Store {
     const existing = this.sessions.get(id); // another event may have created it while git ran
     if (existing) return existing;
     const t = this.now();
-    const starting = pane || direct ? [...this.sessions.values()].find((x) => x.state === 'starting' && ((pane && x.tmux?.pane === pane) || (direct && x.direct === direct))) : undefined;
+    // One pane runs one Claude: a new id there (a 'starting' card, or /clear or /resume made a new
+    // conversation, maybe while the server was down) replaces the old session.
+    const prior = pane || direct ? [...this.sessions.values()].find((x) => x.id !== id && ((pane && x.tmux?.pane === pane) || (direct && x.direct === direct))) : undefined;
+    const starting = prior?.state === 'starting' ? prior : undefined;
     const s: Session = {
       id, worldId: this.worldOf(info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null, direct,
@@ -244,9 +247,8 @@ export class Store {
       s.task = starting.task;
       s.startedAt = starting.startedAt;
       s.tmux = starting.tmux;
-      this.sessions.delete(starting.id);
-      this.emit({ type: 'session-removed', id: starting.id });
     }
+    if (prior) this.remove(prior);
     this.sessions.set(id, s);
     return s;
   }

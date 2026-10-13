@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { LABEL, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
-import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast } from '../store'
+import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import type { Turn } from '../types'
 
@@ -45,6 +45,16 @@ async function loadHistory() {
   history.value = r.data.turns
   await nextTick()
   if (historyBox.value) historyBox.value.scrollTop = historyBox.value.scrollHeight
+}
+/** Pasted or dropped files: upload each, then type its path so Claude attaches it (as a native terminal would). */
+async function sendFiles(files: File[]) {
+  if (!s.value || !files.length) return
+  for (const f of files) {
+    const r = await uploadFile(s.value.id, f)
+    if (!r.ok) { showToast(`Could not add ${f.name || 'the file'}: ${r.error}`); continue }
+    if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: r.data.path + ' ' }))
+  }
+  term?.focus()
 }
 /** Claude's full-screen view jumps to the latest output on Ctrl+End; phones and Mac keyboards have no such key. */
 function jumpToLatest() { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: '\x1b[1;5F' })) }
@@ -111,6 +121,13 @@ async function reattach(id: string | null) {
     const copy = async (text: string) => showToast(await copyText(text) ? 'Copied to your clipboard.' : 'The browser blocked the clipboard.')
     term.parser.registerOscHandler(52, (data) => { const t = osc52Text(data); if (t) void copy(t); return true })
     host.value.addEventListener('mouseup', () => { const t = term?.getSelection().replace(/[ \t]+$/gm, ''); if (t) void copy(t) }) // no padding a terminal row adds
+    // Capture phase, so a pasted image never reaches xterm.js (it would paste nothing); plain text still pastes as usual.
+    host.value.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.files ?? [])]
+      if (files.length) { e.preventDefault(); e.stopPropagation(); void sendFiles(files) }
+    }, true)
+    host.value.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault() })
+    host.value.addEventListener('drop', (e) => { const files = [...(e.dataTransfer?.files ?? [])]; if (files.length) { e.preventDefault(); void sendFiles(files) } })
     term.textarea?.addEventListener('focus', () => { termFocused.value = true })
     term.textarea?.addEventListener('blur', () => { termFocused.value = false })
     term.onData((d) => { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d })) })

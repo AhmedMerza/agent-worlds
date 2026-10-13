@@ -144,7 +144,8 @@ const base = (id: string) => `/api/sessions/${encodeURIComponent(id)}`
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 async function api<T>(method: string, path: string, body?: unknown): Promise<ApiResult<T>> {
   try {
-    const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+    const raw = body instanceof Blob // a file goes up as-is
+    const r = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': raw ? body.type || 'application/octet-stream' : 'application/json' }, body: raw ? body : body === undefined ? undefined : JSON.stringify(body) })
     let data: unknown = null
     try { data = await r.json() } catch { /* empty body */ }
     return r.ok ? { ok: true, data: data as T } : { ok: false, error: errorText(r.status, data) }
@@ -157,6 +158,7 @@ export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/world
 export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
 export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
+export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST', `${base(id)}/upload?name=${encodeURIComponent(f.name)}`, f)
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })

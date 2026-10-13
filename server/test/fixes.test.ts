@@ -129,7 +129,30 @@ test('a GUI-started session shows at once as starting, then becomes the real ses
     await fetch(`${base}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': '%57' }, body: JSON.stringify({ ...ev.start, session_id: 'sess-fast', cwd: repo }) });
     assert.equal(await app.store.addStarting({ tmuxSession: 'aw-repo-3', pane: '%57', dir: repo, task: 'quick one' }), 'sess-fast');
     assert.deepEqual(app.store.list().map((x: any) => [x.id, x.task]), [['sess-1', 'fix the bug'], ['sess-fast', 'quick one']]);
+
+    // /clear (or /resume) in that pane gives Claude a new id: it replaces the old session, never a second card
+    await fetch(`${base}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': '%57' }, body: JSON.stringify({ ...ev.start, session_id: 'sess-cleared', cwd: repo }) });
+    assert.deepEqual(app.store.list().map((x: any) => x.id), ['sess-1', 'sess-cleared']);
   } finally { ws.close(); await app.close(); }
+});
+
+test('a pasted file is saved privately and its path returned to type', async () => {
+  const { app, base, repo } = await boot();
+  const H = { 'x-aw-token': TOKEN };
+  try {
+    await app.store.handle({ ...ev.start, cwd: repo }, null);
+    const r = await fetch(`${base}/api/sessions/sess-1/upload?name=${encodeURIComponent('shot.PNG')}`, { method: 'POST', headers: H, body: new Uint8Array([137, 80, 78, 71]) });
+    assert.equal(r.status, 200);
+    const { path } = await r.json() as { path: string };
+    assert.match(path, /\/uploads\/\d+-[0-9a-f]{8}\.png$/);
+    const { readFileSync, statSync } = await import('node:fs');
+    assert.deepEqual([...readFileSync(path)], [137, 80, 78, 71]);
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+    // a hostile name never reaches the path; unknown sessions are refused
+    const bad = await (await fetch(`${base}/api/sessions/sess-1/upload?name=${encodeURIComponent('../../x.sh; rm -rf ~')}`, { method: 'POST', headers: H, body: 'x' })).json() as { path: string };
+    assert.match(bad.path, /\/uploads\/\d+-[0-9a-f]{8}$/);
+    assert.equal((await fetch(`${base}/api/sessions/nope/upload`, { method: 'POST', headers: H, body: 'x' })).status, 404);
+  } finally { await app.close(); }
 });
 
 test('permission card target says what kind of thing is asked about', async () => {
