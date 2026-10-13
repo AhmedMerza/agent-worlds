@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { LABEL, ctxColor, ctxLevel, UNSORTED, nowText, isTouch } from '../logic'
-import { selected, groups, focusTerminal, askClaude, showToast, ui } from '../store'
+import { LABEL, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText } from '../logic'
+import { selected, groups, focusTerminal, askClaude, showToast, ui, state } from '../store'
 import ResumeButton from './ResumeButton.vue'
 
 const s = computed(() => selected.value)
@@ -30,7 +30,9 @@ async function copyAttach() {
     <div v-else-if="s.ghost" class="detail">
       <div class="d-head"><h3>{{ s.repoName }}</h3><span class="pill">Plain terminal</span></div>
       <p class="path">{{ world?.name }} · {{ s.cwd }}</p>
-      <p class="now">Running outside Agent Worlds (pid {{ s.ghost.pid }}). Quit it there, then move it into Agent Worlds to get its card, status and a live terminal here.</p>
+      <p v-if="s.ghost.lastPrompt" class="now"><span class="lbl">Last thing you asked it</span>{{ s.ghost.lastPrompt }}</p>
+      <p v-if="s.ghost.lastActivity" class="now"><span class="lbl">Last active</span>{{ ageText(s.ghost.lastActivity, state.now) }}</p>
+      <p class="why">It runs in a terminal outside Agent Worlds (pid {{ s.ghost.pid }}), so there is no live status or terminal here. Move it in to get them.</p>
       <template v-if="s.ghost.sessionId"><ResumeButton :session-id="s.ghost.sessionId" label="Move into Agent Worlds" primary /></template>
       <p v-else class="why">Which conversation this is could not be told, so it cannot be moved automatically. Use Recent sessions (R) to pick it.</p>
     </div>

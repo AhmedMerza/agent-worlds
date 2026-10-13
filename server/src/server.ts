@@ -11,7 +11,7 @@ import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, type Address } from './phone.ts';
-import { history, findTranscript, scanClaude, SESSION_ID_RE, type ClaudeProc } from './history.ts';
+import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { readHead } from './transcript.ts';
 import { readFileSync } from 'node:fs';
 
@@ -145,11 +145,26 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     return repoCache.get(cwd)!;
   };
   const isManaged = (p: ClaudeProc) => [...store.sessions.values()].some((s) => (p.pane && s.tmux?.pane === p.pane) || s.id === p.sessionId);
+  /** What a plain-terminal session is doing: its last prompt and when its transcript last changed. Re-read only on change. */
+  const ghostInfo = new Map<string, { mtime: number; lastPrompt: string | null }>();
+  async function ghostOf(sessionId: string | null): Promise<{ lastPrompt: string | null; lastActivity: number | null }> {
+    const file = sessionId ? findTranscript(cfg.claudeProjectsDir, sessionId) : null;
+    if (!file) return { lastPrompt: null, lastActivity: null };
+    let mtime: number;
+    try { mtime = Math.round((await stat(file)).mtimeMs); } catch { return { lastPrompt: null, lastActivity: null }; }
+    let hit = ghostInfo.get(file);
+    if (hit?.mtime !== mtime) {
+      hit = { mtime, lastPrompt: (await transcriptSummary(file)).lastPrompt };
+      ghostInfo.set(file, hit);
+      if (ghostInfo.size > 200) ghostInfo.delete(ghostInfo.keys().next().value!);
+    }
+    return { lastPrompt: hit.lastPrompt, lastActivity: mtime };
+  }
   async function scan() {
     procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
     const next = await Promise.all(procs.filter((p) => !isManaged(p)).map(async (p) => {
       const info = await repoOf(p.cwd);
-      return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldOf(info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since };
+      return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldOf(info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since, ...(await ghostOf(p.sessionId)) };
     }));
     if (JSON.stringify(next) !== JSON.stringify(unmanaged)) {
       unmanaged = next;

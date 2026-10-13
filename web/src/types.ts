@@ -11,7 +11,7 @@ export interface Question { question: string; header?: string; multiSelect: bool
 export interface ReviewFile { path: string; added: number; deleted: number }
 export interface ReviewCommit { sha: string; subject: string }
 /** files = changed since the session started (vs baseSha); commits = made since then; uncommitted = still in the working tree. */
-export interface Review { baseSha: string | null; files: ReviewFile[]; commits: ReviewCommit[]; uncommitted: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
+export interface Review { dir?: string; branch?: string | null; elsewhere?: boolean; baseSha: string | null; files: ReviewFile[]; commits: ReviewCommit[]; uncommitted: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
 
 export interface PermissionTarget { type: 'command' | 'file' | 'url' | 'other'; value: string }
 
@@ -54,7 +54,7 @@ export interface Session {
 }
 
 /** A Claude process running outside Agent Worlds. */
-export interface Unmanaged { pid: number; cwd: string; repo: string | null; worldId: string | null; sessionId: string | null; inTmux: boolean; since: number }
+export interface Unmanaged { pid: number; cwd: string; repo: string | null; worldId: string | null; sessionId: string | null; inTmux: boolean; since: number; lastPrompt?: string | null; lastActivity?: number | null }
 
 export interface HistorySession { sessionId: string; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean }
 

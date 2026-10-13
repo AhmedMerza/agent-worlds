@@ -64,33 +64,36 @@ export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: s
 /** Most recent sessions, newest first, reading only the tail (and the head when the tail has no cwd). */
 export async function history(dir: string, limit: number): Promise<HistoryItem[]> {
   const files = transcripts(dir).sort((a, b) => b.mtime - a.mtime).slice(0, limit);
-  return Promise.all(files.map(async (f) => {
-    let cwd: string | null = null;
-    let lastPrompt: string | null = null;
-    try {
-      const tail = await readTail(f.path, 64 * 1024);
-      for (let i = tail.length - 1; i >= 0 && (!cwd || !lastPrompt); i--) {
-        const e = tail[i];
-        // "last-prompt" lines are written lazily, so a newer typed prompt can come after the last one.
-        if (!lastPrompt) {
-          const p = e.type === 'last-prompt' && typeof e.lastPrompt === 'string' ? e.lastPrompt : userPrompt(e);
-          if (p) lastPrompt = oneLine(p);
-        }
-        if (!cwd && typeof e.cwd === 'string') cwd = e.cwd;
+  return Promise.all(files.map(async (f) => ({ sessionId: f.sessionId, ...(await transcriptSummary(f.path)), lastActivity: Math.round(f.mtime) })));
+}
+
+/** A transcript's folder and the last thing the user asked, from its tail (and its head when the tail has neither). */
+export async function transcriptSummary(path: string): Promise<{ cwd: string | null; lastPrompt: string | null }> {
+  let cwd: string | null = null;
+  let lastPrompt: string | null = null;
+  try {
+    const tail = await readTail(path, 64 * 1024);
+    for (let i = tail.length - 1; i >= 0 && (!cwd || !lastPrompt); i--) {
+      const e = tail[i];
+      // "last-prompt" lines are written lazily, so a newer typed prompt can come after the last one.
+      if (!lastPrompt) {
+        const p = e.type === 'last-prompt' && typeof e.lastPrompt === 'string' ? e.lastPrompt : userPrompt(e);
+        if (p) lastPrompt = oneLine(p);
       }
-      if (!cwd || !lastPrompt) {
-        // The tail was all one long reply: fall back to the start of the file.
-        const head = await readHead(f.path, 64 * 1024);
-        cwd ??= head.find((e) => typeof e.cwd === 'string')?.cwd ?? null;
-        if (!lastPrompt) {
-          const e = head.findLast((x) => (x.type === 'last-prompt' && typeof x.lastPrompt === 'string') || userPrompt(x));
-          lastPrompt = e ? (e.type === 'last-prompt' ? e.lastPrompt : userPrompt(e)) : null;
-        }
-        if (lastPrompt) lastPrompt = oneLine(lastPrompt);
+      if (!cwd && typeof e.cwd === 'string') cwd = e.cwd;
+    }
+    if (!cwd || !lastPrompt) {
+      // The tail was all one long reply: fall back to the start of the file.
+      const head = await readHead(path, 64 * 1024);
+      cwd ??= head.find((e) => typeof e.cwd === 'string')?.cwd ?? null;
+      if (!lastPrompt) {
+        const e = head.findLast((x) => (x.type === 'last-prompt' && typeof x.lastPrompt === 'string') || userPrompt(x));
+        lastPrompt = e ? (e.type === 'last-prompt' ? e.lastPrompt : userPrompt(e)) : null;
       }
-    } catch { /* unreadable: keep the nulls */ }
-    return { sessionId: f.sessionId, cwd, lastPrompt, lastActivity: Math.round(f.mtime) };
-  }));
+      if (lastPrompt) lastPrompt = oneLine(lastPrompt);
+    }
+  } catch { /* unreadable: keep the nulls */ }
+  return { cwd, lastPrompt };
 }
 
 export type ClaudeProc = { pid: number; cwd: string; sessionId: string | null; pane: string | null; managedHome: string | null; since: number };

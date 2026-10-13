@@ -21,6 +21,8 @@ async function run(r: Promise<{ ok: boolean; error?: string }>) {
   return res.ok
 }
 const rename = (w: World, name: string) => { const n = name.trim(); if (n && n !== w.name) return run(updateWorld(w.id, { name: n })) }
+/** The name being typed: kept while the box has focus, so a worlds update from another tab or phone can't reset it. */
+const draft = ref<{ id: string; text: string } | null>(null)
 const recolor = (w: World, color: string) => run(updateWorld(w.id, { color }))
 const removeRepo = (w: World, repo: string) => run(updateWorld(w.id, { repos: w.repos.filter((r) => r !== repo) }))
 const move = (id: string, dir: -1 | 1) => run(reorderWorlds(moveId(ids.value, id, dir)))
@@ -69,7 +71,7 @@ defineExpose({ escape })
           <li v-for="(w, i) in state.worlds" :key="w.id" class="winfo" :style="{ '--tint': w.color }">
             <label class="soon" :for="`wname-${w.id}`">Name (click to rename)</label>
             <div class="wrow">
-              <input :id="`wname-${w.id}`" class="reply-in wname" :value="w.name" :aria-label="`Name of ${w.name}`" @change="rename(w, ($event.target as HTMLInputElement).value)" @keydown.enter="($event.target as HTMLInputElement).blur()">
+              <input :id="`wname-${w.id}`" class="reply-in wname" :value="draft?.id === w.id ? draft.text : w.name" @focus="draft = { id: w.id, text: w.name }" @input="draft = { id: w.id, text: ($event.target as HTMLInputElement).value }" @blur="draft = null" :aria-label="`Name of ${w.name}`" @change="rename(w, ($event.target as HTMLInputElement).value)" @keydown.enter="($event.target as HTMLInputElement).blur()">
               <button class="btn" :disabled="i === 0" :aria-label="`Move ${w.name} up`" @click="move(w.id, -1)">↑</button>
               <button class="btn" :disabled="i === state.worlds.length - 1" :aria-label="`Move ${w.name} down`" @click="move(w.id, 1)">↓</button>
             </div>

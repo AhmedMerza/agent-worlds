@@ -15,7 +15,7 @@ const RISKS: [RegExp, string][] = [
   [/\b(mkfs|dd\s+if=)|>\s*\/dev\/sd/, 'writes to a disk device'],
   [/\bchmod\s+(-R\s+)?777\b/, 'makes files world-writable'],
 ];
-const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+export const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 /** A short reason when a request deserves a second look, else null. `root` is the session's project directory. */
 export function riskOf(tool: string, input: Input, root?: string): string | null {

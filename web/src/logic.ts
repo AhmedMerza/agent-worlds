@@ -351,7 +351,7 @@ export function ghostSession(u: Unmanaged): Session {
   const repo = u.repo ?? u.cwd
   return {
     id: ghostId(u.pid), worldId: u.worldId, repo, repoName: baseName(repo), cwd: u.cwd, branch: null, worktree: false,
-    tmux: null, state: 'idle', waitingSince: null, task: null, now: 'Running in a plain terminal', log: [], helpers: [], card: null,
+    tmux: null, state: 'idle', waitingSince: null, task: u.lastPrompt ?? null, now: 'Running in a plain terminal', log: [], helpers: [], card: null,
     startedAt: u.since, updatedAt: u.since, ghost: u,
   }
 }

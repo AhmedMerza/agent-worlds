@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Review } from '../types'
-import { capDiff, diffClass, reviewView } from '../logic'
+import { baseName, capDiff, diffClass, reviewView } from '../logic'
 import { askClaude, acknowledge } from '../store'
 
 const props = defineProps<{ id: string; name: string; branch: string | null; review: Review }>()
@@ -11,13 +11,14 @@ const v = computed(() => reviewView(props.review))
 </script>
 
 <template>
+  <p v-if="review.elsewhere && review.dir" class="why rv-where">Worked in <b :title="review.dir">{{ baseName(review.dir) }}</b>{{ review.branch ? ` on ${review.branch}` : '' }}, not the folder it started in.</p>
   <div v-if="v.changed.length" class="rv">
     <span class="lbl">Changed since this session started</span>
     <ul class="files"><li v-for="f in v.changed" :key="f.path"><span>{{ f.path }}</span><b class="add">+{{ f.added }}</b><b class="del">−{{ f.deleted }}</b></li></ul>
   </div>
   <p v-else-if="!v.commits.length && !v.uncommitted.length && !review.diff" class="why">No files changed since this session started.</p>
   <div v-if="v.commits.length" class="rv">
-    <span class="lbl">{{ v.commits.length }} {{ v.commits.length === 1 ? 'commit' : 'commits' }} on {{ branch ?? 'this branch' }}</span>
+    <span class="lbl">{{ v.commits.length }} {{ v.commits.length === 1 ? 'commit' : 'commits' }} on {{ review.branch ?? branch ?? 'this branch' }}</span>
     <ul class="commits"><li v-for="c in v.commits" :key="c.sha"><code>{{ c.sha.slice(0, 7) }}</code> {{ c.subject }}</li></ul>
   </div>
   <div v-if="v.uncommitted.length" class="rv">

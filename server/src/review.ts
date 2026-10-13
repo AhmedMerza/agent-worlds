@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 
-export type Review = { baseSha: string | null; files: { path: string; added: number; deleted: number }[]; commits: { sha: string; subject: string }[]; uncommitted: { path: string; added: number; deleted: number }[]; diff: string; tests: { command: string; ok: boolean; line: string } | null };
+export type Review = { dir: string; branch: string | null; elsewhere: boolean; baseSha: string | null; files: { path: string; added: number; deleted: number }[]; commits: { sha: string; subject: string }[]; uncommitted: { path: string; added: number; deleted: number }[]; diff: string; tests: { command: string; ok: boolean; line: string } | null };
 
 const DIFF_MAX = 200 * 1024;
 const UNTRACKED_MAX = 50;
@@ -70,7 +70,8 @@ export async function reviewOf(cwd: string, tests: Review['tests'], baseSha: str
   if (diff.length > DIFF_MAX) diff = diff.slice(0, DIFF_MAX) + '\n… diff truncated at 200 KB\n';
   const commits = ((await git(cwd, ['log', '--no-color', '--format=%H%x1f%s%x1e', `${base}..HEAD`])) ?? '').split('\x1e').map((r) => r.trim()).filter(Boolean)
     .map((r) => { const [sha, subject] = r.split('\x1f'); return { sha, subject: subject ?? '' }; });
-  return { baseSha: known ? base : null, files, commits, uncommitted, diff, tests };
+  const branch = (await git(cwd, ['branch', '--show-current']))?.trim() || null;
+  return { dir: cwd, branch, elsewhere: false, baseSha: known ? base : null, files, commits, uncommitted, diff, tests };
 }
 
 export const TEST_RE = /\b(phpunit|artisan\s+test|pest|vitest|jest|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test|pytest|go\s+test|flutter\s+test|cargo\s+test|node\s+--test)\b/;

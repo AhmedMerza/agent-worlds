@@ -130,7 +130,9 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
     await app.scan();
     const st = await get('/api/state');
     assert.equal(st.unmanaged.length, 1);
-    assert.deepEqual({ ...st.unmanaged[0], since: 0 }, { pid: 201, cwd: repo, repo, worldId: 'web', sessionId: a, inTmux: false, since: 0 });
+    assert.deepEqual({ ...st.unmanaged[0], since: 0, lastActivity: 0 }, { pid: 201, cwd: repo, repo, worldId: 'web', sessionId: a, inTmux: false, since: 0, lastPrompt: st.unmanaged[0].lastPrompt, lastActivity: 0 });
+    assert.equal(typeof st.unmanaged[0].lastActivity, 'number', 'when its transcript last changed');
+    assert.ok(st.unmanaged[0].lastPrompt, 'what it was last asked');
 
     const ws = new WebSocket(base.replace('http', 'ws') + '/ws', { headers: { 'x-aw-token': 'i'.repeat(64) } });
     const snap = await new Promise<any>((r) => ws.once('message', (m) => r(JSON.parse(m.toString()))));

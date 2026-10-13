@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { Config } from './config.ts';
 import type { RepoInfo } from './sys.ts';
 import type { Review } from './review.ts';
 import { TEST_RE, testLine } from './review.ts';
-import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, type Rule } from './rules.ts';
+import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, WRITE_TOOLS, type Rule } from './rules.ts';
 import { computeConflicts, type Conflict } from './conflicts.ts';
 
 export { riskOf };
@@ -50,6 +50,9 @@ export type Session = {
   // internal, never sent to clients
   pending: Pending[];
   top: string;
+  /** Git top-level of the last place this session wrote or committed, when that is not `top` (another worktree). */
+  reviewTop: string | null;
+  workDir: string | null;
   baseSha: string | null;
   taskSure: boolean;
   catchupSig: string | null;
@@ -60,7 +63,7 @@ export type Session = {
   tests: Review['tests'];
   testing: Set<string>;
 };
-const INTERNAL = ['pending', 'top', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing'] as const;
+const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -225,7 +228,7 @@ export class Store {
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
-      pending: [], top: info.top ?? cwd, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(),
+      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(),
     };
     if (starting) {
       s.task = starting.task;
@@ -321,6 +324,12 @@ export class Store {
         this.afterPending(s, 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
         if (ev === 'PostToolUse' && tool === 'Bash') this.refreshBranch(s);
+        const wd = ev === 'PostToolUse' ? workDirOf(tool, input) : null;
+        if (wd && wd !== s.workDir) {
+          s.workDir = wd;
+          // Only a git repo moves the review; a stray edit to a dotfile must not blank it.
+          this.deps.repoInfo(wd).then((i) => { if (s.workDir === wd && 'head' in i) { const top = i.top ?? wd; s.reviewTop = top === s.top ? null : top; } }).catch(() => {});
+        }
         if (tool === 'Bash' && typeof input.command === 'string' && TEST_RE.test(input.command)) {
           const r = (p.tool_response ?? {}) as Record<string, unknown>;
           const out = [r.stdout, r.stderr, p.error].filter((x) => typeof x === 'string').join('\n');
@@ -516,4 +525,14 @@ export class Store {
   sweep(alive: string[]) {
     for (const s of [...this.sessions.values()]) if (s.tmux?.session && !alive.includes(s.tmux.session)) this.remove(s);
   }
+}
+
+/** Where a session wrote: the folder of a file it edited, or the folder of a `cd /x && … git commit` / `git -C /x commit`. */
+export function workDirOf(tool: string, input: Record<string, unknown>): string | null {
+  const file = input.file_path ?? input.notebook_path;
+  if (WRITE_TOOLS.has(tool) && typeof file === 'string' && file.startsWith('/')) return dirname(file);
+  const cmd = input.command;
+  if (tool !== 'Bash' || typeof cmd !== 'string' || !/\bgit\b[^;&|]*\bcommit\b/.test(cmd)) return null;
+  const m = cmd.match(/^\s*cd\s+(["']?)(\/[^"'\s;&|]+)\1\s*(?:&&|;)/) ?? cmd.match(/\bgit\s+-C\s+(["']?)(\/[^"'\s;&|]+)\1/);
+  return m ? m[2] : null;
 }
