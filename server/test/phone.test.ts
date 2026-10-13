@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -71,5 +71,32 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
     assert.equal((await call('/api/phone/allow', { address: '127.0.0.2', allow: false })).status, 200);
     assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).listen, ['127.0.0.1']);
     await assert.rejects(getRaw('127.0.0.2', port, '/'), 'no longer listening there');
+  } finally { await app.close(); }
+});
+
+test('history: the conversation from the transcript; 404 unknown, 409 without a transcript', async () => {
+  const home = tmp();
+  const { ev } = await import('./fixtures.ts');
+  const tp = join(home, 'proj', 'sess.jsonl');
+  (await import('node:fs')).mkdirSync(join(home, 'proj'));
+  writeFileSync(tp, [
+    { type: 'user', message: { role: 'user', content: 'Fix the login bug' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test\nmore' } }, { type: 'text', text: 'Fixed. Tests pass.' }] } },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const app = startServer({ ...parseConfig({ claudeProjectsDir: home }), port: 0 }, TOKEN, {
+    home, procRoot: join(home, 'none'), cloudflared: null, detectFirewall: async () => null,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
+  });
+  await app.store.handle({ ...ev.start, session_id: 'with', transcript_path: tp }, '%7');
+  await app.store.handle({ ...ev.start, session_id: 'without', transcript_path: undefined }, null);
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+  const get = async (id: string) => { const r = await fetch(`${base}/api/sessions/${id}/history`, { headers: { 'x-aw-token': TOKEN } }); return { status: r.status, body: await r.json() as any }; };
+  try {
+    assert.deepEqual(await get('with'), { status: 200, body: { turns: [
+      { who: 'you', text: 'Fix the login bug' }, { who: 'step', text: 'Bash: npm test' }, { who: 'claude', text: 'Fixed. Tests pass.' },
+    ] } });
+    assert.equal((await get('without')).status, 409);
+    assert.equal((await get('nope')).status, 404);
   } finally { await app.close(); }
 });

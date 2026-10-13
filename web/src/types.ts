@@ -75,6 +75,8 @@ export interface FsListing { path: string; parent: string | null; entries: FsEnt
 
 /** GET /api/phone: addresses a phone could use, and whether phones are allowed on each. */
 export type PhoneInfo = { port: number; addresses: { address: string; kind: 'tailscale' | 'lan'; iface: string; allowed: boolean }[]; passwordSet: boolean; cloudflared: boolean; canInstall?: boolean; firewall?: 'firewalld' | 'ufw' | null; lanReached?: boolean; tunnel: string | null }
+/** GET /api/sessions/:id/history: the conversation from the transcript, oldest first. */
+export type Turn = { who: 'you' | 'claude' | 'step'; text: string }
 /** GET /api/access: devices that signed in and every sign-in or failed try, newest first. `you` is this browser's device id. */
 export type AccessInfo = {
   devices: { device: string; first: number; last: number; ip: string; route: string; via: string; agent: string }[]

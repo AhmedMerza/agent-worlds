@@ -74,22 +74,31 @@ export function contextOf(entries: Entry[], model: string | null, limit = DEFAUL
   return null;
 }
 
-/** A compact plain-text account of the conversation, newest last, at most `max` characters. */
-export function excerpt(entries: Entry[], max = 12_000): string {
-  const parts: string[] = [];
+export type Turn = { who: 'you' | 'claude' | 'step'; text: string };
+
+/** The conversation as turns, oldest first: what you typed, what Claude wrote, and one line per tool step. */
+export function conversation(entries: Entry[]): Turn[] {
+  const turns: Turn[] = [];
   for (const e of entries) {
     const p = userPrompt(e);
-    if (p) { parts.push(`USER: ${p.slice(0, 1500)}`); continue; }
+    if (p) { turns.push({ who: 'you', text: p }); continue; }
     if (e.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
     for (const c of e.message.content) {
-      if (c?.type === 'text' && c.text?.trim()) parts.push(`ASSISTANT: ${c.text.trim().slice(0, 1500)}`);
+      if (c?.type === 'text' && c.text?.trim()) turns.push({ who: 'claude', text: c.text.trim() });
       else if (c?.type === 'tool_use') {
         const i = c.input ?? {};
         const arg = i.command ?? i.file_path ?? i.description ?? i.pattern ?? i.url ?? '';
-        parts.push(`TOOL ${c.name}: ${String(arg).split('\n')[0].slice(0, 200)}`);
+        turns.push({ who: 'step', text: `${c.name}: ${String(arg).split('\n')[0].slice(0, 200)}` });
       }
     }
   }
+  return turns;
+}
+
+/** A compact plain-text account of the conversation, newest last, at most `max` characters. */
+export function excerpt(entries: Entry[], max = 12_000): string {
+  const LABEL = { you: 'USER', claude: 'ASSISTANT', step: 'TOOL' } as const;
+  const parts = conversation(entries).map((t) => `${LABEL[t.who]}${t.who === 'step' ? ' ' : ': '}${t.who === 'step' ? t.text : t.text.slice(0, 1500)}`);
   let out = '';
   for (let i = parts.length - 1; i >= 0; i--) {
     if (out.length + parts[i].length + 1 > max) break;
