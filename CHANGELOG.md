@@ -3,6 +3,8 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-14
+- Terminal: **Restart** quits the session's Claude and resumes the same conversation in a fresh one, in the same tmux pane, which redraws a wrecked screen for good. It keeps the session's permission mode, settings and model, and asks first when Claude is mid-turn (`POST /api/sessions/:id/restart`).
+- Terminal text gets wrecked less: the terminal refits once its font has loaded, never squeezes the session to 0 columns while hidden, and starts clean after a reconnect.
 - A session whose turn ends with only long-running background tasks (a dev server, an artifact watcher) goes to the Help desk instead of sitting at its desk with a clock: only background work started since your last prompt (a background helper or command, a monitor) means Claude is coming back. This also holds across a server restart.
 - Room text stays readable on a phone: name tags and desk labels never shrink below about 10 px. Each chip under a room shows the branch. The overlap `!` sits left of the head, clear of the bubble and timer. README describes the illustrated rooms.
 - A helper backgrounded mid-run (Ctrl+B) no longer sends its session to the lounge: it counts as running until it finishes, and neither Claude's idle notice nor the Esc check ends the turn meanwhile.

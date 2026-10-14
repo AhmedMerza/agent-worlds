@@ -167,6 +167,7 @@ export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${
 export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
 export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST', `${base(id)}/upload?name=${encodeURIComponent(f.name)}`, f)
+export const restartSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/restart`, { force })
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })
