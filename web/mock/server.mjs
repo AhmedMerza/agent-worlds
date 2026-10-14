@@ -160,6 +160,8 @@ const server = http.createServer(async (req, res) => {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
   if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
+  if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false }, { id: 'qwen', name: 'Qwen Code', installed: false, modes: false }], default: 'claude' })
+  if (req.method === 'POST' && url.pathname === '/api/agents/default') return json(200, { default: 'codex' })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
   // Phone: one made-up LAN address, no Tailscale; the QR link points nowhere real.
   if (req.method === 'GET' && url.pathname === '/api/phone') return json(200, { port: PORT, addresses: [{ address: '192.168.1.20', kind: 'lan', iface: 'wlan0', allowed: phoneAllowed }] })

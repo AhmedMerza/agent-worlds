@@ -5,15 +5,21 @@ import { fileURLToPath } from 'node:url';
 const HOOK = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-hook');
 
 /** Hook timeouts (seconds). PermissionRequest is held by the server for up to HOLD_MS (3540 s), so its hook gets 3600 s. */
-const HOLD_TIMEOUT = 3600;
-const FAST_TIMEOUT = 10;
+export const HOLD_TIMEOUT = 3600;
+export const FAST_TIMEOUT = 10;
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest',
   'Notification', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd'];
 
-export function hooksBlock(hookPath = HOOK) {
-  const command = /^[\w./-]+$/.test(hookPath) ? hookPath : `'${hookPath.replace(/'/g, `'\\''`)}'`;
+/** The hook command line; a non-Claude agent is named after the script so the server knows who reports. */
+export function hookCommand(agent?: string, hookPath = HOOK) {
+  const cmd = /^[\w./-]+$/.test(hookPath) ? hookPath : `'${hookPath.replace(/'/g, `'\\''`)}'`;
+  return agent ? `${cmd} ${agent}` : cmd;
+}
+
+export function hooksBlock(hookPath = HOOK, agent?: string, events: readonly string[] = HOOK_EVENTS) {
+  const command = hookCommand(agent, hookPath);
   const hooks: Record<string, unknown> = {};
-  for (const ev of HOOK_EVENTS) {
+  for (const ev of events) {
     hooks[ev] = [{ hooks: [{ type: 'command', command, timeout: ev === 'PermissionRequest' ? HOLD_TIMEOUT : FAST_TIMEOUT }] }];
   }
   return { hooks };

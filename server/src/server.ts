@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, type Config } from './config.ts';
 import { Store } from './store.ts';
+import { AGENTS, defaultAgent, installed as onPath, isAgent } from './agents.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
@@ -345,6 +346,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = await readBody(req);
       const pane = req.headers['x-aw-pane'];
       const pty = req.headers['x-aw-pty'];
+      const agent = req.headers['x-aw-agent'];
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       const now = Date.now();
@@ -352,7 +354,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const key = createHash('sha1').update(String(pane)).update('\0').update(String(pty)).update('\0').update(JSON.stringify(body)).digest('hex');
       let reply = recent.get(key)?.reply;
       if (!reply) {
-        reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal, typeof pty === 'string' && direct.has(pty) ? pty : null);
+        reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal, typeof pty === 'string' && direct.has(pty) ? pty : null, isAgent(agent) ? agent : 'claude');
         const entry = { at: 0, reply };
         recent.set(key, entry);
         reply.finally(() => { entry.at = Date.now(); }).catch(() => {});
@@ -363,6 +365,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
+    }
+    if (method === 'GET' && url.pathname === '/api/agents') {
+      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || onPath(a.bin), modes: a.modes })), default: defaultAgent(cfg.defaultAgent) });
+    }
+    if (method === 'POST' && url.pathname === '/api/agents/default') {
+      const b = await readBody(req);
+      if (!isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
+      const err = saveConfigKey(join(opts.home ?? homeDir(), 'config.json'), 'defaultAgent', b.agent);
+      if (err) return send(res, 500, { error: err });
+      cfg.defaultAgent = b.agent;
+      return send(res, 200, { default: defaultAgent(cfg.defaultAgent) });
     }
     if (method === 'GET' && url.pathname === '/api/claude-defaults') {
       let permissionMode: string | null = null;
@@ -493,9 +506,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
       if (b.branch !== undefined && b.branch !== '' && (typeof b.branch !== 'string' || !b.worktree)) return send(res, 400, { error: 'branch must be a string and needs worktree: true' });
       if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      if (b.agent !== undefined && !isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
+      const agent = isAgent(b.agent) ? b.agent : defaultAgent(cfg.defaultAgent);
+      if (agent !== 'claude' && !onPath(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       try {
-        const r = await createSession({ repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null });
+        const r = await createSession({ agent, repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null, agent });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -506,6 +522,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const s = store.sessions.get(decodeURIComponent(rm[1]));
       if (!s) return send(res, 404, { error: 'no such session' });
       if (!s.tmux) return send(res, 409, { error: 'only a session running in tmux can be restarted' });
+      if (s.agent !== 'claude') return send(res, 409, { error: `only a Claude Code session can be restarted, not ${AGENTS[s.agent].name}` });
       const body = await readBody(req).catch(() => ({} as Record<string, unknown>));
       if (s.state === 'working' && body.force !== true) return send(res, 409, { error: 'it is in the middle of a turn: restarting stops that turn', working: true });
       const proc = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir).find((p) => p.pane === s.tmux!.pane);
