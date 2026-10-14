@@ -4,7 +4,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Config, World } from './config.ts';
 
-export const PALETTE = ['#47b4a7', '#e0a03a', '#8a7bd8', '#d9644a', '#5b9bd5', '#c46aa6', '#7fae4e', '#c9b037'];
+/** Same list as the swatches in web/src/logic.ts (PALETTE): a colour picked here must be one the world panel offers. */
+export const PALETTE = ['#47b4a7', '#e07aa8', '#9c88df', '#f2b84b', '#6aaef0', '#72cf98', '#ee705f', '#f08a5d'];
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const FS_MAX = 500;
 

@@ -59,14 +59,14 @@ describe('walking', () => {
   })
 })
 
-import { roomHeight } from '../src/zones'
+import { roomHeight, ROOM_H } from '../src/zones'
 describe('roomHeight', () => {
   it('grows with the busiest zone and is bounded', () => {
     const one = roomHeight([mk('a')])
     const eight = roomHeight(Array.from({ length: 8 }, (_, i) => mk('s' + i)))
     expect(eight).toBeGreaterThan(one)
     expect(roomHeight([])).toBeGreaterThanOrEqual(150)
-    expect(roomHeight(Array.from({ length: 30 }, (_, i) => mk('s' + i)))).toBeLessThanOrEqual(250)
+    expect(roomHeight(Array.from({ length: 30 }, (_, i) => mk('s' + i)))).toBeLessThanOrEqual(ROOM_H)
   })
 })
 
@@ -77,5 +77,37 @@ describe('walking sprites', () => {
     const before = at(400)
     pauseWalker(w, 300)
     expect(at(700)).toBeCloseTo(before)
+  })
+})
+
+import { look } from '../src/canvas'
+describe('look', () => {
+  it('gives every session a hair and skin colour, whatever its id hashes to', () => {
+    for (let i = 0; i < 500; i++) { const l = look('session-' + i); expect(l.hair).toMatch(/^#/); expect(l.skin).toMatch(/^#/); expect(l.shirt).toMatch(/^#/) }
+  })
+})
+
+import { zoneBounds, slotWidth, ROOM_W } from '../src/zones'
+describe('zoneBounds', () => {
+  const all = (b: ReturnType<typeof zoneBounds>) => [b.lounge, b.desks, b.help]
+  it('keeps the quiet layout when no zone is crowded', () => {
+    expect(zoneBounds({ lounge: 1, desks: 4, help: 1 })).toEqual(ZONE_X)
+  })
+  it('widens a crowded help desk so three name tags fit, taking room from quiet desks', () => {
+    const b = zoneBounds({ lounge: 0, desks: 1, help: 3 })
+    expect(slotWidth('help', 3, b)).toBeGreaterThanOrEqual(54)
+    expect(slotWidth('help', 3, b)).toBeGreaterThan(slotWidth('help', 3))
+  })
+  it('always covers the room edge to edge with no gaps, however full', () => {
+    for (const c of [{ lounge: 0, desks: 0, help: 0 }, { lounge: 9, desks: 8, help: 9 }, { lounge: 3, desks: 0, help: 3 }, { lounge: 2, desks: 8, help: 0 }]) {
+      const b = zoneBounds(c)
+      expect(b.lounge[0]).toBe(0); expect(b.help[1]).toBe(ROOM_W)
+      expect(b.lounge[1]).toBe(b.desks[0]); expect(b.desks[1]).toBe(b.help[0])
+      for (const [x0, x1] of all(b)) expect(x1 - x0).toBeGreaterThanOrEqual(100)
+      for (const zone of ['lounge', 'desks', 'help'] as const) for (let i = 0; i < Math.min(c[zone], capacity(zone)); i++) {
+        const x = slotPos(zone, i, c[zone], b).x
+        expect(x).toBeGreaterThan(b[zone][0]); expect(x).toBeLessThan(b[zone][1])
+      }
+    }
   })
 })

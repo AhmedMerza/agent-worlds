@@ -2,13 +2,13 @@ import type { Session, SessionState } from './types'
 
 export type Zone = 'lounge' | 'desks' | 'help'
 export const ROOM_W = 480
-export const ROOM_H = 250
+export const ROOM_H = 300
 export const FLOOR_TOP = 48
-/** Horizontal extent of each zone in room coordinates. */
+/** Horizontal extent of each zone in a quiet room; a busy room uses zoneBounds. */
 export const ZONE_X: Record<Zone, [number, number]> = { lounge: [0, 120], desks: [120, 360], help: [360, 480] }
 const MAX_COLS: Record<Zone, number> = { lounge: 3, desks: 4, help: 3 }
 const MAX_ROWS: Record<Zone, number> = { lounge: 3, desks: 2, help: 3 }
-const ROW_H: Record<Zone, number> = { lounge: 66, desks: 98, help: 66 }
+const ROW_H: Record<Zone, number> = { lounge: 80, desks: 112, help: 80 }
 const FIRST_TOP: Record<Zone, number> = { lounge: 76, desks: 68, help: 76 }
 export const WALK_MS = 1000
 
@@ -25,16 +25,33 @@ export function assignZones(sessions: Session[]): Record<Zone, Session[]> {
 
 export interface Pos { x: number; top: number }
 
+type Bounds = Record<Zone, [number, number]>
+const COL_W: Record<Zone, number> = { lounge: 46, desks: 55, help: 54 }
+/** Lounge furniture and the help counter need this much; desks can go narrower. */
+const MIN_W: Record<Zone, number> = { lounge: 120, desks: 140, help: 120 }
+
+/** Zone extents for a room: a crowded zone widens (up to what its columns need) and a quiet one gives way.
+ *  When every zone wants more than the room has, each gets its share in proportion. */
+export function zoneBounds(counts: Record<Zone, number>): Bounds {
+  const want = {} as Record<Zone, number>
+  for (const z of ['lounge', 'desks', 'help'] as Zone[]) want[z] = Math.max(MIN_W[z], 20 + Math.max(1, Math.min(counts[z], MAX_COLS[z])) * COL_W[z])
+  const total = want.lounge + want.desks + want.help
+  let l = want.lounge, h = want.help
+  if (total > ROOM_W) { l = Math.round(want.lounge * ROOM_W / total); h = Math.round(want.help * ROOM_W / total) }
+  return { lounge: [0, l], desks: [l, ROOM_W - h], help: [ROOM_W - h, ROOM_W] }
+}
+export const countZones = (z: Record<Zone, unknown[]>): Record<Zone, number> => ({ lounge: z.lounge.length, desks: z.desks.length, help: z.help.length })
+
 /** Centre-x and sprite-top of slot `i` when `n` sessions share the zone; spacing shrinks as n grows. */
-export function slotPos(zone: Zone, i: number, n: number): Pos {
+export function slotPos(zone: Zone, i: number, n: number, bounds: Bounds = ZONE_X): Pos {
   const cols = Math.max(1, Math.min(n, MAX_COLS[zone]))
-  const [x0, x1] = ZONE_X[zone]
+  const [x0, x1] = bounds[zone]
   const col = i % cols, row = Math.floor(i / cols)
   const pad = 10 // keeps timers and bubbles inside the room edge
   return { x: Math.round(x0 + pad + (col + 0.5) * (x1 - x0 - 2 * pad) / cols), top: FIRST_TOP[zone] + row * ROW_H[zone] }
 }
 /** Width available to one slot (desks shrink with it). */
-export const slotWidth = (zone: Zone, n: number): number => (ZONE_X[zone][1] - ZONE_X[zone][0] - 20) / Math.max(1, Math.min(n, MAX_COLS[zone]))
+export const slotWidth = (zone: Zone, n: number, bounds: Bounds = ZONE_X): number => (bounds[zone][1] - bounds[zone][0] - 20) / Math.max(1, Math.min(n, MAX_COLS[zone]))
 
 /** Eased position between two slots. `moving` is false once arrived (or when motion is reduced). */
 export function walkPos(from: Pos, to: Pos, elapsedMs: number, reduced: boolean, dur = WALK_MS): Pos & { moving: boolean } {
@@ -66,7 +83,7 @@ export function roomHeight(sessions: Session[]): number {
     const n = Math.min(z[zone].length, capacity(zone))
     if (!n) continue
     const rows = Math.ceil(n / Math.min(n, MAX_COLS[zone]))
-    const bottom = FIRST_TOP[zone] + (rows - 1) * ROW_H[zone] + (zone === 'desks' ? 118 : 56)
+    const bottom = FIRST_TOP[zone] + (rows - 1) * ROW_H[zone] + (zone === 'desks' ? 124 : 66)
     need = Math.max(need, bottom)
   }
   return Math.min(ROOM_H, Math.max(150, need + 8))

@@ -4,7 +4,7 @@
   --bg:#12161d; --panel:#1a1f28; --panel-2:#222935; --line:#2d3544;
   --ink:#ece6d9; --muted:#9aa2b0; --dark-ink:#14110b;
   --work:#6aaef0; --wait:#f2b84b; --ok:#72cf98; --err:#ee705f; --idle:#8a92a0;
-  --f-display:"Pixelify Sans","Courier New",monospace;
+  --f-display:"Atkinson Hyperlegible",system-ui,sans-serif;
   --f-body:"Atkinson Hyperlegible",system-ui,sans-serif;
   --f-mono:"JetBrains Mono",ui-monospace,monospace;
 }
@@ -31,7 +31,7 @@ kbd{font-family:var(--f-mono);font-size:11.5px;color:var(--ink);background:var(-
 .room h2{font-family:var(--f-display);font-size:21px;font-weight:600;margin:0;color:var(--tint)}
 .meta{font-size:12.5px;color:var(--muted)}
 .canvas-wrap{background:var(--bg);min-width:0;position:relative;flex:1}
-.room canvas{display:block;position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;background:var(--bg)}
+.room canvas{display:block;position:absolute;inset:0;width:100%;height:100%;background:var(--bg)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 12px}
 .chip{font:inherit;font-size:12.5px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:4px;padding:3px 8px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .chip .st{color:var(--muted)}
@@ -318,6 +318,8 @@ pre.diff{max-height:320px;overflow:auto}
 .wname{border-style:dashed}
 .wname:hover,.wname:focus{border-style:solid}
 .chip .chip-task{max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+.chip .chip-branch{max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom;margin-left:.35em}
+.chip .chip-branch::before{content:"⎇ "}
 .rv-where{margin:0 0 6px}
 .dialog.phone .here{border:1px solid var(--ok);border-radius:6px;padding:10px 12px;margin-bottom:10px}
 .dialog.phone .here p{margin:0 0 4px}

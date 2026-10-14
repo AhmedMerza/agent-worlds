@@ -1,6 +1,6 @@
 # Agent Worlds
 
-**Run and watch many Claude Code sessions from one browser tab.** Sessions live in pixel-art
+**Run and watch many Claude Code sessions from one browser tab.** Sessions live in illustrated
 rooms, everything that needs you lands in one inbox, and each session is the real `claude`
 CLI in a real terminal.
 
@@ -30,6 +30,11 @@ room, and each session stands in the zone that matches what it is doing:
 | **Lounge** (left, dim) | idle sessions, resting |
 | **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, including one you sent to the background mid-run with Ctrl+B, background commands, a scheduled wake-up) runs on after its turn. If that work never reports back, it moves to the Help desk as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
 | **Help desk** (right, amber) | sessions that need you: waiting, finished or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
+
+Each character wears a name tag with its project and branch; hover or select one to read both in full,
+and the chips under the room list them too. Faces show the state: smiling at work, asleep when idle,
+frowning on error. A busy zone widens and a quiet one gives way, so a crowded help desk keeps its
+tags readable, and on a phone the tags stay at a readable size.
 
 Characters walk between zones when their state changes. Click a character (or its chip) to select it
 and type straight into its terminal; `1`-`9` select it and keep the keyboard shortcuts.
@@ -63,7 +68,8 @@ The list holds still while your pointer is over it, so a click never lands on a 
 - **Catch-up** (on request): a short "you asked / it did / it needs" summary of any session.
 - **Context and conflicts**: how full each session's context is, with `/checkpoint`,
   `/handover-save` and `/clear` buttons when it gets heavy, and a warning when two sessions
-  work in the same folder, branch, shared test database or issue.
+  work in the same folder, branch, shared test database or issue (a dashed line between them in
+  the room, and a `!` beside each).
 
 ### Live terminal
 
