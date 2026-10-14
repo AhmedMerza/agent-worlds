@@ -3,6 +3,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-14
+- A session whose turn ends with only long-running background tasks (a dev server, an artifact watcher) goes to the Help desk instead of sitting at its desk with a clock: only tasks new since the last turn end mean Claude is coming back.
 - Room text stays readable on a phone: name tags and desk labels never shrink below about 10 px. Each chip under a room shows the branch. The overlap `!` sits left of the head, clear of the bubble and timer. README describes the illustrated rooms.
 - A helper backgrounded mid-run (Ctrl+B) no longer sends its session to the lounge: it counts as running until it finishes, and neither Claude's idle notice nor the Esc check ends the turn meanwhile.
 

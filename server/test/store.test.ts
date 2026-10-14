@@ -286,13 +286,34 @@ test('a turn that ends with background work running stays at the desks until it 
   assert.equal(view().busy, null);
 
   // nothing ever reports back: done after 30 min, with the turn's summary
-  await store.handle({ ...ev.stop, background_tasks: [task] }, null);
+  await store.handle({ ...ev.stop, background_tasks: [{ ...task, id: 'b3' }] }, null);
   t += 29 * 60_000; store.checkBusy();
   assert.equal(view().state, 'working');
   t += 2 * 60_000; store.checkBusy();
   assert.equal(view().state, 'done');
   assert.deepEqual(view().card, { kind: 'done', summary: 'ok', review: null });
   assert.equal(view().busy, null);
+});
+
+test('a task listed at an earlier turn end (a dev server, an artifact watcher) does not hold the session at its desk', async () => {
+  const { store, view } = setup();
+  const server = { id: 'byqi1f1o8', type: 'shell', status: 'running', description: 'Serve the APK folder on port 8090 for the phone' };
+  const watcher = { id: 'sa0lfcrfr', type: 'monitor', status: 'running', description: 'live updates for artifact' };
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [server] }, null);
+  assert.equal(view().state, 'working', 'new this turn: it may bring Claude back');
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [server, watcher] }, null);
+  assert.deepEqual(view().busy, { kind: 'background', tasks: 1, nextAt: null }, 'only the watcher is new');
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [server, watcher] }, null);
+  assert.equal(view().state, 'done', 'both seen before: the turn is done and needs you');
+  assert.equal(view().busy, null);
+  const agent = { id: 'a731c59366f2c0b1a', type: 'subagent', status: 'running', description: 'Screenshot AED COD pages' };
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [server, watcher, agent] }, null);
+  assert.equal(view().now, 'Waiting on 1 background task', 'a fresh helper still counts');
+  assert.equal('seenTasks' in view(), false, 'internal');
 });
 
 test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {
