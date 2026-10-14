@@ -77,10 +77,10 @@ export type Session = {
   hookAt: number;
   /** A background wait gives up at `at` and shows `summary` as done. */
   busyEnd: { at: number; summary: string | null } | null;
-  /** Background task ids Claude Code listed at the last turn end. */
-  seenTasks: Set<string>;
+  /** Since your last prompt Claude started background work (a background helper or command, a monitor) that can bring it back. */
+  launched: boolean;
 };
-const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing', 'hookAt', 'busyEnd', 'seenTasks'] as const;
+const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing', 'hookAt', 'busyEnd', 'launched'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -256,7 +256,7 @@ export class Store {
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
-      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(), seenTasks: new Set(), hookAt: t,
+      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(), launched: false, hookAt: t,
     };
     if (starting) {
       s.task = starting.task;
@@ -335,13 +335,14 @@ export class Store {
         if (!s.task && prompt && !prompt.startsWith('/')) s.task = oneLine(prompt, 200);
         s.lastPrompt = oneLine(prompt, 200) ?? s.lastPrompt;
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Thinking';
-        s.busy = null; s.busyEnd = null;
+        s.busy = null; s.busyEnd = null; s.launched = false;
         this.log(s, `You: ${prompt}`);
         this.refreshBranch(s);
         break;
       }
       case 'PreToolUse':
         this.log(s, describe(tool, input));
+        if (input.run_in_background === true || tool === 'Monitor') s.launched = true;
         if (!rest) {
           s.now = describe(tool, input);
           s.card = null;
@@ -382,7 +383,7 @@ export class Store {
           const h = s.helpers.find((x) => x.id === p.tool_use_id);
           // Backgrounded mid-run (Ctrl+B) returns at once with an async result, though the helper runs on.
           const r = (p.tool_response ?? {}) as Record<string, unknown>;
-          if (h && (r.isAsync === true || r.status === 'async_launched')) h.bg = true;
+          if (h && (r.isAsync === true || r.status === 'async_launched')) { h.bg = true; s.launched = true; }
           if (h && !h.bg) h.state = 'done';
         }
         break;
@@ -434,11 +435,6 @@ export class Store {
         s.testing.clear();
         this.refreshBranch(s);
         s.busy = null; s.busyEnd = null;
-        // Only tasks new since the last turn end bring Claude back: one listed before is a long-runner
-        // (a dev server, an artifact watcher) that would otherwise hold the session at its desk after every turn.
-        const ids = (Array.isArray(p.background_tasks) ? p.background_tasks : []).map((x) => String((x as { id?: unknown })?.id));
-        const fresh = ids.filter((id) => !s.seenTasks.has(id)).length;
-        s.seenTasks = new Set(ids);
         if (typeof p.last_assistant_message === 'string' && p.last_assistant_message.trim().endsWith('?')) {
           // The turn ended on a question: the session is waiting for an answer, not finished.
           s.state = 'waiting'; s.waitingSince ??= this.now(); s.now = 'Asked you a question';
@@ -448,7 +444,9 @@ export class Store {
           break;
         }
         // Background work runs on, or a wake-up is scheduled: Claude comes back by itself, so it is still at its desk.
-        const tasks = fresh;
+        // Only work started since your prompt brings Claude back. Claude Code also lists long-runners from earlier
+        // turns (a dev server, an artifact watcher) and finished helpers; counting those held sessions at their desks.
+        const tasks = s.launched && Array.isArray(p.background_tasks) ? p.background_tasks.length : 0;
         const crons = Array.isArray(p.session_crons) ? p.session_crons : [];
         if (tasks || crons.length) {
           const t = this.now(), nextAt = nextWake(crons, t);
