@@ -261,6 +261,7 @@ test('a turn that ends with background work running stays at the desks until it 
   const { store, view } = setup({ now: () => t });
   const task = { id: 'b1', type: 'subagent', status: 'running', description: 'Trace the bug', agent_type: 'Explore' };
   await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, null);
   await store.handle({ ...ev.stop, background_tasks: [task, { ...task, id: 'b2' }] }, null);
   assert.equal(view().state, 'working');
   assert.equal(view().card, null, 'no done card yet');
@@ -293,6 +294,34 @@ test('a turn that ends with background work running stays at the desks until it 
   assert.equal(view().state, 'done');
   assert.deepEqual(view().card, { kind: 'done', summary: 'ok', review: null });
   assert.equal(view().busy, null);
+});
+
+test('only background work started since your prompt keeps a session at its desk', async () => {
+  const { store, view } = setup();
+  const server = { id: 'byqi1f1o8', type: 'shell', status: 'running', description: 'Serve the APK folder on port 8090 for the phone' };
+  const watcher = { id: 'sa0lfcrfr', type: 'monitor', status: 'running', description: 'live updates for artifact' };
+  // a long-runner from an earlier turn (or a finished helper Claude Code still lists): the turn is done and needs you
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [server, watcher] }, null);
+  assert.equal(view().state, 'done');
+  assert.equal(view().busy, null);
+  // a helper sent off this turn (it reports async) brings Claude back
+  await store.handle(ev.prompt, null);
+  await store.handle(ev.preAgent, null);
+  await store.handle({ ...ev.postAgent, tool_response: { isAsync: true, status: 'async_launched' } }, null);
+  const agent = { id: 'a731c59366f2c0b1a', type: 'subagent', status: 'running', description: 'Find callers of foo' };
+  await store.handle({ ...ev.stop, background_tasks: [server, watcher, agent] }, null);
+  assert.equal(view().state, 'working');
+  assert.equal(view().now, 'Waiting on 3 background tasks');
+  // so does a background command, but a new prompt starts the count again
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.preBash, tool_input: { command: 'npm test', run_in_background: true } }, null);
+  await store.handle({ ...ev.stop, background_tasks: [server] }, null);
+  assert.equal(view().state, 'working');
+  await store.handle(ev.prompt, null);
+  await store.handle({ ...ev.stop, background_tasks: [server] }, null);
+  assert.equal(view().state, 'done');
+  assert.equal('launched' in view(), false, 'internal');
 });
 
 test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {
