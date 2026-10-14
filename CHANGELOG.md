@@ -4,6 +4,7 @@ Newest first. Dates are commit dates.
 
 ## 2026-10-14
 - Room text stays readable on a phone: name tags and desk labels never shrink below about 10 px. Each chip under a room shows the branch. The overlap `!` sits left of the head, clear of the bubble and timer. README describes the illustrated rooms.
+- A helper backgrounded mid-run (Ctrl+B) no longer sends its session to the lounge: it counts as running until it finishes, and neither Claude's idle notice nor the Esc check ends the turn meanwhile.
 
 ## 2026-10-13
 - Rooms are drawn as smooth illustrations instead of pixel art: faces show state (smiling at work, asleep when idle, slumped after a long wait, frowning on error), laptops light faces, the help bell glows while someone waits. Name tags show the branch under the project; the hovered or selected one shows both in full. Busy rooms grow taller (up to 300) so tags have room.

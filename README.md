@@ -28,7 +28,7 @@ room, and each session stands in the zone that matches what it is doing:
 | Zone | Who is there |
 |---|---|
 | **Lounge** (left, dim) | idle sessions, resting |
-| **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, background commands, a scheduled wake-up) runs on after its turn. If that work never reports back, it moves to the Help desk as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
+| **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, including one you sent to the background mid-run with Ctrl+B, background commands, a scheduled wake-up) runs on after its turn. If that work never reports back, it moves to the Help desk as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
 | **Help desk** (right, amber) | sessions that need you: waiting, finished or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
 
 Each character wears a name tag with its project and branch; hover or select one to read both in full,
