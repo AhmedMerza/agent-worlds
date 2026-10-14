@@ -36,9 +36,10 @@ test('prepareRestart reports a server that does not load, and passes the real on
 
 test('POST /api/restart: refuses without a launcher or with broken code, else restarts', async () => {
   const cfg = { ...parseConfig({}), port: 0 };
-  const go = async (opts: Parameters<typeof startServer>[2]) => {
+  const go = async ({ before, ...opts }: Parameters<typeof startServer>[2] & { before?: (app: ReturnType<typeof startServer>) => void }) => {
     const app = startServer(cfg, 't'.repeat(64), { home: tmp(), ...opts });
     await app.listen();
+    before?.(app);
     try {
       const r = await fetch(`http://127.0.0.1:${(app.server.address() as any).port}/api/restart`, { method: 'POST', headers: { 'x-aw-token': 't'.repeat(64) } });
       return { status: r.status, body: await r.json() as any };
@@ -50,6 +51,12 @@ test('POST /api/restart: refuses without a launcher or with broken code, else re
   const broken = await go({ onRestart: () => restarted++, prepareRestart: async () => 'web build failed: boom' });
   assert.equal(broken.status, 409);
   assert.match(broken.body.error, /boom/);
+
+  const waiting = await go({ onRestart: () => restarted++, prepareRestart: async () => null, before: (app) => {
+    app.store.sessions.set('w', { id: 'w', repoName: 'shop', task: 'Fix the checkout', pending: [{}] } as any);
+  } });
+  assert.equal(waiting.status, 409);
+  assert.match(waiting.body.error, /waiting for your answer: shop \(Fix the checkout\)/, 'names the session');
 
   const ok = await go({ onRestart: () => restarted++, prepareRestart: async () => null });
   assert.equal(ok.status, 202);

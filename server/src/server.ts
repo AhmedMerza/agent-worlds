@@ -229,7 +229,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const stopWatch = opts.onRestart ? watchCode(() => { update = true; broadcast({ type: 'update' }); }) : null;
   /** Drops sessions whose tmux session is gone (also run at once when a terminal's tmux attach ends). */
   const sweepNow = async () => { const alive = await sys.tmuxSessions(); if (alive) store.sweep(alive); };
-  const waitingCount = () => [...store.sessions.values()].filter((s) => s.pending.length).length;
+  const waiting = () => [...store.sessions.values()].filter((s) => s.pending.length);
   const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
   let installed: string | null = null;
   const cloudflared = () => installed ?? (opts.cloudflared !== undefined ? opts.cloudflared : findCloudflared());
@@ -373,7 +373,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!opts.onRestart) return send(res, 501, { error: 'updating needs the server started with `agent-worlds start`' });
       if (restarting) return send(res, 409, { error: 'already updating' });
       const body = await readBody(req).catch(() => ({} as Record<string, unknown>));
-      const busy = () => { const n = waitingCount(); return n ? `${n} session${n > 1 ? 's are' : ' is'} waiting for your answer. Answer first, then update.` : null; };
+      const busy = () => {
+        const w = waiting();
+        if (!w.length) return null;
+        const names = w.map((s) => `${s.repoName}${s.task ? ` (${s.task.length > 40 ? `${s.task.slice(0, 40)}…` : s.task})` : ''}`).join(', ');
+        return `${w.length > 1 ? 'These sessions are' : 'This session is'} waiting for your answer: ${names}. Answer first, then update.`;
+      };
       if (busy()) return send(res, 409, { error: busy() });
       if (direct.size && body.force !== true) return send(res, 409, { error: `${direct.size} session${direct.size > 1 ? 's run' : ' runs'} without tmux and will end. You can resume ${direct.size > 1 ? 'them' : 'it'} from Recent sessions afterwards.`, direct: direct.size });
       restarting = true;
