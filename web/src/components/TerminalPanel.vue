@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { stateLabel, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
-import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile } from '../store'
+import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import type { Turn } from '../types'
 
@@ -58,6 +58,18 @@ async function sendFiles(files: File[]) {
 }
 /** Claude's full-screen view jumps to the latest output on Ctrl+End; phones and Mac keyboards have no such key. */
 function jumpToLatest() { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: '\x1b[1;5F' })) }
+/** A fresh claude resumes this conversation and draws it from scratch: the fix for a wrecked screen. Mid-turn it asks first. */
+const restartArmed = ref(false)
+let armTimer: ReturnType<typeof setTimeout> | undefined
+async function restart() {
+  const cur = s.value
+  if (!cur) return
+  if (cur.state === 'working' && !restartArmed.value) { restartArmed.value = true; clearTimeout(armTimer); armTimer = setTimeout(() => { restartArmed.value = false }, 6000); return }
+  restartArmed.value = false
+  const r = await restartSession(cur.id, cur.state === 'working')
+  showToast(r.ok ? `Restarting ${cur.repoName}: Claude comes back with the same conversation.` : `Could not restart: ${r.error}`)
+}
+watch(() => s.value?.id, () => { restartArmed.value = false })
 function openHistory() { historyOpen.value = true; history.value = null; void loadHistory() }
 watch(() => s.value?.id, () => { historyOpen.value = false; history.value = null })
 
@@ -171,6 +183,7 @@ watch(termFocusTick, async () => {
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into Claude</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
         <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" title="Jump to Claude's latest output (Ctrl+End)" @click="jumpToLatest">Jump to latest</button>
+        <button v-if="hasTmux && !historyOpen && link === 'live'" :class="['hdr-btn', 'term-scroll', { danger: restartArmed }]" title="Screen looks wrecked? Quit this Claude and resume the same conversation in a fresh one" @click="restart">{{ restartArmed ? 'Stop the turn and restart?' : 'Restart' }}</button>
         <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
         <span v-if="s?.direct" class="term-note" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">Runs without tmux · stops if Agent Worlds restarts</span>

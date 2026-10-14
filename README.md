@@ -76,6 +76,8 @@ The list holds still while your pointer is over it, so a click never lands on a 
 The panel under the rooms is the session's real terminal (xterm.js attached to the session).
 Press `T` or `Enter` (or click) to type into it; the panel is outlined and says "Typing into
 Claude" while it has the keyboard. The catch-up box above it tells you where it stands.
+If the screen looks wrecked (garbled text, the cursor in the wrong place), **Restart** quits that
+Claude and resumes the same conversation in a fresh one, in the same pane; mid-turn it asks first.
 
 Copying works from the terminal: what Claude Code or tmux copies reaches your clipboard, and
 `Shift`+drag (`Option`+drag on a Mac) selects text past tmux's mouse mode and copies it on release.

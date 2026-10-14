@@ -62,6 +62,25 @@ export function tmuxSessions(): Promise<string[] | null> {
   });
 }
 
+/** The flags of a running claude worth keeping when it starts again: never its first prompt or session. */
+export function keptFlags(argv: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') break;
+    if (a === '--dangerously-skip-permissions' || /^--(settings|permission-mode|model)=/.test(a)) out.push(a);
+    else if (/^--(settings|permission-mode|model)$/.test(a) && i + 1 < argv.length) out.push(a, argv[++i]);
+  }
+  return out;
+}
+
+/** Quits the pane's claude and resumes the same conversation in a fresh one, in the same pane, so the browser stays attached. */
+export function restartClaude(pane: string, sessionId: string, cwd: string, argv: string[], home: string | null): Promise<string | null> {
+  if (!PANE_RE.test(pane)) return Promise.resolve('not a tmux pane');
+  const env = home ? ['-e', `AGENT_WORLDS_HOME=${home}`] : [];
+  return runErr('tmux', ['respawn-pane', '-k', '-t', pane, '-c', cwd, ...env, argv[0], '--resume', sessionId, ...keptFlags(argv)]);
+}
+
 /** Type literal text into a pane, then press Enter. Text never touches a shell. */
 export async function typeInto(pane: string, text: string): Promise<boolean> {
   if (!PANE_RE.test(pane)) return false;
