@@ -111,7 +111,7 @@ export async function transcriptSummary(path: string): Promise<{ cwd: string | n
   return { cwd, lastPrompt };
 }
 
-export type ClaudeProc = { pid: number; cwd: string; sessionId: string | null; pane: string | null; managedHome: string | null; direct: string | null; since: number };
+export type ClaudeProc = { pid: number; argv?: string[]; cwd: string; sessionId: string | null; pane: string | null; managedHome: string | null; direct: string | null; since: number };
 
 /**
  * Interactive `claude` processes of this user, from /proc (Linux only; [] elsewhere).
@@ -137,7 +137,7 @@ export function scanClaude(procRoot: string, projectsDir: string, uid = process.
       const flag = argv.findIndex((a) => a === '--resume' || a === '-r' || a === '--session-id');
       const named = flag >= 0 && SESSION_ID_RE.test(argv[flag + 1] ?? '') ? argv[flag + 1] : null;
       out.push({
-        pid: +pid, cwd,
+        pid: +pid, argv, cwd,
         sessionId: named ?? newestTranscript(projectsDir, cwd),
         pane: /^%\d+$/.test(env.TMUX_PANE ?? '') ? env.TMUX_PANE : null,
         managedHome: env.AGENT_WORLDS_HOME ?? null,

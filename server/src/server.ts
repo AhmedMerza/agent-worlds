@@ -35,6 +35,7 @@ type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
   home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
+  restartClaude?: typeof sys.restartClaude;
   /** Set by `agent-worlds start`: exits so the launcher starts the new code. Enables watching for code changes. */
   onRestart?: () => void; prepareRestart?: typeof prepareRestart;
   /** Path to cloudflared; null = not installed. Default: looked up on PATH and in ~/.local/bin. */
@@ -499,6 +500,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
 
+    // Restart: a fresh claude resumes the same conversation and draws it from scratch (fixes a wrecked screen for good).
+    const rm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/restart$/);
+    if (rm && method === 'POST') {
+      const s = store.sessions.get(decodeURIComponent(rm[1]));
+      if (!s) return send(res, 404, { error: 'no such session' });
+      if (!s.tmux) return send(res, 409, { error: 'only a session running in tmux can be restarted' });
+      const body = await readBody(req).catch(() => ({} as Record<string, unknown>));
+      if (s.state === 'working' && body.force !== true) return send(res, 409, { error: 'it is in the middle of a turn: restarting stops that turn', working: true });
+      const proc = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir).find((p) => p.pane === s.tmux!.pane);
+      if (!proc?.argv) return send(res, 409, { error: 'its claude process was not found' });
+      const err = await (opts.restartClaude ?? sys.restartClaude)(s.tmux.pane, s.id, proc.cwd, proc.argv, proc.managedHome);
+      return err ? send(res, 502, { error: `restart failed: ${err}` }) : send(res, 200, { ok: true });
+    }
     // A pasted or dropped file: the browser cannot hand the terminal a path, so save it here and return one to type.
     const um = url.pathname.match(/^\/api\/sessions\/([^/]+)\/upload$/);
     if (um && method === 'POST') {

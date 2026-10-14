@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage: run.sh <MOCK_DEMO value or ""> <script.cjs>
 # Restarts the mock so every recording starts from a fresh state, then runs one script.
-# Needs: a built web/dist (npm run build), Playwright (set PLAYWRIGHT_PATH if it is not importable), ffmpeg.
+# Needs: a built web/dist (npm run build), Playwright (set PLAYWRIGHT_PATH if it is not importable), ImageMagick.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WEB="$HERE/../.."
