@@ -32,6 +32,8 @@ type Pending = {
   tool: string;
   input: Record<string, unknown>;
   key: string;
+  /** The subagent that asked (undefined = the session's own agent). */
+  agentId: string | undefined;
   rule: Rule;
   risky: string | null;
   seenCount: number;
@@ -322,7 +324,8 @@ export class Store {
     let reply: Promise<string> | string = '';
     // Tool events from a subagent carry its agent_id. A background one runs on after the turn ended,
     // and must not move the session back to the desks or drop its card.
-    const rest = typeof p.agent_id === 'string' ? this.ended(s) : null;
+    const agentId = typeof p.agent_id === 'string' ? p.agent_id : undefined;
+    const rest = agentId !== undefined ? this.ended(s) : null;
 
     switch (ev) {
       case 'SessionStart':
@@ -363,7 +366,8 @@ export class Store {
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         const key = inputKey(tool, input);
-        const match = s.pending.find((x) => x.key === key) ?? s.pending.find((x) => x.tool === tool);
+        // Parallel agents run the same tools; only the asker's own call may settle its prompt by tool name.
+        const match = s.pending.find((x) => x.key === key) ?? s.pending.find((x) => x.tool === tool && x.agentId === agentId);
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, rest ?? 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
@@ -392,7 +396,7 @@ export class Store {
         const rule = ruleFor(tool, input, p.permission_suggestions);
         const pend: Pending = {
           requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
-          tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
+          tool, input, key: inputKey(tool, input), agentId, rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
           live: this.deps.clientsConnected(), resolve: null, timer: null,
         };

@@ -256,6 +256,21 @@ test('a background subagent working after the turn ended keeps the session where
   assert.equal(view().card, null);
 });
 
+test("a parallel agent's Bash call does not settle another agent's Bash prompt", async () => {
+  const { store, view } = setup();
+  const commit = { ...ev.permBash.tool_input, command: 'git commit -m x' };
+  const r = store.handle({ ...ev.permBash, tool_input: commit, agent_id: 'agent-1' }, null);
+  await tick();
+  await store.handle({ ...ev.postBash, agent_id: 'agent-2' }, null);
+  assert.equal(view().state, 'waiting');
+  assert.equal(view().card.kind, 'permission');
+
+  // the asker's own call settles it, even if its input changed
+  await store.handle({ ...ev.postBash, agent_id: 'agent-1' }, null);
+  assert.equal(await r, '{}');
+  assert.equal(view().state, 'working');
+});
+
 test('a turn that ends with background work running stays at the desks until it is back, or gives up after 30 min', async () => {
   let t = 1_000_000;
   const { store, view } = setup({ now: () => t });
