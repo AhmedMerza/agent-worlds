@@ -278,7 +278,9 @@ test('midTurn: an unanswered prompt or tool result, or a running tool call, is m
   assert.equal(midTurn([u('run'), a([{ type: 'text', text: 'Done.' }]), tail]), false);
   assert.equal(midTurn([a([{ type: 'tool_use' }]), u([{ type: 'text', text: '[Request interrupted by user for tool use]' }])]), false);
   assert.equal(midTurn([u('<local-command-stdout></local-command-stdout>')]), false);
-  assert.equal(midTurn([u('meta', { isMeta: true })]), false);
+  assert.equal(midTurn([u('<command-name>/ship-check</command-name>'), u('Base directory for this skill: …', { isMeta: true })]), true, 'a skill just started');
+  assert.equal(midTurn([u('<local-command-caveat>Caveat…</local-command-caveat>', { isMeta: true })]), false);
+  assert.equal(midTurn([u('go'), a([{ type: 'thinking', thinking: '' }])]), true, 'still thinking');
   assert.equal(midTurn([]), false);
 });
 

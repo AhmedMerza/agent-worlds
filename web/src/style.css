@@ -348,3 +348,5 @@ pre.diff{max-height:320px;overflow:auto}
 .folder-row{display:flex;gap:8px;align-items:flex-end}
 .folder-row label{flex:1;min-width:0}
 .browser .find{width:100%;margin:6px 0}
+.room.drop{outline:2px dashed var(--tint);outline-offset:-2px}
+.drag-tag{position:fixed;z-index:50;pointer-events:none;transform:translate(12px,8px);background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:3px 8px;font-size:12px;white-space:nowrap}

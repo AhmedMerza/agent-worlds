@@ -51,13 +51,19 @@ export function userPrompt(e: Entry): string | null {
   return t;
 }
 
-/** Claude is mid-turn: the last message is a prompt or tool result it has not answered yet, or a tool call still running. */
+/**
+ * Claude is mid-turn: the last message is a prompt, skill or tool result it has not answered yet, a tool call still
+ * running, or it is still thinking. Its own text last means the turn ended.
+ */
 export function midTurn(entries: Entry[]): boolean {
   const e = entries.findLast((x) => x.type === 'user' || x.type === 'assistant');
   const c = e?.message?.content;
   const has = (type: string) => Array.isArray(c) && c.some((b) => b?.type === type);
   if (!e) return false;
-  return e.type === 'assistant' ? has('tool_use') : userPrompt(e) !== null || has('tool_result');
+  if (e.type === 'assistant') return has('tool_use') || (has('thinking') && !has('text'));
+  // a skill's instructions arrive as a meta message; local commands (/clear, /model) end on their output
+  const skill = e.isMeta === true && !textOf(e.message?.content).trim().startsWith('<local-command');
+  return userPrompt(e) !== null || has('tool_result') || skill;
 }
 
 export const firstPrompt = (entries: Entry[]): string | null => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, reviewView, screenOrder } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -365,5 +365,17 @@ describe('groupByFolder', () => {
     expect(g.map((x) => [x.label, x.items.map((i) => i.sessionId).join()])).toEqual([
       ['oreem/worktrees/aw-x', '1,3'], ['oreem', '2'], ['oreem-worktrees/feat', '4'], ['x', '5'], ['Unknown folder', '6'],
     ])
+  })
+})
+
+describe('dropTarget', () => {
+  it('lands in another world, never its own room or no room', () => {
+    const worlds = [{ id: 'web', name: 'Web', color: '#000', repos: [] }, { id: 'pos', name: 'POS', color: '#111', repos: [] }]
+    const s = mk('a', { worldId: 'web' })
+    expect(dropTarget(s, 'pos', worlds)?.name).toBe('POS')
+    expect(dropTarget(s, 'web', worlds)).toBeNull()
+    expect(dropTarget(s, null, worlds)).toBeNull()
+    expect(dropTarget(s, 'gone', worlds)).toBeNull()
+    expect(dropTarget(undefined, 'pos', worlds)).toBeNull()
   })
 })

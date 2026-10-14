@@ -63,6 +63,7 @@ async function copyAttach() {
         <button class="btn" @click="focusTerminal">Open in terminal</button>
         <button class="btn" @click="ui.recentRepo = s.repo; ui.recentOpen = true">Past sessions here</button>
         <button v-if="world?.id === UNSORTED.id" class="btn" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
+        <button v-else-if="state.worlds.length > 1" class="btn" @click="ui.moveSession = s.id">Move to another world…</button>
       </div>
     </div>
   </section>

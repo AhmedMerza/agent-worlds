@@ -9,6 +9,7 @@ import NewTaskDialog from './components/NewTaskDialog.vue'
 import WorldsPanel from './components/WorldsPanel.vue'
 import PhoneDialog from './components/PhoneDialog.vue'
 import PutInWorldDialog from './components/PutInWorldDialog.vue'
+import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
 import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui, updateNow, focusTerminal } from './store'
@@ -57,7 +58,7 @@ const count = (st: string) => sessionList.value.filter((s) => s.state === st).le
 function onKey(e: KeyboardEvent) {
   const a = routeKey({
     key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
-    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null,
+    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null || ui.moveSession !== null,
   })
   if (!a) return
   e.preventDefault()
@@ -72,7 +73,7 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
   else if (a.kind === 'mute') onMute()
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return
-  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.phoneOpen = false; ui.putSession = null }
+  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.phoneOpen = false; ui.putSession = null; ui.moveSession = null }
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -146,7 +147,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
     <HelpOverlay v-if="help" @close="help = false" />
     <WorldsPanel v-if="ui.worldsOpen" ref="worldsPanel" @close="ui.worldsOpen = false" />
     <PhoneDialog v-if="ui.phoneOpen" @close="ui.phoneOpen = false" />
+    <MoveSessionDialog v-if="ui.moveSession" :session-id="ui.moveSession" @close="ui.moveSession = null" />
     <PutInWorldDialog v-if="ui.putSession" :session-id="ui.putSession" @close="ui.putSession = null" @open-worlds="ui.worldsOpen = true" />
+    <div v-if="ui.drag" class="drag-tag" :style="{ left: `${ui.drag.x}px`, top: `${ui.drag.y}px` }" aria-hidden="true">
+      {{ state.sessions[ui.drag.id]?.repoName }}<template v-if="ui.drag.over && ui.drag.over !== state.sessions[ui.drag.id]?.worldId"> → {{ state.worlds.find((w) => w.id === ui.drag!.over)?.name }}</template>
+    </div>
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
     <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>

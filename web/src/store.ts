@@ -161,6 +161,8 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<Api
 }
 export const createWorld = (name: string, color: string, repos: string[] = []) => api<{ world: World }>('POST', '/api/worlds', { name, color, repos })
 export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'color' | 'repos'>>) => api<{ world: World }>('PATCH', `/api/worlds/${encodeURIComponent(id)}`, patch)
+/** Moves one session to world `worldId` (its repo stays put); the server clears the move when that is its folder's world. */
+export const moveSession = (id: string, worldId: string | null) => api<unknown>('POST', `/api/sessions/${encodeURIComponent(id)}/world`, { worldId })
 export const deleteWorld = (id: string) => api<unknown>('DELETE', `/api/worlds/${encodeURIComponent(id)}`)
 export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/worlds/order', { ids })
 export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
@@ -287,4 +289,6 @@ export const focusTerminal = (): void => { termFocusTick.value++ }
 
 /** Dialog state shared by the header, rooms and detail panel. */
 /** recentRepo: Recent sessions shows only that repo's (its folder and worktrees); null shows all. */
-export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false })
+export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
+  /** A character being dragged to another room: where the pointer is, and the world under it. */
+  drag: null as { id: string; x: number; y: number; over: string | null } | null })
