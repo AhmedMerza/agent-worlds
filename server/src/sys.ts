@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
+import { AGENTS, launchArgs, type AgentId } from './agents.ts';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
 
@@ -94,14 +95,14 @@ const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'
 export const hasTmux = async () => (await run('tmux', ['-V'])) !== null;
 export const TMUX_INSTALL = process.platform === 'darwin' ? 'brew install tmux' : 'sudo dnf install tmux, or sudo apt install tmux';
 export const TMUX_MISSING = `tmux is not installed, so sessions run inside Agent Worlds itself and end when it restarts or updates. Install tmux (${TMUX_INSTALL}) and restart Agent Worlds to keep sessions running across restarts and to open them from your own terminal.`;
-/** Runs `claude` as a session the server owns (no tmux). */
+/** Runs the agent CLI as a session the server owns (no tmux). */
 export type SpawnDirect = (name: string, file: string, args: string[], cwd: string, env: Record<string, string>) => Promise<void>;
 
 /**
- * Start `claude` in a new detached tmux session, optionally in a fresh worktree
+ * Start the agent CLI (`claude` unless told otherwise) in a new detached tmux session, optionally in a fresh worktree
  * (<repo>-worktrees/<branch>, new branch forked from the repo's default branch, see defaultStart). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; prefix?: string; home?: string; resume?: string; permissionMode?: string; spawnDirect?: SpawnDirect }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; agent?: AgentId; prefix?: string; home?: string; resume?: string; permissionMode?: string; spawnDirect?: SpawnDirect }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
   const direct = !(await hasTmux());
   if (direct && !opts.spawnDirect) throw new Error(`this needs tmux, which is not installed (${TMUX_INSTALL}). Start sessions from the web page instead.`); // before any worktree is made
   const id = randomBytes(2).toString('hex');
@@ -117,19 +118,19 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   }
   const name = `${opts.prefix ?? 'aw-'}${slug(basename(opts.repo))}-${id}`;
   const task = (opts.task ?? '').trim();
-  // With `home`, the session reports to this server through <home>/hooks.json even when the
+  // With `home`, the session reports to this server (Claude through <home>/hooks.json) even when the
   // user never installed the hooks globally.
-  const env = opts.home ? ['-e', `AGENT_WORLDS_HOME=${opts.home}`] : [];
-  const settings = opts.home ? ['--settings', join(opts.home, 'hooks.json')] : [];
-  const resume = opts.resume ? ['--resume', opts.resume] : [];
-  const mode = opts.permissionMode ? ['--permission-mode', opts.permissionMode] : [];
-  const args = [...resume, ...mode, ...settings, ...(task ? ['--', task] : [])];
+  const agent = opts.agent ?? 'claude';
+  const bin = agent === 'claude' ? opts.claudeBin ?? 'claude' : AGENTS[agent].bin;
+  const { args, env: agentEnv } = launchArgs(agent, { home: opts.home, resume: opts.resume, permissionMode: opts.permissionMode, task });
+  const vars = { ...(opts.home ? { AGENT_WORLDS_HOME: opts.home } : {}), ...agentEnv };
+  const env = Object.entries(vars).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   if (direct) {
     // AGENT_WORLDS_PTY lets aw-hook tell the server which of its sessions an event belongs to (tmux has TMUX_PANE for that).
-    try { await opts.spawnDirect!(name, opts.claudeBin ?? 'claude', args, dir, { ...(opts.home ? { AGENT_WORLDS_HOME: opts.home } : {}), AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start claude: ${(e as Error).message}`); }
+    try { await opts.spawnDirect!(name, bin, args, dir, { ...vars, AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start ${bin}: ${(e as Error).message}`); }
     return { tmuxSession: name, dir, branch, pane: null, direct: true };
   }
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, opts.claudeBin ?? 'claude', ...args]);
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, bin, ...args]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.

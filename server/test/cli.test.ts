@@ -12,10 +12,10 @@ import { ensureToken, parseConfig, loadConfig, writeEndpoint, DEFAULTS } from '.
 const BIN = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin');
 const tmp = () => mkdtempSync(join(tmpdir(), 'awtest-'));
 
-function runHook(env: Record<string, string>, stdin: string): Promise<{ code: number; out: string; ms: number }> {
+function runHook(env: Record<string, string>, stdin: string, args: string[] = []): Promise<{ code: number; out: string; ms: number }> {
   const t = Date.now();
   return new Promise((ok) => {
-    const p = execFile(join(BIN, 'aw-hook'), [], { env: { PATH: process.env.PATH!, HOME: '/nonexistent', ...env } }, (err, out) =>
+    const p = execFile(join(BIN, 'aw-hook'), args, { env: { PATH: process.env.PATH!, HOME: '/nonexistent', ...env } }, (err, out) =>
       ok({ code: err ? (err.code as number) : 0, out: String(out), ms: Date.now() - t }));
     p.stdin!.end(stdin);
   });
@@ -40,7 +40,7 @@ test('aw-hook: posts payload with token + pane and prints the reply', async (t) 
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      seen.push({ url: req.url, token: req.headers['x-aw-token'], pane: req.headers['x-aw-pane'], body });
+      seen.push({ url: req.url, token: req.headers['x-aw-token'], pane: req.headers['x-aw-pane'], agent: req.headers['x-aw-agent'], body });
       if (body.includes('PermissionRequest')) { res.writeHead(200); res.end('{"hookSpecificOutput":{}}'); }
       else { res.writeHead(204); res.end(); }
     });
@@ -53,10 +53,14 @@ test('aw-hook: posts payload with token + pane and prints the reply', async (t) 
   const payload = '{"session_id":"s","hook_event_name":"PermissionRequest","tool_input":{"command":"echo \'$(id)\'"}}';
   const r = await runHook({ AGENT_WORLDS_HOME: home, TMUX_PANE: '%3' }, payload);
   assert.equal(r.out, '{"hookSpecificOutput":{}}\n');
-  assert.deepEqual(seen[0], { url: '/api/hook', token: 'T'.repeat(64), pane: '%3', body: payload });
+  assert.deepEqual(seen[0], { url: '/api/hook', token: 'T'.repeat(64), pane: '%3', agent: 'claude', body: payload });
   const quiet = await runHook({ AGENT_WORLDS_HOME: home, TMUX_PANE: 'bogus; rm -rf /' }, '{"hook_event_name":"Stop"}');
   assert.equal(quiet.out, '');
   assert.equal(seen[1].pane, undefined, 'an invalid TMUX_PANE is not sent');
+  await runHook({ AGENT_WORLDS_HOME: home }, '{"hook_event_name":"Stop"}', ['codex']);
+  assert.equal(seen[2].agent, 'codex', 'Codex names itself as the first argument');
+  await runHook({ AGENT_WORLDS_HOME: home }, '{"hook_event_name":"Stop"}', ['Bad Name']);
+  assert.equal(seen[3].agent, 'claude');
 
 });
 

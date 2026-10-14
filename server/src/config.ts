@@ -7,6 +7,8 @@ export type World = { id: string; name: string; color: string; repos: string[] }
 export type Config = {
   port: number; host: string; listen: string[]; extraHosts: string[]; worlds: World[];
   userSettingsPath: string; claudeBin: string; contextLimit: number; claudeProjectsDir: string;
+  /** The agent CLI new sessions start with (see agents.ts); Claude when unset or not installed. */
+  defaultAgent?: string;
 };
 
 export const DEFAULTS: Config = {
@@ -47,6 +49,7 @@ export function parseConfig(raw: unknown): Config {
   const usp = str('userSettingsPath');
   if (usp) cfg.userSettingsPath = resolve(usp.replace(/^~(?=\/)/, homedir()));
   cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
+  cfg.defaultAgent = str('defaultAgent');
   const cpd = str('claudeProjectsDir');
   if (cpd) cfg.claudeProjectsDir = resolve(cpd.replace(/^~(?=\/)/, homedir()));
   if (r.contextLimit !== undefined) {

@@ -27,6 +27,8 @@ export interface Session {
   worldId: string | null
   repo: string
   repoName: string
+  /** The CLI the session runs; absent from servers older than agent support. */
+  agent?: string
   cwd: string
   branch: string | null
   worktree: boolean

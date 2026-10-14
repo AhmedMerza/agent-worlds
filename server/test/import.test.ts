@@ -314,6 +314,7 @@ test('restart: resumes the same session in its pane with its own flags; asks bef
   const root = tmp();
   const proc = fakeProc(root, [
     { pid: 301, argv: ['/bin/claude', '--permission-mode', 'auto', '--settings', '/h/hooks.json', '--', 'Fix the bug'], env: { TMUX_PANE: '%9', AGENT_WORLDS_HOME: '/h' }, cwd: root },
+    { pid: 302, argv: ['/bin/claude'], env: { TMUX_PANE: '%8' }, cwd: root }, // someone ran claude in the Codex session's pane
   ]);
   const calls: unknown[][] = [];
   const cfg = { ...parseConfig({}), port: 0 };
@@ -334,5 +335,10 @@ test('restart: resumes the same session in its pane with its own flags; asks bef
     assert.equal(calls.length, 0, 'nothing restarted without a yes');
     assert.equal((await post({ force: true })).status, 200);
     assert.deepEqual(calls, [['%9', 's-9', root, ['/bin/claude', '--permission-mode', 'auto', '--settings', '/h/hooks.json', '--', 'Fix the bug'], '/h']]);
+    // Codex and Qwen have no `--resume <id>` restart: refused, never respawned as claude
+    await app.store.handle({ ...ev.start, session_id: 'cx-9', cwd: root }, '%8', undefined, null, 'codex');
+    const cx = await fetch(`${base}/api/sessions/cx-9/restart`, { method: 'POST', headers: { 'x-aw-token': 'i'.repeat(64), 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(cx.status, 409);
+    assert.equal(calls.length, 1);
   } finally { await app.close(); }
 });

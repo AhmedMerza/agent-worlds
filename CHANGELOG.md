@@ -3,6 +3,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-14
+- New sessions can run Codex or Qwen Code instead of Claude Code: an Agent choice in New session, with "Make default" (`defaultAgent` in config.json, Claude when unset or not installed). They report through the same hook (`aw-hook <agent>`), so rooms, the inbox and Allow/Deny work; always-allow rules, permission modes, catch-ups, resume and the terminal Restart stay Claude-only. `GET /api/agents`, `POST /api/agents/default`.
 - Terminal: **Restart** quits the session's Claude and resumes the same conversation in a fresh one, in the same tmux pane, which redraws a wrecked screen for good. It keeps the session's permission mode, settings and model, and asks first when Claude is mid-turn (`POST /api/sessions/:id/restart`).
 - Terminal text gets wrecked less: the terminal refits once its font has loaded, never squeezes the session to 0 columns while hidden, and starts clean after a reconnect.
 - A session whose turn ends with only long-running background tasks (a dev server, an artifact watcher) goes to the Help desk instead of sitting at its desk with a clock: only background work started since your last prompt (a background helper or command, a monitor) means Claude is coming back. This also holds across a server restart.

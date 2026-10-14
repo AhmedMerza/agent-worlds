@@ -509,3 +509,19 @@ test('a session first heard of mid-turn (after a restart) is working, not idle',
   await c.store.handle(ev.stop, '%5');
   assert.equal(c.view().state, 'done', 'Stop still decides for itself');
 });
+
+test('a Codex session is tagged codex and can only be allowed once from the inbox', async () => {
+  const { store, view } = setup({ clients: true });
+  // Recorded from Codex 0.156.1 (ids and paths genericised); Codex sends model on every event.
+  const cx = { session_id: 'cx-1', transcript_path: '/home/u/.codex/sessions/2026/10/14/rollout-x-cx-1.jsonl', cwd: '/work/repo-a', model: 'gpt-5.6-terra', permission_mode: 'default' };
+  await store.handle({ ...cx, hook_event_name: 'SessionStart', source: 'startup' }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'UserPromptSubmit', turn_id: 't1', prompt: 'touch a file' }, null, undefined, null, 'codex');
+  assert.equal(view().agent, 'codex');
+  assert.equal(view().state, 'working');
+  const held = store.handle({ ...cx, hook_event_name: 'PermissionRequest', turn_id: 't1', tool_name: 'Bash', tool_input: { command: 'touch a', description: null } }, null, undefined, null, 'codex');
+  await tick();
+  const { requestId } = view().card;
+  assert.match(store.decide('cx-1', { requestId, decision: 'allow', scope: 'repo' })?.[1] ?? '', /only be allowed once/);
+  assert.equal(store.decide('cx-1', { requestId, decision: 'allow' }), null);
+  assert.deepEqual(JSON.parse(await held), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
+});

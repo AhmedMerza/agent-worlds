@@ -188,7 +188,11 @@ export async function askClaude(id: string, repoName: string, command: string): 
   if (ok) showToast(`Asked ${repoName} to ${command}`)
   return ok
 }
-export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode }
+export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode; agent?: string }
+export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean }
+/** The agent CLIs this server can start, and which one new sessions use by default. */
+export const fetchAgents = () => api<{ agents: AgentInfo[]; default: string }>('GET', '/api/agents')
+export const saveDefaultAgent = (agent: string) => api<{ default: string }>('POST', '/api/agents/default', { agent })
 
 /** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */
 export async function moveRepo(path: string, fromId: string, toId: string): Promise<string | null> {

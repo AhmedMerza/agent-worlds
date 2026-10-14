@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { state, browseFs, createSession, updateWorld, moveRepo } from '../store'
+import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, type AgentInfo } from '../store'
 import { baseName, modeField, withRepo, type ModeChoice } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 import PermissionSelect from './PermissionSelect.vue'
@@ -14,6 +14,21 @@ const repo = ref(world.value?.repos[0] ?? '')
 watch(wid, () => { repo.value = world.value?.repos[0] ?? '' })
 const task = ref('')
 const mode = ref<ModeChoice>('claude')
+/** The CLI to start; empty until the server says which ones exist (then the server's default applies). */
+const agents = ref<AgentInfo[]>([])
+const agent = ref('')
+const defaultAgent = ref('claude')
+const chosen = computed(() => agents.value.find((a) => a.id === agent.value))
+onMounted(async () => {
+  const r = await fetchAgents()
+  if (!r.ok) return
+  agents.value = r.data.agents; defaultAgent.value = r.data.default
+  agent.value ||= r.data.default
+})
+async function makeDefault() {
+  const r = await saveDefaultAgent(agent.value)
+  if (r.ok) defaultAgent.value = r.data.default; else error.value = r.error
+}
 const browsing = ref(false)
 const worktree = ref(true)
 /** Whether the chosen folder is a git repo (null while unknown): worktrees and branches only make sense there. */
@@ -48,7 +63,7 @@ async function submit() {
   if (!wid.value) { error.value = 'Pick a world.'; return }
   if (!repo.value) { error.value = 'Pick a folder.'; return }
   sending.value = true; error.value = ''
-  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...modeField(mode.value), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
+  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...(agent.value ? { agent: agent.value } : {}), ...(chosen.value?.modes === false ? {} : modeField(mode.value)), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
   sending.value = false
   if (err) error.value = err
   else emit('close')
@@ -80,7 +95,14 @@ async function submit() {
       <label>Task (optional)
         <textarea v-model="task" placeholder="Leave empty to start a blank session" />
       </label>
-      <PermissionSelect v-model="mode" />
+      <div v-if="agents.length > 1" class="folder-row">
+        <label>Agent
+          <select v-model="agent" aria-label="Agent"><option v-for="a in agents" :key="a.id" :value="a.id" :disabled="!a.installed">{{ a.name }}{{ a.id === defaultAgent ? ' (default)' : a.installed ? '' : ' (not installed)' }}</option></select>
+        </label>
+        <button v-if="agent && agent !== defaultAgent" type="button" class="btn" @click="makeDefault">Make default</button>
+      </div>
+      <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
+      <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request from the inbox.</p>
       <template v-if="isGit !== false">
         <label class="row"><input v-model="worktree" type="checkbox"> Use a new worktree</label>
         <label>Branch name (optional)

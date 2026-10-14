@@ -93,7 +93,7 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
           <button class="btn primary" :disabled="busy[c.requestId]" @click="run(c.requestId, () => decidePermission(s.id, c.requestId, 'allow'))">Allow once</button>
           <button class="btn danger" :disabled="busy[c.requestId]" @click="run(c.requestId, () => decidePermission(s.id, c.requestId, 'deny'))">Deny</button>
         </div>
-        <div class="scope">
+        <div v-if="(s.agent ?? 'claude') === 'claude'" class="scope">
           <p v-if="showLearnNudge(c)" class="learn">You've allowed this {{ c.seenCount }} times in {{ s.repoName }}. Stop asking?</p>
           <span class="lbl">Always allow</span>
           <div class="actions">

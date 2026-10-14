@@ -7,6 +7,7 @@ import { TEST_RE, testLine } from './review.ts';
 import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, WRITE_TOOLS, type Rule } from './rules.ts';
 import { computeConflicts, type Conflict } from './conflicts.ts';
 import { readTail } from './transcript.ts';
+import { AGENTS, type AgentId } from './agents.ts';
 
 export { riskOf };
 
@@ -41,7 +42,7 @@ type Pending = {
 };
 
 export type Session = {
-  id: string; worldId: string | null; repo: string; repoName: string; cwd: string;
+  id: string; agent: AgentId; worldId: string | null; repo: string; repoName: string; cwd: string;
   branch: string | null; worktree: boolean; tmux: { session: string | null; pane: string } | null;
   /** Set when the server runs this session itself (no tmux): the name of its pty. */
   direct: string | null;
@@ -246,22 +247,22 @@ export class Store {
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
-  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null }): Promise<string> {
+  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId }): Promise<string> {
     // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
     const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
     if (live) { if (o.task && !live.task) { live.task = oneLine(o.task, 200); this.push(live); } return live.id; }
     const id = `starting:${o.tmuxSession}`;
-    const s = await this.create(id, o.dir);
+    const s = await this.create(id, o.dir, null, null, o.agent);
     s.state = 'starting';
     s.task = o.task ? oneLine(o.task, 200) : null;
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
-    s.now = 'Starting… Claude may ask you to trust this folder in the terminal';
+    s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal' : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);
     return id;
   }
 
-  private async create(id: string, cwd: string, pane: string | null = null, direct: string | null = null): Promise<Session> {
+  private async create(id: string, cwd: string, pane: string | null = null, direct: string | null = null, agent: AgentId = 'claude'): Promise<Session> {
     const info = await this.deps.repoInfo(cwd);
     const existing = this.sessions.get(id); // another event may have created it while git ran
     if (existing) return existing;
@@ -275,7 +276,7 @@ export class Store {
     if (moved && !this.deps.placements!.get(id)) this.deps.placements!.set(id, moved);
     if (moved && starting) this.deps.placements!.set(starting.id, null); // a placeholder id is never seen again
     const s: Session = {
-      id, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
+      id, agent, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null, direct,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
@@ -319,7 +320,7 @@ export class Store {
   }
 
   /** Handle one hook event. Resolves to the body aw-hook prints ('' = print nothing). */
-  async handle(p: Record<string, unknown>, pane: string | null, signal?: AbortSignal, direct: string | null = null): Promise<string> {
+  async handle(p: Record<string, unknown>, pane: string | null, signal?: AbortSignal, direct: string | null = null, agent: AgentId = 'claude'): Promise<string> {
     const id = p.session_id;
     const ev = p.hook_event_name;
     if (typeof id !== 'string' || !id || typeof ev !== 'string') throw new Error('session_id and hook_event_name are required');
@@ -330,7 +331,7 @@ export class Store {
     }
     const cwd = typeof p.cwd === 'string' && p.cwd.startsWith('/') ? p.cwd : '/';
     const known = this.sessions.get(id);
-    const s = known ?? (await this.create(id, cwd, pane, direct));
+    const s = known ?? (await this.create(id, cwd, pane, direct, agent));
     // First heard of mid-turn (the server restarted while it worked, a helper reported first): it is working.
     // Events that set the state themselves (Stop, a question, idle_prompt…) still do so below.
     if (!known && ev !== 'SessionStart' && s.state === 'idle') s.state = 'working';
@@ -562,6 +563,7 @@ export class Store {
     if (!['once', 'repo', 'world', 'all'].includes(scope as string)) return [400, 'bad scope'];
     const { s, p, err } = this.live(id, body.requestId);
     if (err) return err;
+    if (scope !== 'once' && !AGENTS[s!.agent].alwaysAllow) return [400, `${AGENTS[s!.agent].name} can only be allowed once from here`];
     if (p!.kind !== 'permission') return [409, 'request is a question; use /answer'];
     if (body.decision === 'deny') {
       this.settle(s!, p!, hookOut({ behavior: 'deny', message: 'Denied by the user from Agent Worlds.' }));

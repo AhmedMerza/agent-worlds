@@ -194,12 +194,29 @@ server started with `bin/agent-worlds start`, and it waits while a session is wa
 permission prompt. Sessions in tmux keep running; sessions running without tmux end, and the page
 asks first (**Update anyway**).
 
+## Other agent CLIs
+
+New session has an **Agent** choice: Claude Code, Codex or Qwen Code (whichever is on your
+PATH). Codex and Qwen report through the same hook as Claude, added only for the sessions
+Agent Worlds starts, so your own config is never edited. The rooms, timers, inbox and
+Allow/Deny work the same. These features are Claude-only for now:
+
+- "Always allow" rules, permission modes, and questions answered from the inbox
+- Catch-up summaries, the context %, Recent sessions, and resume
+- Picking a session back up after a server restart (it returns on its next event instead)
+
+On its first start, Codex asks you in the terminal to review the new hooks. Choose "Trust all
+and continue". It remembers that choice, so later sessions don't ask again. Codex sends no
+event when a turn fails (for example when you hit a usage limit), so such a session stays at
+the desks until you look at it.
+
 ## Requirements
 
 - Node.js 24 or newer (the server is TypeScript run directly by Node; there is no build step)
 - git, curl
 - tmux (optional, recommended): keeps sessions running across restarts and lets you open them from your own terminal
 - [Claude Code](https://claude.com/claude-code) (`claude` on your PATH)
+- Optional: [Codex](https://github.com/openai/codex) (`codex`) or [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`), to start sessions with those instead (see [Other agent CLIs](#other-agent-cli))
 - A C/C++ toolchain for `node-pty` if no prebuilt binary matches your platform
 
 ## Quick start
@@ -319,6 +336,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `extraHosts` | `[]` | extra `host:port` origins allowed to call the server, for example `"localhost:5190"` when running the web UI's Vite dev server |
 | `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
 | `claudeBin` | `"claude"` | the Claude Code binary used for new sessions and catch-up summaries |
+| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex` or `qwen`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
 
