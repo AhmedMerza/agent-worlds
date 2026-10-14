@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-14
+- Room text stays readable on a phone: name tags and desk labels never shrink below about 10 px. Each chip under a room shows the branch. The overlap `!` sits left of the head, clear of the bubble and timer. README describes the illustrated rooms.
+
 ## 2026-10-13
 - Rooms are drawn as smooth illustrations instead of pixel art: faces show state (smiling at work, asleep when idle, slumped after a long wait, frowning on error), laptops light faces, the help bell glows while someone waits. Name tags show the branch under the project; the hovered or selected one shows both in full. Busy rooms grow taller (up to 300) so tags have room.
 - A crowded zone widens and a quiet one gives way, so three people at the help desk keep their branch names readable. Headings use the same smooth face as the rest of the app (the pixel font is gone). A world created without a colour now gets one of the swatches the world panel offers.

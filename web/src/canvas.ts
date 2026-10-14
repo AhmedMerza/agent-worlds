@@ -64,6 +64,8 @@ function glow(ctx: Ctx, x: number, y: number, r: number, color: string, a: numbe
   g.addColorStop(0, rgba(color, a)); g.addColorStop(1, rgba(color, 0))
   ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2)
 }
+/** Text scale for name tags: 1 on a wide screen, up to 1.6 on a phone where 7 room units shrink to ~5 CSS px. */
+let ts = 1
 const font = (ctx: Ctx, px: number, align: CanvasTextAlign = 'center') => { ctx.font = `700 ${px}px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle' }
 
 // ---- people ----
@@ -185,14 +187,16 @@ function pill(ctx: Ctx, text: string, x: number, y: number, maxW: number, fg = I
 }
 /** Project and branch on two lines; `full` (hovered or selected) never truncates and draws on top. */
 function nameTag(ctx: Ctx, s: Session, x: number, y: number, maxW: number, full: boolean) {
-  const lim = full ? 1e9 : maxW - 8
+  ctx.save(); ctx.translate(x, y); ctx.scale(ts, ts) // never smaller than ~10 CSS px, whatever the screen
+  const lim = full ? 1e9 : maxW / ts - 8
   font(ctx, 7); const name = fit(ctx, s.repoName, lim), nw = ctx.measureText(name).width
   font(ctx, 6); const branch = s.branch ? fit(ctx, s.branch, lim) : '', bw = branch ? ctx.measureText(branch).width : 0
   const w = Math.max(nw, bw) + 8, h = branch ? 17 : 11
-  ctx.fillStyle = full ? 'rgba(10,13,18,.94)' : 'rgba(10,13,18,.8)'; rr(ctx, x - w / 2, y - 5.5, w, h, 5.5); ctx.fill()
+  ctx.fillStyle = full ? 'rgba(10,13,18,.94)' : 'rgba(10,13,18,.8)'; rr(ctx, -w / 2, -5.5, w, h, 5.5); ctx.fill()
   if (full) { ctx.strokeStyle = 'rgba(236,230,217,.35)'; ctx.lineWidth = 0.6; ctx.stroke() }
-  font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(name, x, y + 0.3)
-  if (branch) { font(ctx, 6); ctx.fillStyle = '#9aa2b0'; ctx.fillText(branch, x, y + 6.8) }
+  font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(name, 0, 0.3)
+  if (branch) { font(ctx, 6); ctx.fillStyle = '#9aa2b0'; ctx.fillText(branch, 0, 6.8) }
+  ctx.restore()
 }
 function badge(ctx: Ctx, text: string, x: number, y: number, bg: string) {
   font(ctx, 7.5)
@@ -238,8 +242,10 @@ function drawDesk(ctx: Ctx, x: number, y: number, w: number, s: Session, l: Look
   f.lights.push([x, y - 20, 30, STATE_COLOR.working, s.busy ? 0.12 : 0.28])
   f.ui.push(() => {
     if (f.focus !== s.id) { // the focused one gets a full tag on top instead
-      font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(fit(ctx, s.repoName, hw * 2 - 8), x, y + (s.branch ? 9 : 12))
-      if (s.branch) { font(ctx, 6); ctx.fillStyle = '#b8ad9c'; ctx.fillText(fit(ctx, s.branch, hw * 2 - 8), x, y + 16) }
+      ctx.save(); ctx.translate(x, y + 12); ctx.scale(ts, ts)
+      font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(fit(ctx, s.repoName, hw * 2 / ts - 8), 0, s.branch ? -3 : 0)
+      if (s.branch) { font(ctx, 6); ctx.fillStyle = '#b8ad9c'; ctx.fillText(fit(ctx, s.branch, hw * 2 / ts - 8), 0, 4) }
+      ctx.restore()
     }
     if (s.context) {
       const pct = Math.max(0, Math.min(100, s.context.pct))
@@ -402,6 +408,7 @@ function drawLight(ctx: Ctx, H: number, f: Frame, waiting: boolean) {
 /** Draws one world's room; returns click hit-boxes (in room coordinates) that follow the walking people. */
 export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.imageSmoothingEnabled = true
+  ts = Math.min(1.6, Math.max(1, 10 / (7 * o.k / (globalThis.devicePixelRatio || 1))))
   ctx.clearRect(0, 0, W, o.h)
   const zones = assignZones(o.group.sessions)
   const f: Frame = { tt: o.reduced ? 0 : o.t, zx: zoneBounds(countZones(zones)), focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
@@ -449,7 +456,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
     ctx.setLineDash([]); ctx.lineDashOffset = 0
     badge(ctx, '!', mx, my, warn)
   }
-  for (const id of badges) { const p = at.get(id); if (p) badge(ctx, '!', p.x + 18, p.top - 6, warn) }
+  for (const id of badges) { const p = at.get(id); if (p) badge(ctx, '!', p.x - 18, p.top - 6, warn) } // left of the head: the bubble and timer sit above and right
   return hits
 }
 

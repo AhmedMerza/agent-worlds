@@ -318,6 +318,8 @@ pre.diff{max-height:320px;overflow:auto}
 .wname{border-style:dashed}
 .wname:hover,.wname:focus{border-style:solid}
 .chip .chip-task{max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+.chip .chip-branch{max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom;margin-left:.35em}
+.chip .chip-branch::before{content:"⎇ "}
 .rv-where{margin:0 0 6px}
 .dialog.phone .here{border:1px solid var(--ok);border-radius:6px;padding:10px 12px;margin-bottom:10px}
 .dialog.phone .here p{margin:0 0 4px}
