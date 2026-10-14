@@ -9,7 +9,7 @@ import { history, inRepo, scanClaude, projectDirName, findTranscript, newestTran
 import { startServer, spawnTmuxPty } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { midTurn } from '../src/transcript.ts';
-import { createSession } from '../src/sys.ts';
+import { createSession, keptFlags } from '../src/sys.ts';
 import { awSessions, formatRows, pick } from '../src/cli.ts';
 import { ev } from './fixtures.ts';
 
@@ -300,4 +300,37 @@ test('history for one repo: its folder, folders inside it and its worktrees; not
   assert.deepEqual((await history(dir, 2, '/r/oreem')).map((h) => h.sessionId), ['aaaaaaaa-0002', 'aaaaaaaa-0003']);
   assert.equal((await history(dir, 10)).length, 5);
   assert.equal(inRepo('/r/oreem-admin', '/r/oreem'), false);
+});
+
+test('keptFlags keeps settings, permission mode and model, never the first prompt or session', () => {
+  assert.deepEqual(keptFlags(['claude', '--resume', 'x', '--permission-mode', 'auto', '--settings=/h/hooks.json', '--model', 'opus', '--', 'Fix the bug']),
+    ['--permission-mode', 'auto', '--settings=/h/hooks.json', '--model', 'opus']);
+  assert.deepEqual(keptFlags(['claude', '--dangerously-skip-permissions', 'do it']), ['--dangerously-skip-permissions']);
+});
+
+test('restart: resumes the same session in its pane with its own flags; asks before cutting a turn short', async () => {
+  const root = tmp();
+  const proc = fakeProc(root, [
+    { pid: 301, argv: ['/bin/claude', '--permission-mode', 'auto', '--settings', '/h/hooks.json', '--', 'Fix the bug'], env: { TMUX_PANE: '%9', AGENT_WORLDS_HOME: '/h' }, cwd: root },
+  ]);
+  const calls: unknown[][] = [];
+  const cfg = { ...parseConfig({}), port: 0 };
+  const app = startServer(cfg, 'i'.repeat(64), {
+    home: root, procRoot: proc,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
+    restartClaude: async (...a) => { calls.push(a); return null; },
+  });
+  await app.store.handle({ ...ev.start, session_id: 's-9', cwd: root }, '%9');
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  const post = async (b: unknown) => { const r = await fetch(`${base}/api/sessions/s-9/restart`, { method: 'POST', headers: { 'x-aw-token': 'i'.repeat(64), 'content-type': 'application/json' }, body: JSON.stringify(b) }); return { status: r.status, body: await r.json() as any }; };
+  try {
+    await app.store.handle({ ...ev.prompt, session_id: 's-9', cwd: root }, '%9');
+    const busy = await post({});
+    assert.equal(busy.status, 409);
+    assert.equal(busy.body.working, true);
+    assert.equal(calls.length, 0, 'nothing restarted without a yes');
+    assert.equal((await post({ force: true })).status, 200);
+    assert.deepEqual(calls, [['%9', 's-9', root, ['/bin/claude', '--permission-mode', 'auto', '--settings', '/h/hooks.json', '--', 'Fix the bug'], '/h']]);
+  } finally { await app.close(); }
 });
