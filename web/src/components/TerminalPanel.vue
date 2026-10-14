@@ -71,7 +71,9 @@ function reclaimSize() {
 const sendResize = () => {
   if (sock?.readyState === WebSocket.OPEN && term) sock.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows }))
 }
-function refit() { try { fit?.fit() } catch { /* host not laid out yet */ } sendResize() }
+/** A hidden panel (phone tab, scroll back) measures 0×0: sending that would squeeze the tmux window to 2 columns. */
+function refit() { if (!host.value?.offsetWidth) return; try { fit?.fit() } catch { /* host not laid out yet */ } sendResize() }
+
 
 function attach(id: string, myGen: number) {
   if (!term) return
@@ -89,7 +91,7 @@ function attach(id: string, myGen: number) {
   ws.onclose = () => {
     if (myGen !== gen) return // a newer attach replaced this one
     link.value = 'closed'
-    retryTimer = setTimeout(() => { if (myGen === gen) attach(id, myGen) }, 2000)
+    retryTimer = setTimeout(() => { if (myGen === gen) { term?.reset(); attach(id, myGen) } }, 2000) // the new attach repaints everything
   }
 }
 
@@ -143,6 +145,7 @@ async function reattach(id: string | null) {
 watch(attachId, (id) => reattach(id), { flush: 'post' })
 onMounted(() => {
   reattach(attachId.value)
+  void document.fonts?.ready.then(refit) // the first fit may have measured the fallback font's cells
   window.addEventListener('focus', reclaimSize)
   document.addEventListener('visibilitychange', reclaimSize)
 })
