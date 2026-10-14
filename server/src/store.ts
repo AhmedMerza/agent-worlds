@@ -378,6 +378,9 @@ export class Store {
         }
         if (SUBAGENT_TOOLS.has(tool)) {
           const h = s.helpers.find((x) => x.id === p.tool_use_id);
+          // Backgrounded mid-run (Ctrl+B) returns at once with an async result, though the helper runs on.
+          const r = (p.tool_response ?? {}) as Record<string, unknown>;
+          if (h && (r.isAsync === true || r.status === 'async_launched')) h.bg = true;
           if (h && !h.bg) h.state = 'done';
         }
         break;
@@ -421,7 +424,7 @@ export class Store {
           if (typeof p.message === 'string') s.now = oneLine(p.message, 120) ?? s.now;
         }
         // Claude sits at its prompt (~60s): a turn interrupted with Esc that checkInterrupts missed.
-        if (type === 'idle_prompt' && s.state === 'working' && !s.busy) this.afterPending(s, 'idle');
+        if (type === 'idle_prompt' && s.state === 'working' && !this.awaited(s)) this.afterPending(s, 'idle');
         break;
       }
       case 'Stop': {
@@ -604,9 +607,14 @@ export class Store {
     }
   }
 
+  /** Claude sits at its prompt but comes back by itself: background tasks, a wake-up, or a background helper still running. */
+  private awaited(s: Session) {
+    return !!s.busy || s.helpers.some((h) => h.bg && h.state === 'working');
+  }
+
   async checkInterrupts() {
     for (const s of [...this.sessions.values()]) {
-      if (s.state !== 'working' || s.pending.length || !s.transcriptPath) continue;
+      if (s.state !== 'working' || s.pending.length || !s.transcriptPath || this.awaited(s)) continue;
       const last = (await readTail(s.transcriptPath, 8192).catch(() => [])).at(-1);
       const c = last?.type === 'user' ? last.message?.content : undefined;
       const text = typeof c === 'string' ? c : Array.isArray(c) ? c[0]?.text : undefined;

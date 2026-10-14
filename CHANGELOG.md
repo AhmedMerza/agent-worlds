@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-14
+- A helper backgrounded mid-run (Ctrl+B) no longer sends its session to the lounge: it counts as running until it finishes, and neither Claude's idle notice nor the Esc check ends the turn meanwhile.
+
 ## 2026-10-13
 - `/clear` (or a skill that clears) keeps the same terminal selected: the page follows that terminal's new session instead of jumping to another one.
 - Recent sessions are grouped by folder (fold a folder shut); "Past sessions here" in a session's panel shows only its repo: its folder, the folders inside it and its worktrees (`GET /api/history?repo=`).

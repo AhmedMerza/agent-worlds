@@ -391,6 +391,19 @@ test('riskOf and oneLine', () => {
   assert.equal(oneLine(undefined), null);
 });
 
+test('a helper backgrounded mid-run keeps the session working through idle_prompt', async () => {
+  const { store, view } = setup();
+  await store.handle(ev.prompt, '%5');
+  await store.handle(ev.preAgent, '%5');
+  await store.handle({ ...ev.postAgent, tool_response: { isAsync: true, status: 'async_launched' } }, '%5');
+  assert.equal(view().helpers[0].state, 'working');
+  await store.handle({ ...ev.notifyPerm, notification_type: 'idle_prompt' }, '%5');
+  assert.equal(view().state, 'working', 'still waiting on its helper, not in the lounge');
+  await store.handle(ev.subStop, '%5');
+  await store.handle({ ...ev.notifyPerm, notification_type: 'idle_prompt' }, '%5');
+  assert.equal(view().state, 'idle');
+});
+
 test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is the fallback', async () => {
   const { mkdtempSync, writeFileSync, appendFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
