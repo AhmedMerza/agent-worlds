@@ -510,6 +510,25 @@ test('a session first heard of mid-turn (after a restart) is working, not idle',
   assert.equal(c.view().state, 'done', 'Stop still decides for itself');
 });
 
+test('a Kimi session: block prompts, terminal-only permission cards, Esc back to idle', async () => {
+  const { store, view } = setup({ clients: true });
+  // Recorded from Kimi Code 2.1.1 (ids and paths genericised); no transcript_path.
+  const km = { session_id: 'session_k1', cwd: '/work/repo-a', client_type: 'kimi_code_cli' };
+  await store.handle({ ...km, hook_event_name: 'SessionStart', source: 'startup', model: 'kimi-code/k3', profile: 'agent' }, null, undefined, null, 'kimi');
+  await store.handle({ ...km, hook_event_name: 'UserPromptSubmit', prompt: [{ type: 'text', text: 'touch a file' }], is_steer: false }, null, undefined, null, 'kimi');
+  assert.equal(view().agent, 'kimi');
+  assert.equal(view().task, 'touch a file', 'the prompt comes as content blocks');
+  // Kimi does not wait on this hook, so it is answered at once and the card says to use the terminal
+  const reply = store.handle({ ...km, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'kimi');
+  await tick();
+  assert.equal(view().state, 'waiting');
+  assert.equal(view().card.live, false);
+  assert.equal(await reply, '{}');
+  await store.handle({ ...km, hook_event_name: 'Interrupt', turn_id: 0, reason: 'cancelled' }, null, undefined, null, 'kimi');
+  assert.equal(view().state, 'idle');
+  assert.equal(view().card, null);
+});
+
 test('a Codex session is tagged codex and can only be allowed once from the inbox', async () => {
   const { store, view } = setup({ clients: true });
   // Recorded from Codex 0.156.1 (ids and paths genericised); Codex sends model on every event.
