@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { stateLabel, catchupView, isLeaveTerminalKey, isTouch } from '../logic'
-import { state, selected, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession } from '../store'
+import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import type { Turn } from '../types'
 
@@ -24,6 +24,7 @@ const hasTmux = computed(() => !!s.value?.tmux || !!s.value?.direct)
 const termFocused = ref(false)
 const showCatchup = computed(() => !!s.value && !s.value.ghost && s.value.state !== 'starting')
 const attachId = computed(() => (hasTmux.value ? s.value!.id : null))
+const termKey = computed(() => terminalOf(state, s.value))
 
 let term: Terminal | null = null
 let fit: FitAddon | null = null
@@ -103,7 +104,7 @@ function attach(id: string, myGen: number) {
   ws.onclose = () => {
     if (myGen !== gen) return // a newer attach replaced this one
     link.value = 'closed'
-    retryTimer = setTimeout(() => { if (myGen === gen) { term?.reset(); attach(id, myGen) } }, 2000) // the new attach repaints everything
+    retryTimer = setTimeout(() => { if (myGen === gen) { term?.reset(); attach(attachId.value ?? id, myGen) } }, 2000) // the new attach repaints everything
   }
 }
 
@@ -154,7 +155,8 @@ async function reattach(id: string | null) {
   attach(id, gen)
 }
 
-watch(attachId, (id) => reattach(id), { flush: 'post' })
+// Keyed on the terminal, not the session: /clear swaps the session but the tmux pane (and this socket) stay the same.
+watch(termKey, () => reattach(attachId.value), { flush: 'post' })
 onMounted(() => {
   reattach(attachId.value)
   void document.fonts?.ready.then(refit) // the first fit may have measured the fallback font's cells
