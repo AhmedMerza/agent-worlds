@@ -109,6 +109,12 @@ export const screenSessions = computed(() => screenOrder(groups.value))
 export const needsYou = computed(() => queue(sessionList.value))
 const lookup = (id: string): Session | undefined => state.sessions[id] ?? ghosts.value.find((g) => g.id === id)
 export const selected = computed(() => (state.selectedId ? lookup(state.selectedId) ?? null : null))
+/** The terminal the panel shows: its tmux session (or server-run pty), not the conversation in it, so /clear and /resume
+ *  keep it attached — including the moment between the old session's removal and the new one's arrival. */
+export function terminalOf(st: StoreState, s: Session | null): string | null {
+  if (s) return s.tmux?.session ?? s.direct ?? null
+  return st.pending && st.selectedId && !st.sessions[st.selectedId] ? st.pending.tmux : null
+}
 
 export const select = (id: string): void => {
   state.selectedId = id

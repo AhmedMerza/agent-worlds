@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { modeField, modeOptions } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf } from '../src/store'
 import { mk, perm } from './helpers'
 
 const worlds = [{ id: 'web', name: 'Web', color: '#fff', repos: [] }]
@@ -46,6 +46,21 @@ describe('applyMessage', () => {
     applyMessage(st, { type: 'session', session: mk('new', { tmux: term }) })
     expect(st.selectedId).toBe('new')
     expect(st.pending).toBeNull()
+  })
+  it('/clear keeps the terminal panel on the same tmux session the whole way through (no teardown, no lost focus)', () => {
+    const st = newState()
+    const term = { session: 'aw-oreem', pane: '%7' }
+    const shown = () => terminalOf(st, st.selectedId ? st.sessions[st.selectedId] ?? null : null)
+    applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('old', { tmux: term }), mk('other', { tmux: { session: 'aw-x', pane: '%1' } })] })
+    st.selectedId = 'old'
+    expect(shown()).toBe('aw-oreem')
+    applyMessage(st, { type: 'session-removed', id: 'old' })
+    expect(shown()).toBe('aw-oreem')
+    applyMessage(st, { type: 'session', session: mk('new', { tmux: term }) })
+    expect(shown()).toBe('aw-oreem')
+    keepSelection(st, Date.now() + 60000)
+    st.selectedId = 'other'
+    expect(shown()).toBe('aw-x')
   })
   it('the selected terminal gets no new session: another is selected once the wait is over', () => {
     const st = newState()
