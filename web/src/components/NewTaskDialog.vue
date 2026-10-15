@@ -93,7 +93,7 @@ async function submit() {
         <button type="button" class="btn" @click="browsing = true">Another folder…</button>
       </div>
       <label>Task (optional)
-        <textarea v-model="task" placeholder="Leave empty to start a blank session" />
+        <textarea v-model="task" :placeholder="chosen?.task === false ? 'Names the session and its branch' : 'Leave empty to start a blank session'" />
       </label>
       <div v-if="agents.length > 1" class="folder-row">
         <label>Agent
@@ -102,7 +102,9 @@ async function submit() {
         <button v-if="agent && agent !== defaultAgent" type="button" class="btn" @click="makeDefault">Make default</button>
       </div>
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
-      <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request from the inbox.</p>
+      <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal, following your {{ chosen.name }} settings.</p>
+      <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>
+      <p v-if="chosen?.task === false" class="why">{{ chosen.name }} can't be handed a task when it starts: once it opens, type your first message in its terminal.</p>
       <template v-if="isGit !== false">
         <label class="row"><input v-model="worktree" type="checkbox"> Use a new worktree</label>
         <label>Branch name (optional)

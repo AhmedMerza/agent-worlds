@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -377,5 +377,13 @@ describe('dropTarget', () => {
     expect(dropTarget(s, null, worlds)).toBeNull()
     expect(dropTarget(s, 'gone', worlds)).toBeNull()
     expect(dropTarget(undefined, 'pos', worlds)).toBeNull()
+  })
+})
+
+describe('agentName', () => {
+  it('names the CLI a session runs, Claude when unknown or from an older server', () => {
+    expect(agentName({ agent: 'kimi' })).toBe('Kimi')
+    expect(agentName({ agent: 'codex' })).toBe('Codex')
+    expect(agentName({})).toBe('Claude')
   })
 })

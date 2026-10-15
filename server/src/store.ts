@@ -258,7 +258,7 @@ export class Store {
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
-      : s.agent === 'kimi' ? 'Waiting for your first message in the terminal'
+      : s.agent === 'kimi' ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
       : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);
     return id;

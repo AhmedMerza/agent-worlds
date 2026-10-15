@@ -8,16 +8,17 @@ import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT } from
  * Claude-shaped hook payloads (session_id, hook_event_name, tool_name, tool_input, ...), so the
  * store handles them alike; what differs is how the hooks get into each CLI and which features it has.
  * `decides`: the CLI waits on its PermissionRequest hook, so Allow/Deny can be answered from here.
+ * `task`: the CLI can be started with the task as its first prompt.
  */
 export const AGENTS = {
-  claude: { name: 'Claude Code', bin: 'claude', alwaysAllow: true, modes: true, decides: true },
+  claude: { name: 'Claude Code', bin: 'claude', alwaysAllow: true, modes: true, decides: true, task: true },
   // Codex has no Notification, PostToolUseFailure or StopFailure, and its PermissionRequest takes
   // allow/deny only (no updatedPermissions), so "always allow" stays with Claude.
-  codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: true },
+  codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: true, task: true },
   // Qwen Code >= 0.13 copies Claude's hooks, reply format included.
-  qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true },
+  qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, task: true },
   // Kimi Code fires PermissionRequest without waiting for the hook, so its prompts are answered in the terminal.
-  kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false },
+  kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, task: false },
 } as const;
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);

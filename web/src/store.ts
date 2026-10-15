@@ -195,7 +195,7 @@ export async function askClaude(id: string, repoName: string, command: string): 
   return ok
 }
 export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode; agent?: string }
-export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean }
+export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean; decides?: boolean; task?: boolean }
 /** The agent CLIs this server can start, and which one new sessions use by default. */
 export const fetchAgents = () => api<{ agents: AgentInfo[]; default: string }>('GET', '/api/agents')
 export const saveDefaultAgent = (agent: string) => api<{ default: string }>('POST', '/api/agents/default', { agent })

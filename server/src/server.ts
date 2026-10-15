@@ -367,7 +367,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return res.end(out);
     }
     if (method === 'GET' && url.pathname === '/api/agents') {
-      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || onPath(a.bin), modes: a.modes })), default: defaultAgent(cfg.defaultAgent) });
+      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || onPath(a.bin), modes: a.modes, decides: a.decides, task: a.task })), default: defaultAgent(cfg.defaultAgent) });
     }
     if (method === 'POST' && url.pathname === '/api/agents/default') {
       const b = await readBody(req);
