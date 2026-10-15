@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code hook -> Agent Worlds server. Codex and Qwen Code run it too, with their name as $1.
+# Claude Code hook -> Agent Worlds server. Codex, Qwen Code and Kimi Code run it too, with their name as $1.
 # Reads the hook JSON on stdin and POSTs it with the token. Prints the server's reply
 # (a PermissionRequest decision) when there is one. Never fails the Claude session:
 # if the server is down, unconfigured, or AGENT_WORLDS_DISABLE=1, it exits 0 silently.

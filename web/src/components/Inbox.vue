@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import type { Session, Question, Card } from '../types'
-import { fmtWait, permissionAsk, permissionWho, permissionDetail, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive, inboxOrder } from '../logic'
+import { fmtWait, permissionAsk, permissionWho, permissionDetail, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive, inboxOrder, agentName } from '../logic'
 import { state, needsYou, groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
 
@@ -128,7 +128,7 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
       </template>
 
       <template v-else-if="c.kind === 'done'">
-        <ReviewBlock v-if="c.review" :id="s.id" :review="c.review" :name="s.repoName" :branch="s.branch" />
+        <ReviewBlock v-if="c.review" :id="s.id" :review="c.review" :name="s.repoName" :branch="s.branch" :agent="agentName(s)" />
         <div v-else class="actions"><button class="btn go" :disabled="busy[s.id]" @click="run(s.id, () => acknowledge(s.id))">Got it</button></div>
       </template>
 

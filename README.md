@@ -196,8 +196,8 @@ asks first (**Update anyway**).
 
 ## Other agent CLIs
 
-New session has an **Agent** choice: Claude Code, Codex or Qwen Code (whichever is on your
-PATH). Codex and Qwen report through the same hook as Claude, added only for the sessions
+New session has an **Agent** choice: Claude Code, Codex, Qwen Code or Kimi Code (whichever is on
+your PATH). They all report through the same hook as Claude, added only for the sessions
 Agent Worlds starts, so your own config is never edited. The rooms, timers, inbox and
 Allow/Deny work the same. These features are Claude-only for now:
 
@@ -210,13 +210,26 @@ and continue". It remembers that choice, so later sessions don't ask again. Code
 event when a turn fails (for example when you hit a usage limit), so such a session stays at
 the desks until you look at it.
 
+Kimi Code is different in two ways:
+
+- **No starting task.** Kimi opens at its empty prompt; type your first message in the terminal.
+  The task box still names the session and its branch.
+- **Permission prompts are answered in the terminal.** Kimi doesn't wait for the hook, so its
+  cards show what it is asking but have no Allow/Deny.
+
+Kimi only reads hooks from `config.toml` in its home folder, so its sessions get a home of their own
+(`kimi-home` in the Agent Worlds folder). It links to everything in yours (login, sessions, MCP
+servers) and holds a copy of your `config.toml` with the hooks added. The copy is refreshed every
+time a session starts, so change settings in your own `~/.kimi-code/config.toml`. Changes made from
+inside a running Kimi session go to the copy and are lost.
+
 ## Requirements
 
 - Node.js 24 or newer (the server is TypeScript run directly by Node; there is no build step)
 - git, curl
 - tmux (optional, recommended): keeps sessions running across restarts and lets you open them from your own terminal
 - [Claude Code](https://claude.com/claude-code) (`claude` on your PATH)
-- Optional: [Codex](https://github.com/openai/codex) (`codex`) or [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`), to start sessions with those instead (see [Other agent CLIs](#other-agent-cli))
+- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) or [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`), to start sessions with those instead (see [Other agent CLIs](#other-agent-cli))
 - A C/C++ toolchain for `node-pty` if no prebuilt binary matches your platform
 
 ## Quick start
@@ -336,7 +349,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `extraHosts` | `[]` | extra `host:port` origins allowed to call the server, for example `"localhost:5190"` when running the web UI's Vite dev server |
 | `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
 | `claudeBin` | `"claude"` | the Claude Code binary used for new sessions and catch-up summaries |
-| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex` or `qwen`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
+| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen` or `kimi`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
 

@@ -8,6 +8,9 @@ export const LABEL: Record<SessionState, string> = {
   starting: 'Starting', working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
 }
 
+/** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
+export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
+
 /** The state label, with the busy-but-not-you variants of 'working'. */
 export function stateLabel(s: Session, now: number): string {
   const b = s.busy

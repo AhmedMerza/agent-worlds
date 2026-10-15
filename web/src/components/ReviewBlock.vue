@@ -4,7 +4,7 @@ import type { Review } from '../types'
 import { baseName, capDiff, diffClass, reviewView } from '../logic'
 import { askClaude, acknowledge } from '../store'
 
-const props = defineProps<{ id: string; name: string; branch: string | null; review: Review }>()
+const props = defineProps<{ id: string; name: string; branch: string | null; review: Review; agent?: string }>()
 const all = ref(false)
 const diff = computed(() => capDiff(props.review.diff, 400, all.value))
 const v = computed(() => reviewView(props.review))
@@ -31,7 +31,7 @@ const v = computed(() => reviewView(props.review))
     <button v-if="diff.hidden" class="linkbtn" @click="all = true">Show all ({{ diff.hidden }} more lines)</button>
   </details>
   <div class="actions">
-    <button v-if="v.canCommit" class="btn go" @click="askClaude(id, name, '/commit')">Ask Claude to commit</button>
+    <button v-if="v.canCommit" class="btn go" @click="askClaude(id, name, '/commit')">Ask {{ agent ?? 'Claude' }} to commit</button>
     <button v-if="v.canMr" class="btn" @click="askClaude(id, name, '/mr-create')">Open MR</button>
     <button class="btn" @click="askClaude(id, name, '/ship-check')">/ship-check</button>
     <button class="btn" @click="acknowledge(id)">Dismiss</button>

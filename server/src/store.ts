@@ -257,7 +257,9 @@ export class Store {
     s.task = o.task ? oneLine(o.task, 200) : null;
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
-    s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal' : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
+    s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
+      : s.agent === 'kimi' ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
+      : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);
     return id;
   }
@@ -360,7 +362,9 @@ export class Store {
         break;
       case 'UserPromptSubmit': {
         this.settleAll(s);
-        const prompt = typeof p.prompt === 'string' ? p.prompt : '';
+        // Kimi sends the prompt as content blocks
+        const prompt = typeof p.prompt === 'string' ? p.prompt
+          : Array.isArray(p.prompt) ? p.prompt.map((b: { text?: unknown }) => typeof b?.text === 'string' ? b.text : '').join('') : '';
         if (!s.task && prompt && !prompt.startsWith('/')) s.task = oneLine(prompt, 200);
         s.lastPrompt = oneLine(prompt, 200) ?? s.lastPrompt;
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Thinking';
@@ -423,7 +427,7 @@ export class Store {
           requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
           tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
-          live: this.deps.clientsConnected(), resolve: null, timer: null,
+          live: AGENTS[s.agent].decides && this.deps.clientsConnected(), resolve: null, timer: null,
         };
         s.pending.push(pend);
         s.state = 'waiting';
@@ -489,6 +493,10 @@ export class Store {
         s.card = { kind: 'done', summary: oneLine(p.last_assistant_message), review: null };
         break;
       }
+      case 'Interrupt': // Kimi: the turn was cancelled (Esc) and it sits at its prompt
+        this.settleAll(s);
+        this.afterPending(s, 'idle');
+        break;
       case 'PreCompact':
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Compacting…';
         s.busy = { kind: 'compact' }; s.busyEnd = null;

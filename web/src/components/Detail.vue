@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { copyText } from '../clipboard'
 import { computed } from 'vue'
-import { stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText } from '../logic'
+import { stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
 import { selected, groups, focusTerminal, askClaude, showToast, ui, state } from '../store'
 import ResumeButton from './ResumeButton.vue'
 
@@ -31,7 +31,7 @@ async function copyAttach() {
       <p v-else class="why">Which conversation this is could not be told, so it cannot be moved automatically. Use Recent sessions (R) to pick it.</p>
     </div>
     <div v-else class="detail">
-      <p v-if="s.state === 'starting'" class="why">Claude may be asking to trust this folder. Answer below in the terminal.</p>
+      <p v-if="s.state === 'starting'" class="why">{{ agentName(s) }} may be asking to trust this folder. Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
       <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p class="path" :title="s.cwd">{{ s.cwd }}</p>

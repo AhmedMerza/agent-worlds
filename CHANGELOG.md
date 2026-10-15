@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-15
+- New sessions can run Kimi Code (`kimi`, 2.1+). It reports through the same hook, from a Kimi home of its own (`<home>/kimi-home`: links to `~/.kimi-code` plus a copy of its config.toml with the hooks), so your Kimi config is never edited. Kimi takes no starting task (type the first message in the terminal) and doesn't wait on its permission hook, so its cards are answered in the terminal. Esc in Kimi (`Interrupt`) puts the session back at its prompt.
+
 ## 2026-10-14
 - New sessions can run Codex or Qwen Code instead of Claude Code: an Agent choice in New session, with "Make default" (`defaultAgent` in config.json, Claude when unset or not installed). They report through the same hook (`aw-hook <agent>`), so rooms, the inbox and Allow/Deny work; always-allow rules, permission modes, catch-ups, resume and the terminal Restart stay Claude-only. `GET /api/agents`, `POST /api/agents/default`.
 - Terminal: **Restart** quits the session's Claude and resumes the same conversation in a fresh one, in the same tmux pane, which redraws a wrecked screen for good. It keeps the session's permission mode, settings and model, and asks first when Claude is mid-turn (`POST /api/sessions/:id/restart`).
