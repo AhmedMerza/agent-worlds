@@ -160,7 +160,7 @@ const server = http.createServer(async (req, res) => {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
   if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
-  if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false }, { id: 'qwen', name: 'Qwen Code', installed: false, modes: false }, { id: 'kimi', name: 'Kimi Code', installed: true, modes: false, decides: false, task: false }], default: 'claude' })
+  if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false }, { id: 'qwen', name: 'Qwen Code', installed: false, modes: false }, { id: 'kimi', name: 'Kimi Code', installed: true, modes: false, decides: false, task: true }], default: 'claude' })
   if (req.method === 'POST' && url.pathname === '/api/agents/default') return json(200, { default: 'codex' })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
   // Phone: one made-up LAN address, no Tailscale; the QR link points nowhere real.
@@ -192,6 +192,20 @@ const server = http.createServer(async (req, res) => {
     sessions.set(sid, { ...s, id: sid }); upsert(sessions.get(sid))
     setTimeout(() => { sessions.delete(sid); broadcast({ type: 'session-removed', id: sid }); sessions.set(id, { ...s, state: 'working', now: 'Working' }); upsert(sessions.get(id)) }, 2500)
     return json(201, { id, tmuxSession: s.tmux.session })
+  }
+  const cm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/continue$/)
+  if (req.method === 'POST' && cm) {
+    const src = sessions.get(decodeURIComponent(cm[1]))
+    if (!src) return json(404, { error: 'no such session' })
+    const b = await readBody(req)
+    console.log('continue', cm[1], JSON.stringify(b))
+    const id = `repo-new-${sessions.size}`
+    const handoff = `/tmp/handoffs/${src.id}.md`
+    const s = mkSession(id, src.worldId, { state: 'starting', now: 'Starting', repoName: src.repoName, repo: src.repo, cwd: src.cwd, task: `Read ${handoff} and carry on from there.`, agent: b.agent })
+    const sid = `starting:${s.tmux.session}`
+    sessions.set(sid, { ...s, id: sid }); upsert(sessions.get(sid))
+    setTimeout(() => { sessions.delete(sid); broadcast({ type: 'session-removed', id: sid }); sessions.set(id, { ...s, state: 'working', now: 'Working' }); upsert(sessions.get(id)) }, 2500)
+    return json(201, { tmuxSession: s.tmux.session, handoff })
   }
   const dm = url.pathname.match(/^\/api\/demo\/(ask|done)$/)
   if (DEMO && dm && req.method === 'POST') {

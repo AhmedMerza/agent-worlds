@@ -15,6 +15,7 @@ import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
+import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, midTurn } from './transcript.ts';
 import { readFileSync } from 'node:fs';
 import { watchCode, prepareRestart } from './update.ts';
@@ -534,6 +535,26 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!proc?.argv) return send(res, 409, { error: 'its claude process was not found' });
       const err = await (opts.restartClaude ?? sys.restartClaude)(s.tmux.pane, s.id, proc.cwd, proc.argv, proc.managedHome);
       return err ? send(res, 502, { error: `restart failed: ${err}` }) : send(res, 200, { ok: true });
+    }
+    // Continue in another agent: write a handoff and start that agent in the same folder (its changes carry
+    // over: same dir, same branch) with the handoff as its first message. The old session stays untouched.
+    const cm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/continue$/);
+    if (cm && method === 'POST') {
+      const s = store.sessions.get(decodeURIComponent(cm[1]));
+      if (!s) return send(res, 404, { error: 'no such session' });
+      const b = await readBody(req);
+      if (!isAgent(b.agent)) return send(res, 422, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
+      if (b.agent === s.agent) return send(res, 409, { error: `this session already runs ${AGENTS[s.agent].name}` });
+      if (b.agent !== 'claude' && !onPath(AGENTS[b.agent].bin)) return send(res, 422, { error: `${AGENTS[b.agent].name} is not installed (no ${AGENTS[b.agent].bin} on PATH)` });
+      if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      const home = opts.home ?? homeDir();
+      const handoff = await writeHandoff(s, home);
+      const task = `Read ${handoff} and carry on from there.`;
+      try {
+        const r = await createSession({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task, agent: b.agent });
+        return send(res, 201, { tmuxSession: r.tmuxSession, handoff });
+      } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
     // A pasted or dropped file: the browser cannot hand the terminal a path, so save it here and return one to type.
     const um = url.pathname.match(/^\/api\/sessions\/([^/]+)\/upload$/);

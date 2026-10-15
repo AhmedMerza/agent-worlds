@@ -18,10 +18,13 @@ export const AGENTS = {
   // Qwen Code >= 0.13 copies Claude's hooks, reply format included.
   qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, task: true },
   // Kimi Code fires PermissionRequest without waiting for the hook, so its prompts are answered in the terminal.
-  kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, task: false },
+  kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, task: true },
 } as const;
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);
+
+/** Quote one string for POSIX sh. */
+export const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Whether `bin` is on PATH (or is an existing path). */
 export function installed(bin: string, path = process.env.PATH ?? ''): boolean {
@@ -50,7 +53,8 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     return { args: [...hooks, ...task], env: {} };
   }
   if (agent === 'kimi') {
-    // Kimi takes no starting prompt (and drops keys typed before it draws), so the task only names the session.
+    // Kimi takes no starting prompt (and drops keys typed before it draws): createSession turns the
+    // task into a `kimi -p` + `kimi -c` chain; here the task only names the session.
     return { args: [], env: o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {} };
   }
   if (agent === 'qwen') {

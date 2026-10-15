@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
 import { selected, groups, focusTerminal, askClaude, showToast, ui, state } from '../store'
 import ResumeButton from './ResumeButton.vue'
+import ContinueIn from './ContinueIn.vue'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
@@ -64,6 +65,7 @@ async function copyAttach() {
         <button class="btn" @click="ui.recentRepo = s.repo; ui.recentOpen = true">Past sessions here</button>
         <button v-if="world?.id === UNSORTED.id" class="btn" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
         <button v-else-if="state.worlds.length > 1" class="btn" @click="ui.moveSession = s.id">Move to another world…</button>
+        <ContinueIn :session-id="s.id" :current="s.agent ?? 'claude'" :repo-name="s.repoName" />
       </div>
     </div>
   </section>

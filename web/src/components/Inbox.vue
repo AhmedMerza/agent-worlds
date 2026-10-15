@@ -4,6 +4,7 @@ import type { Session, Question, Card } from '../types'
 import { fmtWait, permissionAsk, permissionWho, permissionDetail, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive, inboxOrder, agentName } from '../logic'
 import { state, needsYou, groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
+import ContinueIn from './ContinueIn.vue'
 
 const cardKey = (c: Card) => (c.kind === 'permission' || c.kind === 'question' ? c.requestId : c.kind)
 const keyOf = (s: Session) => s.id + ':' + cardKey(s.card!)
@@ -137,7 +138,7 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
           <input v-model="reply[s.id]" class="reply-in" autocomplete="off" :aria-label="`Reply to ${s.repoName}`" :placeholder="c.kind === 'asking' ? 'Type your answer' : 'Tell it what to do next'" />
           <button class="btn primary" :disabled="!(reply[s.id] ?? '').trim() || busy[s.id + ':reply']">Send</button>
         </form>
-        <div v-if="c.kind === 'error'" class="actions"><button class="btn" :disabled="busy[s.id]" @click="run(s.id, () => acknowledge(s.id))">Dismiss</button></div>
+        <div v-if="c.kind === 'error'" class="actions"><ContinueIn :session-id="s.id" :current="s.agent ?? 'claude'" :repo-name="s.repoName" primary /><button class="linkbtn" :disabled="busy[s.id]" @click="run(s.id, () => acknowledge(s.id))">Dismiss</button></div>
       </template>
 
       <button v-if="cardLive(c)" class="linkbtn" @click="select(s.id); focusTerm()">Open its terminal</button>
