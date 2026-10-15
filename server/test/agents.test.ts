@@ -36,11 +36,33 @@ test('kimi gets a home of its own: the user\'s files linked, their config plus o
   assert.ok(toml.startsWith('default_model = "k3"\n'), 'the user\'s config comes first');
   assert.match(toml, /\[\[hooks\]\]\nevent = "PermissionRequest"\ncommand = ".*\/bin\/aw-hook kimi"\ntimeout = 10\n/);
   assert.equal(readFileSync(join(real, 'config.toml'), 'utf8'), 'default_model = "k3"', 'the user\'s own config is untouched');
-  writeKimiHome(home, real); // a second start finds the links already there
+  writeFileSync(join(real, 'workspaces.json'), '{}');
+  writeFileSync(join(dir, 'workspaces.json'), '{"mine":1}'); // Kimi replaced our link by renaming over it
+  writeKimiHome(home, real); // a second start keeps good links and links the copy again
+  assert.equal(readlinkSync(join(dir, 'credentials')), join(real, 'credentials'));
+  assert.equal(readlinkSync(join(dir, 'workspaces.json')), join(real, 'workspaces.json'));
+  assert.equal(readFileSync(join(dir, 'config.toml'), 'utf8').match(/^\[\[hooks\]\]$/gm)?.length, 14, 'hooks not doubled');
   process.env.KIMI_CODE_HOME = real; // never the user's real ~/.kimi-code
   const { args, env } = launchArgs('kimi', { home, task: 'fix it' });
   assert.deepEqual(args, [], 'kimi takes no starting prompt');
   assert.equal(env.KIMI_CODE_HOME, dir);
+});
+
+test('kimi home: a first-run user (no Kimi home, or no config.toml) gets only our hooks', () => {
+  for (const real of [join(mkdtempSync(join(tmpdir(), 'aw-kimi-')), 'missing'), mkdtempSync(join(tmpdir(), 'aw-kimi-'))]) {
+    const toml = readFileSync(join(writeKimiHome(mkdtempSync(join(tmpdir(), 'aw-agents-')), real), 'config.toml'), 'utf8');
+    assert.ok(toml.startsWith('\n\n# Added by Agent Worlds'), 'nothing of the user\'s before our block');
+    assert.equal(toml.match(/^\[\[hooks\]\]$/gm)?.length, 14);
+  }
+});
+
+test('kimi home: the user\'s own [[hooks]] stay, ours follow after a blank line', () => {
+  const real = mkdtempSync(join(tmpdir(), 'aw-kimi-'));
+  const mine = '[[hooks]]\nevent = "Stop"\ncommand = "notify-send done"'; // no trailing newline
+  writeFileSync(join(real, 'config.toml'), mine);
+  const toml = readFileSync(join(writeKimiHome(mkdtempSync(join(tmpdir(), 'aw-agents-')), real), 'config.toml'), 'utf8');
+  assert.ok(toml.startsWith(mine + '\n\n# Added by Agent Worlds'));
+  assert.equal(toml.match(/^\[\[hooks\]\]$/gm)?.length, 15);
 });
 
 test('claude keeps its own flags', () => {

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync, mkdirSync, renameSync, readFileSync, readdirSync, symlinkSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, renameSync, readFileSync, readdirSync, symlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT } from './hooks.ts';
@@ -78,7 +78,13 @@ export function writeKimiHome(home: string, real = process.env.KIMI_CODE_HOME ||
   const names = existsSync(real) ? readdirSync(real) : [];
   for (const n of names) {
     if (n === 'config.toml') continue;
-    try { symlinkSync(join(real, n), join(dir, n)); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    const link = join(dir, n), target = join(real, n);
+    // Kimi saves some files (workspaces.json) by rename, which turns our link into a private copy: link it again
+    const st = lstatSync(link, { throwIfNoEntry: false });
+    if (st?.isSymbolicLink() && readlinkSync(link) === target) continue;
+    if (st && !st.isFile() && !st.isSymbolicLink()) continue; // a folder Kimi made here: never deleted
+    if (st) rmSync(link);
+    symlinkSync(target, link);
   }
   const mine = names.includes('config.toml') ? readFileSync(join(real, 'config.toml'), 'utf8') : '';
   const command = JSON.stringify(hookCommand('kimi')); // a JSON string is a valid TOML basic string
