@@ -37,6 +37,8 @@ function openNewTask(worldId?: string) {
 const menuOpen = ref(false)
 const updating = ref(false)
 const updateError = ref('')
+/** The session the update refusal names: only permission and question cards hold the server's pending requests. */
+const unanswered = computed(() => needsYou.value.find((s) => s.card?.kind === 'permission' || s.card?.kind === 'question'))
 async function onUpdate(force = false) {
   updating.value = true; updateError.value = ''
   const err = await updateNow(force)
@@ -120,7 +122,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
       <span>{{ updating ? 'Updating… the page reloads when the new version is up. Your sessions keep running.' : 'A new version of Agent Worlds is ready.' }}</span>
       <button v-if="!updating" class="btn primary" @click="onUpdate()">Update now</button>
       <button v-if="!updating && /will end/.test(updateError)" class="btn" @click="onUpdate(true)">Update anyway</button>
-      <button v-if="!updating && /waiting for your answer/.test(updateError) && needsYou[0]" class="btn" @click="select(needsYou[0].id)">Show it</button>
+      <button v-if="!updating && /waiting for your answer/.test(updateError) && unanswered" class="btn" @click="select(unanswered.id)">Show it</button>
       <pre v-if="updateError" class="err">{{ updateError }}</pre>
     </div>
     <div v-else-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
