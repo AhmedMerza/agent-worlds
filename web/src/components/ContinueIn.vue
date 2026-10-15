@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { continueIn, fetchAgents, showToast, type AgentInfo } from '../store'
+import { otherAgents } from '../logic'
 
 /**
  * "Continue in ▾": hands the session's folder to another installed agent (the handoff is written
@@ -16,11 +17,13 @@ const busy = ref(false)
 /** Which trigger edge the menu aligns to; chosen on open so it never clips its scrolling column. */
 const align = ref<'right' | 'left'>('right')
 const placed = ref(false)
-const agents = ref<AgentInfo[] | null>(null) // null = still loading
+/** Raw list from the server (null = still loading); the filter re-derives when `current` changes (Detail reuses this component across sessions). */
+const all = ref<AgentInfo[] | null>(null)
 const failed = ref(false)
+const agents = computed(() => otherAgents(all.value, props.current))
 onMounted(async () => {
   const r = await fetchAgents()
-  if (r.ok) agents.value = r.data.agents.filter((a) => a.installed && a.id !== props.current)
+  if (r.ok) all.value = r.data.agents
   else failed.value = true
 })
 
@@ -67,6 +70,7 @@ function close(refocus = false) {
 const toggle = () => (open.value ? close(true) : openMenu())
 const items = () => [...(menu.value?.querySelectorAll<HTMLButtonElement>('button.menu-item') ?? [])]
 function onMenuKeydown(e: KeyboardEvent) {
+  if (!open.value) return
   if (e.key === 'Escape') { e.stopPropagation(); close(true); return }
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
   e.preventDefault()
@@ -83,20 +87,20 @@ async function pick(a: AgentInfo) {
   const err = await continueIn(props.sessionId, a.id)
   busy.value = false
   if (err) { showToast(err); close(true) }
-  else { showToast(`Started ${a.name} in ${props.repoName} — original session left open`); close() }
+  else { showToast(`Started ${a.name} in ${props.repoName} — original session left open`); close(true) }
 }
 </script>
 
 <template>
-  <span ref="root" class="continue-in">
-    <button ref="trigger" :class="['btn', { primary }]" :disabled="busy || (agents !== null && !agents.length && !failed)"
-      :title="agents !== null && !agents.length && !failed ? 'No other agent is installed' : undefined"
+  <span ref="root" class="continue-in" @keydown="onMenuKeydown">
+    <button ref="trigger" :class="['btn', { primary }]" :disabled="busy || (all !== null && !agents.length && !failed)"
+      :title="all !== null && !agents.length && !failed ? 'No other agent is installed' : undefined"
       aria-haspopup="menu" :aria-expanded="open" @click.stop="toggle">{{ busy ? 'Starting…' : 'Continue in ▾' }}</button>
-    <div v-if="open" ref="menu" class="menu" :class="align" :style="{ visibility: placed ? 'visible' : 'hidden' }" role="menu" aria-label="Continue in another agent" @keydown="onMenuKeydown">
+    <div v-if="open" ref="menu" class="menu" :class="align" :style="{ visibility: placed ? 'visible' : 'hidden' }" role="menu" aria-label="Continue in another agent">
       <p class="why note">Starts it in the same folder with a handoff of this session; this session stays open.</p>
       <p v-if="failed" class="why note">Couldn't load the agent list.</p>
-      <p v-else-if="agents === null" class="why note">Loading…</p>
-      <button v-for="a in agents ?? []" :key="a.id" class="btn menu-item" role="menuitem" :disabled="busy" @click="pick(a)">{{ a.name }}</button>
+      <p v-else-if="all === null" class="why note">Loading…</p>
+      <button v-for="a in agents" :key="a.id" class="btn menu-item" role="menuitem" :disabled="busy" @click="pick(a)">{{ a.name }}</button>
     </div>
   </span>
 </template>

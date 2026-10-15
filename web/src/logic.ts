@@ -427,3 +427,7 @@ export function resumeOutcome(status: number, body: unknown): ResumeResult {
   if (status === 409 && b.stopFailed !== true) return { kind: 'running', pid: typeof b.pid === 'number' ? b.pid : null }
   return { kind: 'error', message: errorText(status, body) }
 }
+
+/** The agents "Continue in" can hand a session to: installed, and not the one the session already runs. */
+export const otherAgents = <T extends { id: string; installed: boolean }>(agents: T[] | null, current: string): T[] =>
+  (agents ?? []).filter((a) => a.installed && a.id !== current)

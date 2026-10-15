@@ -548,9 +548,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.agent !== 'claude' && !onPath(AGENTS[b.agent].bin)) return send(res, 422, { error: `${AGENTS[b.agent].name} is not installed (no ${AGENTS[b.agent].bin} on PATH)` });
       if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       const home = opts.home ?? homeDir();
-      const handoff = await writeHandoff(s, home);
-      const task = `Read ${handoff} and carry on from there.`;
       try {
+        const handoff = await writeHandoff(s, home);
+        const task = `Read "${handoff}" and carry on from there.`;
         const r = await createSession({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task, agent: b.agent });
         return send(res, 201, { tmuxSession: r.tmuxSession, handoff });

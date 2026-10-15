@@ -127,7 +127,9 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   const env = Object.entries(vars).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Kimi takes no starting prompt and drops keys typed before its TUI draws, so a task goes in through a
   // one-shot `kimi -p` run (a normal session, its hooks fire), which `kimi -c` then continues interactively.
-  const chain = agent === 'kimi' && task ? { file: 'bash', argv: ['-c', `${shq(bin)} -p ${shq(task)} ; exec ${shq(bin)} -c`] } : { file: bin, argv: args };
+  // The -c is gated on the -p exit code: a failed -p (a trust prompt, a crash) must show its failure in the
+  // pane, not resume some other conversation. (Resuming the -p run's own session id is an open question.)
+  const chain = agent === 'kimi' && task ? { file: 'bash', argv: ['-c', `${shq(bin)} -p ${shq(task)} && exec ${shq(bin)} -c`] } : { file: bin, argv: args };
   if (direct) {
     // AGENT_WORLDS_PTY lets aw-hook tell the server which of its sessions an event belongs to (tmux has TMUX_PANE for that).
     try { await opts.spawnDirect!(name, chain.file, chain.argv, dir, { ...vars, AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start ${chain.file}: ${(e as Error).message}`); }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeHandoff } from '../src/handoff.ts';
@@ -136,8 +136,26 @@ test('POST /api/sessions/:id/continue: 404/409/422, and a happy path in the same
     assert.equal(calls[0].agent, 'claude');
     assert.equal(calls[0].repo, repo, 'same folder, no new worktree');
     assert.equal(calls[0].worktree, false);
-    assert.equal(calls[0].task, `Read ${out.handoff} and carry on from there.`);
+    assert.equal(calls[0].task, `Read "${out.handoff}" and carry on from there.`);
     assert.ok(app.store.sessions.has('starting:aw-cont'));
     assert.match(readFileSync(out.handoff, 'utf8'), /# Handoff from Kimi Code/);
+
+    // continuing a Claude session INTO kimi: the quoted handoff path is the task
+    await fetch(`${base}/api/hook`, { method: 'POST', headers: H, body: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'c1', cwd: repo }) });
+    assert.equal(app.store.sessions.get('c1')?.agent, 'claude');
+    const path2 = process.env.PATH;
+    const bindir = tmp();
+    writeFileSync(join(bindir, 'kimi'), '#!/bin/sh\n');
+    chmodSync(join(bindir, 'kimi'), 0o755);
+    process.env.PATH = `${bindir}:${path2}`;
+    try {
+      const r2 = await cont('c1', { agent: 'kimi' });
+      assert.equal(r2.status, 201);
+      const out2 = await r2.json() as any;
+      assert.equal(calls.length, 2);
+      assert.equal(calls[1].agent, 'kimi');
+      assert.equal(calls[1].repo, repo);
+      assert.equal(calls[1].task, `Read "${out2.handoff}" and carry on from there.`);
+    } finally { process.env.PATH = path2; }
   } finally { await app.close(); }
 });

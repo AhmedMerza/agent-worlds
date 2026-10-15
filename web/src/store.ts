@@ -209,7 +209,10 @@ export function fetchAgents(): Promise<ApiResult<{ agents: AgentInfo[]; default:
   agentsCache ??= api<{ agents: AgentInfo[]; default: string }>('GET', '/api/agents').then((r) => { if (!r.ok) agentsCache = null; return r })
   return agentsCache
 }
-export const saveDefaultAgent = (agent: string) => api<{ default: string }>('POST', '/api/agents/default', { agent })
+export const saveDefaultAgent = (agent: string) => {
+  agentsCache = null // the default (and anything else the server changed) is refetched next time
+  return api<{ default: string }>('POST', '/api/agents/default', { agent })
+}
 
 /** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */
 export async function moveRepo(path: string, fromId: string, toId: string): Promise<string | null> {

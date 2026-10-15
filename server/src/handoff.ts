@@ -20,11 +20,12 @@ function run(cmd: string, args: string[], cwd: string): Promise<string | null> {
 
 /** Kimi's wire log for `id`: <kimi home>/sessions/wd_* /session_<id>/agents/main/wire.jsonl. */
 async function kimiWireLog(id: string, home: string): Promise<string | null> {
+  const safe = id.replace(/[*?[\]\\]/g, (c) => `\\${c}`); // the id is data, not a pattern
   const real = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
   for (const base of [real, join(home, 'kimi-home')]) {
     if (!existsSync(base)) continue;
     try {
-      for await (const f of glob(`sessions/wd_*/session_${id}/agents/main/wire.jsonl`, { cwd: base })) return join(base, f);
+      for await (const f of glob(`sessions/wd_*/session_${safe}/agents/main/wire.jsonl`, { cwd: base })) return join(base, f);
     } catch { /* unreadable home */ }
   }
   return null;
