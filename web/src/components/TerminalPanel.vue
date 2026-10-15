@@ -36,6 +36,8 @@ let gen = 0
 /** "Scroll back": Claude's full-screen view keeps no terminal scrollback, so show the conversation from the transcript. */
 const history = ref<Turn[] | null>(null)
 const historyOpen = ref(false)
+/** On short screens a filled catch-up folds to its "It needs" line so the terminal keeps its rows. */
+const catchOpen = ref(false)
 const historyErr = ref('')
 const historyBox = ref<HTMLElement | null>(null)
 async function loadHistory() {
@@ -192,11 +194,11 @@ watch(termFocusTick, async () => {
       </template>
       <template v-else>No session selected</template>
     </div>
-    <dl v-if="s && cu && showCatchup" class="catch">
+    <dl v-if="s && cu && showCatchup" :class="['catch', { filled: cu.mode === 'filled', folded: !catchOpen }]">
       <template v-if="cu.asked"><dt>You asked</dt><dd>{{ cu.asked }}</dd></template>
       <template v-if="cu.mode === 'filled'">
         <template v-if="cu.did"><dt>It did</dt><dd>{{ cu.did }}</dd></template>
-        <dt>It needs</dt><dd :class="['needs', { none: !cu.needs }]">{{ cu.needs || cu.needsFallback }}</dd>
+        <dt class="need"><button class="catch-more" :aria-expanded="catchOpen" :aria-label="catchOpen ? 'Show less of the catch-up' : 'Show the whole catch-up'" @click="catchOpen = !catchOpen">{{ catchOpen ? '▾' : '▸' }}</button>It needs</dt><dd :class="['needs', 'need', { none: !cu.needs }]">{{ cu.needs || cu.needsFallback }}</dd>
         <span class="tag">Catch-up written by Haiku</span>
         <span v-if="cu.stale" class="stale" role="status">May be out of date · <button class="linkbtn" @click="requestCatchup(s.id)">Refresh</button></span>
       </template>
