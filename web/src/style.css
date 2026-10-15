@@ -249,6 +249,13 @@ pre.diff{max-height:320px;overflow:auto}
   aside > .panel:first-child{flex:1 1 0}
   aside > .panel:last-child{flex:0 1 auto;max-height:45%}
 }
+/* Laptop-height windows: the terminal takes 3/4 of the column and a filled catch-up folds to its "It needs" line. */
+.catch-more{display:none}
+@media (min-width:1000px) and (max-height:850px){
+  .main-col > .term{flex:3 1 0}
+  .catch-more{display:inline;background:none;border:0;padding:0 6px 0 0;color:inherit;font:inherit;cursor:pointer}
+  .catch.filled.folded > :not(.need){display:none}
+}
 @media (min-width:2200px){
   .layout > .worlds{align-self:stretch}
   .term{position:static;height:auto;align-self:stretch}
