@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { modeField, modeOptions } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state } from '../src/store'
 import { mk, perm } from './helpers'
 
 const worlds = [{ id: 'web', name: 'Web', color: '#fff', repos: [] }]
@@ -159,5 +159,46 @@ describe('moveSession', () => {
     expect(url).toBe('/api/sessions/sess%201/world')
     expect(init.method).toBe('POST')
     expect(JSON.parse(String(init.body))).toEqual({ worldId: 'pos' })
+  })
+})
+
+describe('continueIn', () => {
+  afterEach(() => { vi.unstubAllGlobals(); state.pending = null })
+  it('posts the target agent and follows the new tmux session; errors come back as text', async () => {
+    const fn = vi.fn(async () => ({ ok: true, status: 201, json: async () => ({ tmuxSession: 'aw-cont', handoff: '/h/handoffs/sess-1.md' }) }))
+    vi.stubGlobal('fetch', fn)
+    expect(await continueIn('sess 1', 'codex')).toBeNull()
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/sessions/sess%201/continue')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ agent: 'codex' })
+    expect(state.pending?.tmux).toBe('aw-cont')
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ error: 'this session already runs Codex' }) })))
+    expect(await continueIn('sess-1', 'codex')).toBe('this session already runs Codex')
+  })
+})
+
+describe('fetchAgents cache', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules() })
+  const fresh = async () => (await import('../src/store')).fetchAgents
+  it('asks the server once per page, but retries after a failure', async () => {
+    const payload = { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }], default: 'claude' }
+    const fn = vi.fn(async () => ({ ok: true, status: 200, json: async () => payload }))
+    vi.stubGlobal('fetch', fn)
+    let fetchAgents = await fresh()
+    expect((await fetchAgents()).ok).toBe(true)
+    expect((await fetchAgents()).ok).toBe(true)
+    expect(fn).toHaveBeenCalledTimes(1)
+
+    vi.resetModules()
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => (++n === 1
+      ? { ok: false, status: 500, json: async () => ({ error: 'boom' }) }
+      : { ok: true, status: 200, json: async () => payload })))
+    fetchAgents = await fresh()
+    expect((await fetchAgents()).ok).toBe(false)
+    expect((await fetchAgents()).ok).toBe(true)
+    expect(n).toBe(2)
   })
 })

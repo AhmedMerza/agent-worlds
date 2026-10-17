@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launchArgs, defaultAgent, installed, writeKimiHome } from '../src/agents.ts';
+import { launchArgs, defaultAgent, installed, writeKimiHome, AGENTS } from '../src/agents.ts';
 
 test('codex gets its hooks as -c overrides, the permission hook held for an hour', () => {
   const { args, env } = launchArgs('codex', { home: '/h', task: 'fix it' });
@@ -44,8 +44,9 @@ test('kimi gets a home of its own: the user\'s files linked, their config plus o
   assert.equal(readFileSync(join(dir, 'config.toml'), 'utf8').match(/^\[\[hooks\]\]$/gm)?.length, 14, 'hooks not doubled');
   process.env.KIMI_CODE_HOME = real; // never the user's real ~/.kimi-code
   const { args, env } = launchArgs('kimi', { home, task: 'fix it' });
-  assert.deepEqual(args, [], 'kimi takes no starting prompt');
+  assert.deepEqual(args, [], 'kimi takes no starting prompt (the task becomes a -p/-c chain in createSession)');
   assert.equal(env.KIMI_CODE_HOME, dir);
+  assert.equal(AGENTS.kimi.task, true, 'a task reaches kimi as `kimi -p … ; kimi -c`');
 });
 
 test('kimi home: a first-run user (no Kimi home, or no config.toml) gets only our hooks', () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -385,5 +385,19 @@ describe('agentName', () => {
     expect(agentName({ agent: 'kimi' })).toBe('Kimi')
     expect(agentName({ agent: 'codex' })).toBe('Codex')
     expect(agentName({})).toBe('Claude')
+  })
+})
+
+describe('otherAgents', () => {
+  const list = [
+    { id: 'claude', name: 'Claude Code', installed: true, modes: true },
+    { id: 'codex', name: 'Codex', installed: true, modes: false },
+    { id: 'qwen', name: 'Qwen Code', installed: false, modes: false },
+    { id: 'kimi', name: 'Kimi Code', installed: true, modes: false },
+  ]
+  it('offers the installed agents except the session\'s current one, re-derived per current', () => {
+    expect(otherAgents(list, 'claude').map((a) => a.id)).toEqual(['codex', 'kimi'])
+    expect(otherAgents(list, 'kimi').map((a) => a.id)).toEqual(['claude', 'codex'])
+    expect(otherAgents(null, 'claude')).toEqual([])
   })
 })

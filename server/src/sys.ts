@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
-import { AGENTS, launchArgs, type AgentId } from './agents.ts';
+import { AGENTS, launchArgs, shq, type AgentId } from './agents.ts';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
 
@@ -125,12 +125,17 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   const { args, env: agentEnv } = launchArgs(agent, { home: opts.home, resume: opts.resume, permissionMode: opts.permissionMode, task });
   const vars = { ...(opts.home ? { AGENT_WORLDS_HOME: opts.home } : {}), ...agentEnv };
   const env = Object.entries(vars).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+  // Kimi takes no starting prompt and drops keys typed before its TUI draws, so a task goes in through a
+  // one-shot `kimi -p` run (a normal session, its hooks fire), which `kimi -c` then continues interactively.
+  // The -c is gated on the -p exit code: a failed -p (a trust prompt, a crash) must show its failure in the
+  // pane, not resume some other conversation. (Resuming the -p run's own session id is an open question.)
+  const chain = agent === 'kimi' && task ? { file: 'bash', argv: ['-c', `${shq(bin)} -p ${shq(task)} && exec ${shq(bin)} -c`] } : { file: bin, argv: args };
   if (direct) {
     // AGENT_WORLDS_PTY lets aw-hook tell the server which of its sessions an event belongs to (tmux has TMUX_PANE for that).
-    try { await opts.spawnDirect!(name, bin, args, dir, { ...vars, AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start ${bin}: ${(e as Error).message}`); }
+    try { await opts.spawnDirect!(name, chain.file, chain.argv, dir, { ...vars, AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start ${chain.file}: ${(e as Error).message}`); }
     return { tmuxSession: name, dir, branch, pane: null, direct: true };
   }
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, bin, ...args]);
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, chain.file, ...chain.argv]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.

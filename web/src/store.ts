@@ -176,6 +176,13 @@ export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
 export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST', `${base(id)}/upload?name=${encodeURIComponent(f.name)}`, f)
 export const restartSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/restart`, { force })
+/** Starts another agent in the session's folder with a handoff as its first message; follows the new session. */
+export async function continueIn(id: string, agent: string): Promise<string | null> {
+  const r = await api<{ tmuxSession: string; handoff: string }>('POST', `${base(id)}/continue`, { agent })
+  if (!r.ok) return r.error
+  followNew(r.data.tmuxSession)
+  return null
+}
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })
@@ -196,9 +203,16 @@ export async function askClaude(id: string, repoName: string, command: string): 
 }
 export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode; agent?: string }
 export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean; decides?: boolean; task?: boolean }
-/** The agent CLIs this server can start, and which one new sessions use by default. */
-export const fetchAgents = () => api<{ agents: AgentInfo[]; default: string }>('GET', '/api/agents')
-export const saveDefaultAgent = (agent: string) => api<{ default: string }>('POST', '/api/agents/default', { agent })
+/** The agent CLIs this server can start, and which one new sessions use by default. Cached (a page asks from several places); failures are not cached, so a later try can succeed. */
+let agentsCache: Promise<ApiResult<{ agents: AgentInfo[]; default: string }>> | null = null
+export function fetchAgents(): Promise<ApiResult<{ agents: AgentInfo[]; default: string }>> {
+  agentsCache ??= api<{ agents: AgentInfo[]; default: string }>('GET', '/api/agents').then((r) => { if (!r.ok) agentsCache = null; return r })
+  return agentsCache
+}
+export const saveDefaultAgent = (agent: string) => {
+  agentsCache = null // the default (and anything else the server changed) is refetched next time
+  return api<{ default: string }>('POST', '/api/agents/default', { agent })
+}
 
 /** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */
 export async function moveRepo(path: string, fromId: string, toId: string): Promise<string | null> {

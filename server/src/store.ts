@@ -72,6 +72,8 @@ export type Session = {
   branchTimer: NodeJS.Timeout | null;
   model: string | null;
   transcriptPath: string | null;
+  /** Another agent's transcript, only named in a handoff (never read here: it is outside claudeProjectsDir). */
+  logPath: string | null;
   tests: Review['tests'];
   testing: Set<string>;
   /** When the last hook event arrived: a transcript interrupt marker older than this is stale. */
@@ -81,7 +83,7 @@ export type Session = {
   /** Since your last prompt Claude started background work (a background helper or command, a monitor) that can bring it back. */
   launched: boolean;
 };
-const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'tests', 'testing', 'hookAt', 'busyEnd', 'launched'] as const;
+const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'logPath', 'tests', 'testing', 'hookAt', 'busyEnd', 'launched'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -258,7 +260,7 @@ export class Store {
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
-      : s.agent === 'kimi' ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
+      : s.agent === 'kimi' && !o.task ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
       : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);
     return id;
@@ -283,7 +285,7 @@ export class Store {
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
-      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, tests: null, testing: new Set(), launched: false, hookAt: t,
+      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, logPath: null, tests: null, testing: new Set(), launched: false, hookAt: t,
     };
     if (starting) {
       s.task = starting.task;
@@ -345,9 +347,11 @@ export class Store {
         if (s.tmux?.pane === pane && name) { s.tmux.session = name; if (this.sessions.has(s.id)) this.push(s); }
       });
     }
-    // Only Claude's own transcripts: the catch-up summariser reads this file.
+    // Only Claude's own transcripts: the catch-up summariser reads this file. Other agents' transcript
+    // paths are only kept to be named in a handoff, so they are never confined to claudeProjectsDir.
     const tp = p.transcript_path;
     if (typeof tp === 'string' && tp.endsWith('.jsonl') && resolve(tp).startsWith(this.cfg.claudeProjectsDir + '/')) s.transcriptPath = tp;
+    else if (typeof tp === 'string' && tp.startsWith('/')) s.logPath = tp;
     const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
     const input = (p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {}) as Record<string, unknown>;
     let reply: Promise<string> | string = '';

@@ -100,6 +100,31 @@ test('the same hook reported twice (two command strings) is handled once and bot
   } finally { ws.close(); await app.close(); }
 });
 
+test('kimi with a task starts a `kimi -p` run that `kimi -c` then continues; without a task it is plain kimi', async () => {
+  const path = process.env.PATH;
+  process.env.PATH = tmp(); // no tmux, so the pane is spawned directly and we see the argv
+  try {
+    const calls: unknown[][] = [];
+    const spawnDirect = async (...a: unknown[]) => { calls.push(a); };
+    await createSession({ repo: tmp(), task: `fix it's bug`, worktree: false, agent: 'kimi', home: tmp(), prefix: 'awtest-', spawnDirect });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][1], 'bash');
+    assert.deepEqual(calls[0][2], ['-c', `'kimi' -p 'fix it'\\''s bug' && exec 'kimi' -c`]);
+    assert.equal((calls[0][4] as any).AGENT_WORLDS_HOME !== undefined, true, 'hooks env still applies');
+
+    // a handoff task (spaced path in double quotes, as /continue builds it) survives the chain quoting
+    calls.length = 0;
+    const handoffTask = 'Read "/tmp/home dir/handoffs/k1.md" and carry on from there.';
+    await createSession({ repo: tmp(), task: handoffTask, worktree: false, agent: 'kimi', home: tmp(), prefix: 'awtest-', spawnDirect });
+    assert.deepEqual(calls[0][2], ['-c', `'kimi' -p 'Read "/tmp/home dir/handoffs/k1.md" and carry on from there.' && exec 'kimi' -c`]);
+
+    calls.length = 0;
+    await createSession({ repo: tmp(), worktree: false, agent: 'kimi', home: tmp(), prefix: 'awtest-', spawnDirect });
+    assert.equal(calls[0][1], 'kimi', 'no task: plain interactive kimi');
+    assert.deepEqual(calls[0][2], []);
+  } finally { process.env.PATH = path; }
+});
+
 test('createSession refuses a worktree in a plain (non-git) folder', async () => {
   await assert.rejects(createSession({ repo: tmp(), worktree: true }), /not a git repo, so it cannot use a worktree/);
 });
