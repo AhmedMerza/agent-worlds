@@ -46,10 +46,15 @@ function fitCanvas() {
   lastStatic = ''
 }
 
+/** Each room redraws its whole scene, so only rooms on screen draw, at ~30fps. */
+const FRAME_MS = 1000 / 30
+let onScreen = true
+
 function frame(t: number) {
   raf = requestAnimationFrame(frame)
   const c = canvas.value
-  if (!c || document.hidden || c.offsetParent === null) return
+  if (!c || !onScreen || document.hidden || c.offsetParent === null) return
+  if (lastT && t - lastT < FRAME_MS - 2) return
   const ctx = c.getContext('2d')
   if (!ctx) return
   // With reduced motion the picture only changes when data does, so skip identical redraws.
@@ -63,14 +68,19 @@ function frame(t: number) {
   hits = drawRoom(ctx, { group: scene.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
 }
 let ro: ResizeObserver | null = null
+let io: IntersectionObserver | null = null
 onMounted(() => {
   fitCanvas()
   ro = new ResizeObserver(fitCanvas)
   if (wrap.value) ro.observe(wrap.value)
+  if (typeof IntersectionObserver !== 'undefined' && wrap.value) {
+    io = new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; lastT = 0; lastStatic = '' })
+    io.observe(wrap.value)
+  }
   raf = requestAnimationFrame(frame)
 })
 watch(h, fitCanvas, { flush: 'post' })
-onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect() })
+onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect(); io?.disconnect() })
 
 function at(e: MouseEvent): Hit | undefined {
   const b = canvas.value!.getBoundingClientRect()
