@@ -18,8 +18,8 @@ export async function repoInfo(cwd: string): Promise<RepoInfo> {
   if (!out) return { repo: cwd, branch: null, worktree: false, top: cwd };
   const [top, common] = out.trim().split('\n');
   const repo = basename(common) === '.git' ? dirname(common) : common;
-  const head = (await run('git', ['-C', cwd, 'rev-parse', '-q', '--verify', 'HEAD']))?.trim() || null;
-  return { repo, branch: await branchOf(cwd), worktree: top !== repo, top, head };
+  const [head, branch] = await Promise.all([run('git', ['-C', cwd, 'rev-parse', '-q', '--verify', 'HEAD']), branchOf(cwd)]);
+  return { repo, branch, worktree: top !== repo, top, head: head?.trim() || null };
 }
 
 export async function branchOf(cwd: string): Promise<string | null> {
@@ -111,9 +111,10 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   if (opts.worktree) {
     if (!('head' in await repoInfo(opts.repo))) throw new Error(`${opts.repo} is not a git repo, so it cannot use a worktree`);
     branch = opts.branch || `aw/${slug(opts.task || 'session', 32)}-${id}`;
-    if ((await run('git', ['check-ref-format', '--branch', branch])) === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
+    const [valid, start] = await Promise.all([run('git', ['check-ref-format', '--branch', branch]), defaultStart(opts.repo)]);
+    if (valid === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
     dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));
-    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, dir, await defaultStart(opts.repo)]);
+    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, dir, start]);
     if (err !== null) throw new Error(`git worktree add failed: ${err}`);
   }
   const name = `${opts.prefix ?? 'aw-'}${slug(basename(opts.repo))}-${id}`;
@@ -139,9 +140,10 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.
-  await run('tmux', ['set-option', '-w', '-t', `=${name}:`, 'window-size', 'latest']);
-  await run('tmux', ['set-option', '-w', '-t', `=${name}:`, 'aggressive-resize', 'on']);
-  const pane = (await run('tmux', ['display-message', '-p', '-t', `=${name}:`, '#{pane_id}']))?.trim() ?? '';
+  // One tmux call for all three (";" separates tmux commands).
+  const t = `=${name}:`;
+  const out = await run('tmux', ['set-option', '-w', '-t', t, 'window-size', 'latest', ';', 'set-option', '-w', '-t', t, 'aggressive-resize', 'on', ';', 'display-message', '-p', '-t', t, '#{pane_id}']);
+  const pane = out?.trim().split('\n').pop() ?? '';
   return { tmuxSession: name, dir, branch, pane: PANE_RE.test(pane) ? pane : null };
 }
 
