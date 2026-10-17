@@ -140,10 +140,11 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.
-  // One tmux call for all three (";" separates tmux commands).
+  // One call for both options (";" separates tmux commands). A failing command stops the rest, so
+  // window-size (`latest` needs tmux 3.1) goes last and the pane id gets its own call.
   const t = `=${name}:`;
-  const out = await run('tmux', ['set-option', '-w', '-t', t, 'window-size', 'latest', ';', 'set-option', '-w', '-t', t, 'aggressive-resize', 'on', ';', 'display-message', '-p', '-t', t, '#{pane_id}']);
-  const pane = out?.trim().split('\n').pop() ?? '';
+  await run('tmux', ['set-option', '-w', '-t', t, 'aggressive-resize', 'on', ';', 'set-option', '-w', '-t', t, 'window-size', 'latest']);
+  const pane = (await run('tmux', ['display-message', '-p', '-t', t, '#{pane_id}']))?.trim() ?? '';
   return { tmuxSession: name, dir, branch, pane: PANE_RE.test(pane) ? pane : null };
 }
 
