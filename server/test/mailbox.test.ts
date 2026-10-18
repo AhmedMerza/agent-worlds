@@ -169,3 +169,56 @@ test('mailboxed.json brings the mailbox back after a server restart', async () =
     assert.ok(JSON.parse(((await r.json()) as any).result.content[0].text).some((p: any) => p.id === B));
   } finally { await again.close(); }
 });
+
+test('Mailbox with a file: unread messages come back after a restart, read and forgotten ones do not', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'aw-mailfile-')), 'mailbox.json');
+  const box = new Mailbox(Date.now, file);
+  box.send('a', 'b', 'read it'); box.take('b');
+  const told = box.send('a', 'b', 'told') as any; box.markNotified([told]);
+  box.send('a', 'b', 'not yet'); box.send('a', 'c', 'c leaves');
+  box.forget('c');
+  const again = new Mailbox(Date.now, file);
+  assert.deepEqual([...again.waiting()], ['b']);
+  assert.deepEqual(again.unnotified('b').map((m) => m.text), ['not yet']);
+  assert.deepEqual(again.take('b').map((m) => m.text), ['told', 'not yet']);
+  assert.ok((again.send('a', 'b', 'next') as any).id > told.id, 'ids go on from the saved ones');
+  writeFileSync(file, '{not json');
+  assert.deepEqual([...new Mailbox(Date.now, file).waiting()], [], 'a corrupt file is ignored');
+});
+
+test('mail not yet delivered when the server restarts is delivered once its recipient is back', async () => {
+  const h2 = mkdtempSync(join(tmpdir(), 'aw-mail-restart-'));
+  const got: [string, string][] = [];
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
+  const boot = async () => {
+    const s = startServer(cfg, TOKEN, {
+      home: h2,
+      deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+      typeInto: async (pane, text) => { got.push([pane, text]); return true; },
+    });
+    await s.listen();
+    const b = `http://127.0.0.1:${(s.server.address() as { port: number }).port}`;
+    const hk = (body: object, id: string, pane: string) => fetch(`${b}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id }) });
+    const call = async (pane: string, method: string, params?: object) => (await (await fetch(`${b}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json()) as any;
+    return { s, hk, call };
+  };
+  const one = await boot();
+  try {
+    await one.hk(ev.start, A, '%1'); await one.hk(ev.start, B, '%2');
+    await one.call('%1', 'initialize', {}); await one.call('%2', 'initialize', {});
+    await one.hk(ev.prompt, B, '%2'); // B is busy: nothing is delivered before the restart
+    assert.equal((await one.call('%1', 'tools/call', { name: 'aw_send', arguments: { to: 'bbbb', text: 'survive this' } })).result.isError, undefined);
+    await one.s.deliverMail();
+    assert.equal(got.length, 0);
+  } finally { await one.s.close(); }
+  const two = await boot();
+  try {
+    await two.s.deliverMail(); // B has not come back yet: its mail waits rather than being dropped
+    assert.equal(got.length, 0);
+    await two.hk(ev.prompt, B, '%2'); await two.hk(ev.stop, B, '%2');
+    await two.s.deliverMail();
+    assert.deepEqual(got.map(([p]) => p), ['%2']);
+    const inbox = await two.call('%2', 'tools/call', { name: 'aw_inbox', arguments: {} });
+    assert.match(inbox.result.content[0].text, /survive this/);
+  } finally { await two.s.close(); }
+});

@@ -248,6 +248,10 @@ So you can tell Claude "ask the Codex session to review your plan". As soon as t
 itself only travels through the tool, never through the terminal. A session that is mid-turn gets
 the notice when its turn ends. Every message shows in both sessions' recent steps.
 
+Messages not yet read are kept in `<home>/mailbox.json`, so a restart (for example **Update now**)
+doesn't lose them. A recipient that hasn't been seen since the restart gets its notice when its next
+hook arrives. If it doesn't come back within a day, its messages are dropped.
+
 Two sessions can trade 12 messages without a prompt from you. After that, sending is refused and
 the agent is told to ask you. Any prompt you type into either session starts the count again.
 
@@ -264,7 +268,8 @@ The mailbox tools run without asking for permission, because they only talk to A
 
 ## Runs: one task, several agents
 
-In New session, tick **Run it through steps, each on its own agent**. The task then goes through
+Click **New run** at the top (or tick **Run it through steps, each on its own agent** in New
+session). The task then goes through
 steps, each one a session on the agent you pick, all in the same folder and branch:
 
 | Step | What its agent is told |
@@ -272,7 +277,7 @@ steps, each one a session on the agent you pick, all in the same folder and bran
 | Plan | write the plan to `.aw/run-<id>/plan.md`, no code changes |
 | Review plan | review the plan against the code, write `plan-review.md` (APPROVED or CHANGES), fix the plan |
 | Build | implement the plan, run the tests, commit |
-| Review code | review the commits against the plan, fix real bugs, write `code-review.md` |
+| Review code | review the commits against the plan, no code changes, write `code-review.md` (APPROVED or CHANGES) |
 
 The default is Plan (your default agent), then Review plan (another installed agent), then Build,
 then Review code. You can change, remove or add steps (up to 8).
@@ -284,7 +289,13 @@ then Review code. You can change, remove or add steps (up to 8).
   **Start <next step>** and **Stop run**.
 - **A step that doesn't hand off.** If a step's turn ends without a handoff (or its session ends),
   the run waits for you the same way. You can talk to the agent, or move on.
+- **CHANGES goes back to Build.** When Review code's `code-review.md` starts with CHANGES, the run
+  goes back to the Build step before it. A new Build session is told which round it is and gets the
+  review to work through, and then the steps after it run again. After 2 rounds back, a review that
+  still says CHANGES waits for you. If you move a review on yourself, it goes on as usual.
 - **Progress.** The panel of any step's session shows the whole run. Click a step to open its session.
+  Each step's character in the room shows its place, like "step 2/4 · Review plan", where it would
+  otherwise show the branch.
 - **Files stay out of git.** The step files live in `.aw/`, which Agent Worlds adds to the repo's
   `.git/info/exclude`.
 

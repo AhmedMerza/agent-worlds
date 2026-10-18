@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { roomHeight, type Walker } from '../zones'
-import { nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
+import { nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch, stepTags } from '../logic'
 import { state, select, focusTerminal, ui, moveSession, showToast } from '../store'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
@@ -18,6 +18,7 @@ const real = computed(() => split.value.real)
 const ghostsOpen = ref(false)
 /** The scene draws every real session but only a few ghosts; the rest wait in the chip. */
 const drawn = computed(() => drawnSessions(props.group.sessions))
+const steps = computed(() => stepTags(Object.values(state.runs)))
 const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: drawn.value.sessions }))
 const count = (st: (s: string) => boolean) => real.value.filter((s) => st(s.state)).length
 const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))
@@ -65,7 +66,7 @@ function frame(t: number) {
   }
   const dt = lastT ? Math.min(100, t - lastT) : 0
   lastT = t
-  hits = drawRoom(ctx, { group: scene.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
+  hits = drawRoom(ctx, { group: scene.value, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
 }
 let ro: ResizeObserver | null = null
 let io: IntersectionObserver | null = null
@@ -138,7 +139,7 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
+        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
         <span class="dot ghost" />{{ ghostChipText(split.ghosts.length) }} <span class="st">{{ ghostsOpen ? 'Hide' : 'Show' }}</span>

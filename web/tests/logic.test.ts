@@ -401,3 +401,15 @@ describe('otherAgents', () => {
     expect(otherAgents(null, 'claude')).toEqual([])
   })
 })
+
+import { stepTags } from '../src/logic'
+import type { Run, StepKind } from '../src/types'
+
+describe('stepTags', () => {
+  const step = (kind: StepKind, sessionId: string | null) => ({ kind, agent: 'claude', checkpoint: false, status: 'running' as const, sessionId, summary: null })
+  const run = (status: Run['status'], steps: Run['steps']): Run => ({ id: 'r', task: 't', worldId: 'w', repo: '/r', dir: null, steps, current: 0, status, note: null, startedAt: 0 })
+  it('tags each linked step of a live run with its place and kind, and nothing of a finished run', () => {
+    expect(stepTags([run('waiting', [step('plan', 'a'), step('review-plan', 'b'), step('build', null), step('review-code', null)]), run('done', [step('plan', 'c')])]))
+      .toEqual({ a: 'step 1/4 · Plan', b: 'step 2/4 · Review plan' })
+  })
+})

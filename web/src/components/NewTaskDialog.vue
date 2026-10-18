@@ -6,8 +6,8 @@ import type { StepKind } from '../types'
 import FolderBrowser from './FolderBrowser.vue'
 import PermissionSelect from './PermissionSelect.vue'
 
-/** worldId is '' when the dialog has to ask which world. */
-const props = defineProps<{ worldId: string }>()
+/** worldId is '' when the dialog has to ask which world; run opens it with steps already on. */
+const props = defineProps<{ worldId: string; run?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const wid = ref(props.worldId)
 const world = computed(() => state.worlds.find((w) => w.id === wid.value))
@@ -30,7 +30,7 @@ onMounted(async () => {
   steps.value = steps.value.map((st, i) => ({ ...st, agent: i % 2 ? other : r.data.default }))
 })
 /** Run mode: the task goes through these steps, each on its own agent, in one folder. */
-const asRun = ref(false)
+const asRun = ref(props.run ?? false)
 const steps = ref<{ kind: StepKind; agent: string; checkpoint: boolean }[]>([
   { kind: 'plan', agent: 'claude', checkpoint: false }, { kind: 'review-plan', agent: 'claude', checkpoint: true },
   { kind: 'build', agent: 'claude', checkpoint: false }, { kind: 'review-code', agent: 'claude', checkpoint: true },
@@ -100,7 +100,7 @@ async function submit() {
       <FolderBrowser :world-id="world.id" :start="repo" @pick="addFolder" @move="moveFolder" @back="browsing = false" />
     </div>
     <form v-else ref="box" class="dialog form" role="dialog" aria-modal="true" aria-label="New session" @submit.prevent="submit">
-      <h2>New session{{ world ? ` in ${world.name}` : '' }}</h2>
+      <h2>{{ asRun ? 'New run' : 'New session' }}{{ world ? ` in ${world.name}` : '' }}</h2>
       <label v-if="!worldId">World
         <select v-model="wid" aria-label="World"><option value="" disabled>Choose a world</option><option v-for="w in state.worlds" :key="w.id" :value="w.id">{{ w.name }}</option></select>
       </label>
