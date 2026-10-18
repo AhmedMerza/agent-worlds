@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-18
+- A Codex turn that ends without a hook no longer leaves the session at its desk: while it works, the server reads Codex's rollout log. A usage limit (`task_complete` carrying an error) shows an error card with Codex's message, Esc (`turn_aborted`) puts it back at its prompt, and a finished turn whose Stop never came shows as done.
+
 ## 2026-10-15
 - "Continue in ▾" (a session's panel, or next to Dismiss on an error card) starts another installed agent in the same folder and branch, so the file changes carry over. It first writes a handoff to `<home>/handoffs/<session id>.md` — task, recent steps, working-tree state, plus Claude's conversation excerpt or a pointer to the other agent's transcript — and the new agent's first message is to read it and carry on. The old session stays untouched (`POST /api/sessions/:id/continue`).
 - New sessions can run Kimi Code (`kimi`, 2.1+). It reports through the same hook, from a Kimi home of its own (`<home>/kimi-home`: links to `~/.kimi-code` plus a copy of its config.toml with the hooks), so your Kimi config is never edited. A starting task reaches Kimi as a one-shot `kimi -p` run that `kimi -c` then continues interactively (its TUI drops keys typed before it draws). Kimi doesn't wait on its permission hook, so its cards are answered in the terminal. Esc in Kimi (`Interrupt`) puts the session back at its prompt.
