@@ -33,7 +33,8 @@ export class Direct {
     const e = this.map.get(name);
     if (!e) return false;
     e.pty.write(text);
-    setTimeout(() => e.pty.write('\r'), ENTER_DELAY_MS); // a separate Enter, so a pasted block is not taken as one keystroke
+    // a separate Enter, so a pasted block is not taken as one keystroke; the pty may have ended meanwhile
+    setTimeout(() => { try { if (this.map.get(name) === e) e.pty.write('\r'); } catch { /* gone */ } }, ENTER_DELAY_MS);
     return true;
   }
 

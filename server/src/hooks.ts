@@ -1,11 +1,10 @@
 import { writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TOOL_NAMES } from './mcp.ts';
 
 const HOOK = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-hook');
 /** The stdio MCP server sessions message each other through (see bin/aw-mcp). */
-/** The mailbox's tool names (see mcp.ts). */
-export const MAILBOX_TOOLS = ['aw_agents', 'aw_send', 'aw_inbox'];
 export const MCP_BRIDGE = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-mcp');
 
 /** Hook timeouts (seconds). PermissionRequest is held by the server for up to HOLD_MS (3540 s), so its hook gets 3600 s. */
@@ -43,7 +42,7 @@ export function writeHooksFile(home: string): string {
   const tmp = `${file}.${process.pid}.tmp`;
   // The mailbox tools run without asking: they only talk to this server. Named one by one, so another MCP server
   // called "aw" (a repo's .mcp.json) gets no free pass.
-  writeFileSync(tmp, JSON.stringify({ ...hooksBlock(), permissions: { allow: MAILBOX_TOOLS.map((t) => `mcp__aw__${t}`) } }, null, 2) + '\n', { mode: 0o600 });
+  writeFileSync(tmp, JSON.stringify({ ...hooksBlock(), permissions: { allow: TOOL_NAMES.map((t) => `mcp__aw__${t}`) } }, null, 2) + '\n', { mode: 0o600 });
   renameSync(tmp, file);
   const mcp = join(home, 'claude-mcp.json');
   writeFileSync(tmp, JSON.stringify({ mcpServers: { aw: { command: MCP_BRIDGE, args: ['claude'] } } }, null, 2) + '\n', { mode: 0o600 });
