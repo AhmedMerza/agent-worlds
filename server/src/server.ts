@@ -14,7 +14,7 @@ import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
-import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
+import { history, kimiHistory, kimiSessionDir, kimiState, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, midTurn } from './transcript.ts';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
@@ -467,7 +467,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const running = new Set([...store.sessions.keys(), ...procs.map((p) => p.sessionId).filter(Boolean) as string[]]);
       const repo = url.searchParams.get('repo');
       if (repo !== null && !repo.startsWith('/')) return send(res, 400, { error: 'repo must be an absolute path' });
-      const items = await Promise.all((await history(cfg.claudeProjectsDir, limit, repo ? normalize(repo).replace(/\/+$/, '') : undefined)).map(async (h) => {
+      const only = repo ? normalize(repo).replace(/\/+$/, '') : undefined;
+      const all = [...await history(cfg.claudeProjectsDir, limit, only), ...await kimiHistory(opts.home ?? homeDir(), limit, only)];
+      const items = await Promise.all(all.sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit).map(async (h) => {
         const info = h.cwd ? await repoOf(h.cwd) : null;
         return {
           ...h, repo: info?.repo ?? null, worldId: info ? store.worldFor(h.sessionId, info.repo, h.cwd!) : null,
@@ -481,23 +483,34 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (typeof b.sessionId !== 'string' || !SESSION_ID_RE.test(b.sessionId)) return send(res, 400, { error: 'sessionId is required' });
       if (b.worldId !== undefined && b.worldId !== null && !cfg.worlds.some((w) => w.id === b.worldId)) return send(res, 400, { error: 'unknown worldId' });
       if (b.worktree === true) return send(res, 400, { error: 'resume in a worktree is not supported' });
-      if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
-      const file = findTranscript(cfg.claudeProjectsDir, b.sessionId);
-      if (!file) return send(res, 404, { error: 'no transcript for that session' });
-      const cwd = (await readHead(file, 256 * 1024)).find((e) => typeof e.cwd === 'string')?.cwd as string | undefined;
+      if (b.agent !== undefined && b.agent !== 'claude' && b.agent !== 'kimi') return send(res, 400, { error: 'only Claude Code and Kimi Code sessions can be resumed' });
+      const kimi = b.agent === 'kimi';
+      if (b.permissionMode !== undefined && (kimi || !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode))) return send(res, 400, { error: kimi ? 'permissionMode is Claude-only' : `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      let cwd: string | undefined;
+      if (kimi) {
+        const dir = await kimiSessionDir(b.sessionId, opts.home ?? homeDir());
+        const st = dir ? await kimiState(dir) : null;
+        if (!st) return send(res, 404, { error: 'no Kimi Code session with that id' });
+        cwd = st.cwd;
+      } else {
+        const file = findTranscript(cfg.claudeProjectsDir, b.sessionId);
+        if (!file) return send(res, 404, { error: 'no transcript for that session' });
+        cwd = (await readHead(file, 256 * 1024)).find((e) => typeof e.cwd === 'string')?.cwd as string | undefined;
+      }
       if (!cwd || !sys.isDir(cwd)) return send(res, 422, { error: `the session's folder no longer exists: ${cwd ?? 'unknown'}` });
       if (b.force !== true) {
-        procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
+        // A Kimi copy is only seen through its hooks: no process scan finds one running in another terminal.
+        if (!kimi) procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
         const live = store.sessions.get(b.sessionId);
-        const proc = procs.find((p) => p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane));
+        const proc = kimi ? undefined : procs.find((p) => p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane));
         // stop: quit the copy running in another terminal first (only ours: scanClaude keeps this user's processes).
         if (b.stop === true && proc && !live) {
           if (!(await (opts.stopProcess ?? stopProcess)(proc.pid))) return send(res, 409, { error: `it did not quit (pid ${proc.pid}); close it in its terminal`, pid: proc.pid, stopFailed: true });
         } else if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
       }
       try {
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: null });
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(kimi ? { agent: 'kimi' as const } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: null, ...(kimi ? { agent: 'kimi' as const } : {}) });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }

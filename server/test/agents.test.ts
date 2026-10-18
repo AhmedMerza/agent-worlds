@@ -55,6 +55,7 @@ test('kimi gets a home of its own: the user\'s files linked, their config plus o
   assert.equal(readFileSync(join(dir, 'config.toml'), 'utf8').match(/^\[\[hooks\]\]$/gm)?.length, 14, 'hooks not doubled');
   process.env.KIMI_CODE_HOME = real; // never the user's real ~/.kimi-code
   const { args, env } = launchArgs('kimi', { home, task: 'fix it' });
+  assert.deepEqual(launchArgs('kimi', { home, task: '', resume: 'session_x1' }).args, ['--session', 'session_x1'], 'resume names the session');
   assert.deepEqual(args, [], 'kimi takes no starting prompt (the task becomes a -p/-c chain in createSession)');
   assert.equal(env.KIMI_CODE_HOME, dir);
   assert.equal(AGENTS.kimi.task, true, 'a task reaches kimi as `kimi -p … ; kimi -c`');

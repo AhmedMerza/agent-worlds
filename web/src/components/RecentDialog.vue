@@ -39,7 +39,7 @@ function show(id: string) {
     <div class="dialog recent" role="dialog" aria-modal="true" aria-label="Recent sessions">
       <h2>{{ ui.recentRepo ? `Past sessions in ${baseName(ui.recentRepo)}` : 'Recent sessions' }}</h2>
       <p v-if="ui.recentRepo" class="why">Every folder of {{ ui.recentRepo }}, its worktrees included. <button class="linkbtn" @click="ui.recentRepo = null">Show all folders</button></p>
-      <p v-else class="why">Claude sessions on this computer by folder, including ones started before Agent Worlds. Resuming keeps the whole conversation.</p>
+      <p v-else class="why">Claude Code and Kimi Code sessions on this computer by folder, including ones started before Agent Worlds. Resuming keeps the whole conversation.</p>
       <input ref="search" v-model="q" type="text" class="search" placeholder="Search by folder or last prompt" aria-label="Search recent sessions" autocomplete="off">
       <div class="form"><PermissionSelect v-model="mode" /></div>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
@@ -55,12 +55,13 @@ function show(id: string) {
             <li v-for="h in g.items" :key="h.sessionId">
               <div class="r-main">
                 <span class="r-age">{{ ageText(h.lastActivity, state.now) }}</span>
+                <span v-if="h.agent" class="badge">Kimi</span>
                 <span v-if="h.running" class="badge run">running</span>
                 <span v-if="h.managed" class="badge mgd">in Agent Worlds</span>
                 <p class="r-prompt">{{ h.lastPrompt ?? 'No prompt recorded' }}</p>
               </div>
               <button v-if="h.managed && state.sessions[h.sessionId]" class="btn" @click="show(h.sessionId)">Show</button>
-              <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" @started="emit('close')" />
+              <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" :agent="h.agent" @started="emit('close')" />
             </li>
           </ul>
         </section>

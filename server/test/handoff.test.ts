@@ -84,6 +84,10 @@ test('writeHandoff: a found kimi wire log is named, a missing one points at the 
   assert.match(found, new RegExp(`wire log is at ${join(wire, 'wire.jsonl').replace(/[/.]/g, '\\$&')}`));
   const missing = readFileSync(await writeHandoff(fakeSession({ id: 'k2', agent: 'kimi' }), home), 'utf8');
   assert.match(missing, /was not found; it lives under ~\/\.kimi-code\/sessions\/wd_\*\/session_k2\/agents\/main\/wire\.jsonl/);
+  // Kimi's hooks name the session the way its folder is named: session_<uuid>, never session_session_<uuid>
+  execFileSync('mkdir', ['-p', join(home, 'kimi-home', 'sessions', 'wd_abc', 'session_k3', 'agents', 'main')]);
+  writeFileSync(join(home, 'kimi-home', 'sessions', 'wd_abc', 'session_k3', 'agents', 'main', 'wire.jsonl'), '{}\n');
+  assert.match(readFileSync(await writeHandoff(fakeSession({ id: 'session_k3', agent: 'kimi' }), home), 'utf8'), /wire log is at .*session_k3\/agents\/main\/wire\.jsonl/);
 });
 
 test('writeHandoff: a very long session keeps its start and its end', async () => {
