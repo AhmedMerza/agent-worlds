@@ -26,6 +26,8 @@ export class Mailbox {
     this.streak.set(key, n + 1);
     const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false };
     this.messages.push(m);
+    // Full: drop what was read before anything unread
+    if (this.messages.length > KEEP) this.messages = this.messages.filter((x) => !x.read);
     if (this.messages.length > KEEP) this.messages.splice(0, this.messages.length - KEEP);
     return m;
   }

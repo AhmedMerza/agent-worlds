@@ -105,7 +105,10 @@ export function writeKimiHome(home: string, real = process.env.KIMI_CODE_HOME ||
   renameSync(tmp, file);
   // Their MCP servers plus ours
   let servers: Record<string, unknown> = {};
-  try { servers = JSON.parse(readFileSync(join(real, 'mcp.json'), 'utf8')).mcpServers ?? {}; } catch { /* none, or unreadable */ }
+  try {
+    const v = JSON.parse(readFileSync(join(real, 'mcp.json'), 'utf8')).mcpServers;
+    if (v && typeof v === 'object' && !Array.isArray(v)) servers = v;
+  } catch { /* none, or unreadable */ }
   const mcpFile = join(dir, 'mcp.json');
   rmSync(mcpFile, { force: true }); // a link to theirs, from before Agent Worlds wrote its own
   writeFileSync(`${mcpFile}.${process.pid}.tmp`, JSON.stringify({ mcpServers: { ...servers, aw: mcpEntry('kimi') } }, null, 2) + '\n', { mode: 0o600 });

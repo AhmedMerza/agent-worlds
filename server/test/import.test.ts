@@ -308,6 +308,8 @@ test('keptFlags keeps settings, permission mode and model, never the first promp
   assert.deepEqual(keptFlags(['claude', '--resume', 'x', '--permission-mode', 'auto', '--settings=/h/hooks.json', '--model', 'opus', '--', 'Fix the bug']),
     ['--permission-mode', 'auto', '--settings=/h/hooks.json', '--model', 'opus']);
   assert.deepEqual(keptFlags(['claude', '--dangerously-skip-permissions', 'do it']), ['--dangerously-skip-permissions']);
+  assert.deepEqual(keptFlags(['claude', '--settings', '/h/hooks.json', '--mcp-config', '/h/claude-mcp.json', '--', 'x']),
+    ['--settings', '/h/hooks.json', '--mcp-config', '/h/claude-mcp.json'], 'a restarted session keeps the mailbox');
 });
 
 test('restart: resumes the same session in its pane with its own flags; asks before cutting a turn short', async () => {
