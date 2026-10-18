@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-/** Sessions moved to a world by hand (conversation id → world id), kept across restarts in <home>/placements.json. */
+/** Sessions moved to a world by hand (conversation id → world id), kept across restarts in <home>/placements.json. Also holds labels (labels.json). */
 export class Placements {
   file: string;
   data: Record<string, string> = {};

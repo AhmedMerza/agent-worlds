@@ -35,6 +35,8 @@ export interface Session {
   tmux: { session: string; pane: string } | null
   /** The server runs this session itself (no tmux): the name of its terminal. */
   direct?: string | null
+  /** Your name for it, shown instead of the repo name. */
+  label?: string | null
   state: SessionState
   /** Busy, but not needing you (state stays 'working'): compacting, or background work runs on after the turn. */
   busy?: { kind: 'compact' } | { kind: 'background'; tasks: number; nextAt: number | null } | null
@@ -75,7 +77,7 @@ export type ServerMessage =
   | { type: 'toast'; text: string }
 
 export type StepKind = 'plan' | 'review-plan' | 'build' | 'review-code'
-export interface RunStep { kind: StepKind; agent: string; checkpoint: boolean; status: 'pending' | 'running' | 'handed'; sessionId: string | null; summary: string | null }
+export interface RunStep { kind: StepKind; agent: string; checkpoint: boolean; status: 'pending' | 'running' | 'handed'; pane?: string | null; direct?: string | null; sessionId: string | null; summary: string | null }
 /** One task carried through steps, each a session on its own agent (POST /api/runs). waiting = a checkpoint, or a step that stopped without handing off. */
 export interface Run { id: string; task: string; worldId: string; repo: string; dir: string | null; steps: RunStep[]; current: number; status: 'running' | 'waiting' | 'done' | 'stopped' | 'failed'; note: string | null; startedAt: number }
 

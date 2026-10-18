@@ -5,7 +5,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, type Config } from './config.ts';
-import { Store } from './store.ts';
+import { Store, type Session } from './store.ts';
 import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
@@ -41,6 +41,8 @@ type Opts = {
   home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
   restartClaude?: typeof sys.restartClaude;
+  /** Closes a tmux pane (End session); tests stub it. */
+  endPane?: typeof sys.endPane;
   /** Types into a tmux pane (the mail notice); tests stub it. */
   typeInto?: typeof sys.typeInto;
   /** Set by `agent-worlds start`: exits so the launcher starts the new code. Enables watching for code changes. */
@@ -183,6 +185,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     holdMs: opts.holdMs ?? HOLD_MS,
     stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
+    labels: new Placements(join(opts.home ?? homeDir(), 'labels.json')),
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
       // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
@@ -615,8 +618,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const r = runs.get(decodeURIComponent(runm[1]));
       if (!r) return send(res, 404, { error: 'no such run' });
       if (runm[2] === 'stop') {
-        if (r.status === 'done' || r.status === 'stopped') return send(res, 409, { error: `the run is already ${r.status}` });
-        r.status = 'stopped'; r.note = null; pushRun(r);
+        // endSessions: also end every session its steps started, even once the run is over
+        const ending = (await readBody(req).catch(() => ({} as Record<string, unknown>))).endSessions === true;
+        const over = r.status === 'done' || r.status === 'stopped';
+        if (over && !ending) return send(res, 409, { error: `the run is already ${r.status}` });
+        if (!over) { r.status = 'stopped'; r.note = null; pushRun(r); }
+        if (ending) {
+          const ofRun = [...store.sessions.values()].filter((s) => r.steps.some((st) => st.sessionId === s.id
+            || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct)));
+          const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
+          if (failed.length) return send(res, 502, { error: `could not end ${failed.join('; ')}`, run: r });
+        }
         return send(res, 200, { run: r });
       }
       if (r.status !== 'waiting' && r.status !== 'running') return send(res, 409, { error: `the run is ${r.status}` });
@@ -628,6 +640,22 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         r.status = 'done'; pushRun(r);
       });
       return send(res, 200, { run: r });
+    }
+    // End: quits the agent and closes its terminal. Label: your name for it on its name tag.
+    const em = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(end|label)$/);
+    if (em && method === 'POST') {
+      const s = store.sessions.get(decodeURIComponent(em[1]));
+      if (!s) return send(res, 404, { error: 'no such session' });
+      const body = await readBody(req).catch(() => ({} as Record<string, unknown>));
+      if (em[2] === 'label') {
+        const err = store.relabel(s.id, body.label);
+        return err ? send(res, err[0], { error: err[1] }) : send(res, 200, { ok: true });
+      }
+      if ((s.state === 'working' || s.state === 'waiting') && body.force !== true) {
+        return send(res, 409, { error: s.state === 'working' ? 'it is in the middle of a turn: ending stops that turn' : 'it is waiting on you: ending drops what it asked', working: true });
+      }
+      const err = await endSession(s);
+      return err ? send(res, 502, { error: `could not end it: ${err}` }) : send(res, 200, { ok: true });
     }
     // Restart: a fresh claude resumes the same conversation and draws it from scratch (fixes a wrecked screen for good).
     const rm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/restart$/);
@@ -859,6 +887,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         pushRun(r);
       }
     }
+  }
+  /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
+  async function endSession(s: Session): Promise<string | null> {
+    if (s.direct) { direct.kill(s.direct); return null; } // its exit removes the card
+    if (!s.tmux) return 'it does not run in tmux or under this server';
+    const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
+    if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
+    if (store.sessions.get(s.id) === s) store.remove(s);
+    return null;
   }
   function runSessionGone(id: string) {
     const r = stepOf(id);

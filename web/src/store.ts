@@ -190,6 +190,9 @@ export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${
 export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
 export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST', `${base(id)}/upload?name=${encodeURIComponent(f.name)}`, f)
+/** Quits its agent and closes its terminal; `force` once you said yes to cutting a turn short. */
+export const endSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/end`, { force })
+export const renameSession = (id: string, label: string) => api<unknown>('POST', `${base(id)}/label`, { label })
 export const restartSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/restart`, { force })
 /** Starts another agent in the session's folder with a handoff as its first message; follows the new session. */
 export async function continueIn(id: string, agent: string): Promise<string | null> {
@@ -200,7 +203,7 @@ export async function continueIn(id: string, agent: string): Promise<string | nu
 }
 export const startRun = (body: { worldId: string; repo: string; task: string; worktree: boolean; steps: { kind: StepKind; agent: string; checkpoint: boolean }[] }) => api<{ run: Run }>('POST', '/api/runs', body)
 export const runNext = (id: string) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/next`)
-export const runStop = (id: string) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/stop`)
+export const runStop = (id: string, endSessions = false) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/stop`, { endSessions })
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })
