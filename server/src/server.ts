@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, type Config } from './config.ts';
 import { Store } from './store.ts';
-import { AGENTS, defaultAgent, installed as onPath, isAgent } from './agents.ts';
+import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
@@ -20,6 +20,8 @@ import { readHead, readTail, conversation, midTurn } from './transcript.ts';
 import { readFileSync } from 'node:fs';
 import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
+import { Mailbox } from './mailbox.ts';
+import { handleMcp, type Peer } from './mcp.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -38,6 +40,8 @@ type Opts = {
   home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
   restartClaude?: typeof sys.restartClaude;
+  /** Types into a tmux pane (the mail notice); tests stub it. */
+  typeInto?: typeof sys.typeInto;
   /** Set by `agent-worlds start`: exits so the launcher starts the new code. Enables watching for code changes. */
   onRestart?: () => void; prepareRestart?: typeof prepareRestart;
   /** Path to cloudflared; null = not installed. Default: looked up on PATH and in ~/.local/bin. */
@@ -99,6 +103,9 @@ function sendHtml(res: ServerResponse, status: number, html: string) {
   res.end(html);
 }
 
+/** Starts the line typed into a session that has mail; a prompt starting so is not one you typed. */
+const MAIL_NOTICE = '[Agent Worlds]';
+
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((ok, fail) => {
     const chunks: Buffer[] = [];
@@ -138,8 +145,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const alive = new WeakSet<WebSocket>();
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
+  const mailbox = new Mailbox();
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id) insights?.forget(msg.id);
+    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -149,7 +157,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     holdMs: opts.holdMs ?? HOLD_MS,
     stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
-    onEvent: (s, ev) => insights?.onEvent(s, ev),
+    onEvent: (s, ev) => {
+      insights?.onEvent(s, ev);
+      // a prompt you typed (not our mail notice) lets its conversations with other sessions go on
+      if (ev === 'UserPromptSubmit' && !s.lastPrompt?.startsWith(MAIL_NOTICE)) mailbox.prompted(s.id);
+    },
     ...opts.deps,
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
@@ -366,6 +378,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
+    }
+    // Sessions message each other through bin/aw-mcp, which forwards their MCP calls here with the pane they run in.
+    if (url.pathname === '/mcp') {
+      if (method !== 'POST') return send(res, 405, { error: 'POST only' });
+      const body = await readBody(req);
+      const pane = req.headers['x-aw-pane'], pty = req.headers['x-aw-pty'];
+      const self = [...store.sessions.values()].find((s) => (typeof pane === 'string' && pane && s.tmux?.pane === pane) || (typeof pty === 'string' && pty && s.direct === pty));
+      const out = handleMcp(body, mcpContext(self?.id ?? null));
+      if (out === null) { res.writeHead(202); return res.end(); }
+      return send(res, 200, out);
     }
     if (method === 'GET' && url.pathname === '/api/agents') {
       return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || onPath(a.bin), modes: a.modes, decides: a.decides, task: a.task })), default: defaultAgent(cfg.defaultAgent) });
@@ -653,6 +675,46 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     reject(404, 'Not Found');
   };
+  const label = (s: { id: string; agent: AgentId; repoName: string; branch: string | null }) => `${AGENTS[s.agent].name} ${s.id.slice(0, 8)} (${s.repoName}${s.branch ? `@${s.branch}` : ''})`;
+  function mcpContext(self: string | null) {
+    return {
+      self,
+      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && s.state !== 'starting')
+        .map((s) => ({ id: s.id, agent: AGENTS[s.agent].name, repo: s.repoName, branch: s.branch, task: s.task, state: s.state })),
+      send(to: string, text: string): string | Error {
+        const from = store.sessions.get(self!)!;
+        const hits = [...store.sessions.values()].filter((s) => s.id !== self && s.id.startsWith(to));
+        if (hits.length !== 1) return new Error(hits.length ? `"${to}" matches ${hits.length} sessions: use more of the id` : `no session "${to}": see aw_agents`);
+        const r = mailbox.send(from.id, hits[0].id, text);
+        if (typeof r === 'string') return new Error(r);
+        store.log(from, `Message to ${label(hits[0])}: ${text}`);
+        store.log(hits[0], `Message from ${label(from)}: ${text}`);
+        store.push(from); store.push(hits[0]);
+        return `Sent to ${label(hits[0])}. ${hits[0].state === 'working' ? 'It is working now and will be told when it is free.' : 'It is being told now.'}`;
+      },
+      inbox(): string {
+        const got = mailbox.take(self!);
+        return got.length ? got.map((m) => {
+          const s = store.sessions.get(m.from);
+          return `From ${s ? label(s) : m.from} at ${new Date(m.at).toLocaleTimeString()}:\n${m.text}`;
+        }).join('\n\n') : 'No new messages.';
+      },
+    };
+  }
+  /** Tell sessions that are free (at their prompt, or their turn ended) that mail is waiting, by typing a notice into them. */
+  async function deliverMail() {
+    for (const id of mailbox.waiting()) {
+      const s = store.sessions.get(id);
+      if (!s) { mailbox.forget(id); continue; }
+      if (!['idle', 'done', 'error'].includes(s.state) || s.pending.length) continue;
+      const mail = mailbox.unnotified(id);
+      const from = [...new Set(mail.map((m) => store.sessions.get(m.from)).filter((x) => !!x).map(label))].join(', ') || 'another session';
+      const notice = `${MAIL_NOTICE} ${mail.length === 1 ? 'A new message' : `${mail.length} new messages`} from ${from}: call the aw_inbox tool to read, and aw_send to reply.`;
+      const typed = s.direct ? direct.type(s.direct, notice) : s.tmux ? await (opts.typeInto ?? sys.typeInto)(s.tmux.pane, notice) : false;
+      if (typed) for (const m of mail) m.notified = true;
+    }
+  }
+
   // One server per listen address (e.g. 127.0.0.1 plus a private VPN address for a phone).
   const servers = cfg.listen.map(() => createServer(onRequest).on('upgrade', onUpgrade));
 
@@ -661,11 +723,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   let scanner: NodeJS.Timeout | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
   return {
-    server: servers[0], servers, store, scan,
+    server: servers[0], servers, store, scan, deliverMail,
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
-      interrupts = setInterval(() => { void store.checkInterrupts(); store.checkBusy(); }, 2_000);
+      interrupts = setInterval(() => { void store.checkInterrupts(); store.checkBusy(); void deliverMail(); }, 2_000);
       interrupts.unref();
       const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
       void rescan();

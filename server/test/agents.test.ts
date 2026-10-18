@@ -13,6 +13,10 @@ test('codex gets its hooks as -c overrides, the permission hook held for an hour
   assert.match(perm!, /^hooks\.PermissionRequest=\[\{hooks=\[\{type="command",command=".*\/bin\/aw-hook codex",timeout=3600\}\]\}\]$/);
   assert.ok(args.includes('-c'));
   assert.ok(!args.some((a) => a.startsWith('hooks.Notification=')), 'Codex has no Notification event');
+  const mcp = args.filter((a) => a.startsWith('mcp_servers.aw.'));
+  assert.match(mcp[0], /^mcp_servers\.aw\.command=".*\/bin\/aw-mcp"$/);
+  assert.ok(mcp.includes('mcp_servers.aw.env_vars=["TMUX_PANE","AGENT_WORLDS_PTY","AGENT_WORLDS_HOME"]'), 'the bridge learns its pane');
+  assert.ok(mcp.includes('mcp_servers.aw.default_tools_approval_mode="approve"'));
   assert.deepEqual(launchArgs('codex', { task: '' }).args, [], 'no home, no hooks');
 });
 
@@ -23,6 +27,9 @@ test('qwen reads the hooks from a settings file named in its env', () => {
   const hooks = JSON.parse(readFileSync(env.QWEN_CODE_SYSTEM_SETTINGS_PATH, 'utf8')).hooks;
   assert.match(hooks.Stop[0].hooks[0].command, /aw-hook qwen$/);
   assert.equal(hooks.PermissionRequest[0].hooks[0].timeout, 3600);
+  const aw = JSON.parse(readFileSync(env.QWEN_CODE_SYSTEM_SETTINGS_PATH, 'utf8')).mcpServers.aw;
+  assert.match(aw.command, /\/bin\/aw-mcp$/);
+  assert.deepEqual([aw.args, aw.trust], [['qwen'], true]);
 });
 
 test('kimi gets a home of its own: the user\'s files linked, their config plus our hooks', () => {
@@ -30,7 +37,11 @@ test('kimi gets a home of its own: the user\'s files linked, their config plus o
   const real = mkdtempSync(join(tmpdir(), 'aw-kimi-'));
   mkdirSync(join(real, 'credentials'));
   writeFileSync(join(real, 'config.toml'), 'default_model = "k3"');
+  writeFileSync(join(real, 'mcp.json'), '{"mcpServers":{"theirs":{"url":"http://x"}}}');
   const dir = writeKimiHome(home, real);
+  const servers = JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf8')).mcpServers;
+  assert.deepEqual(Object.keys(servers), ['theirs', 'aw'], 'their MCP servers plus the mailbox');
+  assert.deepEqual(servers.aw.args, ['kimi']);
   assert.equal(readlinkSync(join(dir, 'credentials')), join(real, 'credentials'));
   const toml = readFileSync(join(dir, 'config.toml'), 'utf8');
   assert.ok(toml.startsWith('default_model = "k3"\n'), 'the user\'s config comes first');
@@ -68,7 +79,7 @@ test('kimi home: the user\'s own [[hooks]] stay, ours follow after a blank line'
 
 test('claude keeps its own flags', () => {
   assert.deepEqual(launchArgs('claude', { home: '/h', resume: 'abc', permissionMode: 'plan', task: 'x' }).args,
-    ['--resume', 'abc', '--permission-mode', 'plan', '--settings', '/h/hooks.json', '--', 'x']);
+    ['--resume', 'abc', '--permission-mode', 'plan', '--settings', '/h/hooks.json', '--mcp-config', '/h/claude-mcp.json', '--', 'x']);
 });
 
 test('the default falls back to claude when unset, unknown or not installed', () => {

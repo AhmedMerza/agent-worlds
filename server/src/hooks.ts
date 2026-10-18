@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HOOK = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-hook');
+/** The stdio MCP server sessions message each other through (see bin/aw-mcp). */
+export const MCP_BRIDGE = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/aw-mcp');
 
 /** Hook timeouts (seconds). PermissionRequest is held by the server for up to HOLD_MS (3540 s), so its hook gets 3600 s. */
 export const HOLD_TIMEOUT = 3600;
@@ -29,6 +31,7 @@ export function hooksBlock(hookPath = HOOK, agent?: string, events: readonly str
 /**
  * <home>/hooks.json: the same block, for sessions Agent Worlds starts itself
  * (`claude --settings <home>/hooks.json`), so they report even without a global install.
+ * Next to it, <home>/claude-mcp.json (`--mcp-config`) gives them the mailbox (bin/aw-mcp).
  * Claude runs identical hook commands from several settings files only once, so a user who
  * also installed the block globally is not reported twice.
  */
@@ -36,7 +39,11 @@ export function writeHooksFile(home: string): string {
   const file = join(home, 'hooks.json');
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(hooksBlock(), null, 2) + '\n', { mode: 0o600 });
+  // The mailbox tools (mcp__aw__*) run without asking: they only talk to this server.
+  writeFileSync(tmp, JSON.stringify({ ...hooksBlock(), permissions: { allow: ['mcp__aw'] } }, null, 2) + '\n', { mode: 0o600 });
   renameSync(tmp, file);
+  const mcp = join(home, 'claude-mcp.json');
+  writeFileSync(tmp, JSON.stringify({ mcpServers: { aw: { command: MCP_BRIDGE, args: ['claude'] } } }, null, 2) + '\n', { mode: 0o600 });
+  renameSync(tmp, mcp);
   return file;
 }

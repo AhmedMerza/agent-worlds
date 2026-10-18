@@ -14,14 +14,14 @@ import { ev } from './fixtures.ts';
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const waitFor = async (f: () => boolean, ms = 3000) => { for (let t = 0; t < ms && !f(); t += 25) await new Promise((r) => setTimeout(r, 25)); };
 
-test('writeHooksFile writes the same block as `hooks --print`, private', () => {
+test('writeHooksFile writes the same block as `hooks --print` plus the mailbox, private', () => {
   const home = tmp();
   const f = writeHooksFile(home);
   assert.equal(f, join(home, 'hooks.json'));
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), hooksBlock());
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw'] } });
   assert.equal(statSync(f).mode & 0o777, 0o600);
   writeHooksFile(home); // refresh in place
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), hooksBlock());
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw'] } });
 });
 
 test('createSession launches claude with --settings <home>/hooks.json and AGENT_WORLDS_HOME; task optional', async () => {
@@ -36,13 +36,13 @@ test('createSession launches claude with --settings <home>/hooks.json and AGENT_
     const a = await createSession({ repo, task: 'fix it', worktree: false, claudeBin: bin, prefix: 'awtest-', home });
     names.push(a.tmuxSession);
     await waitFor(() => existsSync(out));
-    assert.deepEqual(readFileSync(out, 'utf8').trim().split('\n'), [`HOME=${home}`, '--settings', join(home, 'hooks.json'), '--', 'fix it']);
+    assert.deepEqual(readFileSync(out, 'utf8').trim().split('\n'), [`HOME=${home}`, '--settings', join(home, 'hooks.json'), '--mcp-config', join(home, 'claude-mcp.json'), '--', 'fix it']);
 
     execFileSync('rm', [out]);
     const b = await createSession({ repo, worktree: false, claudeBin: bin, prefix: 'awtest-', home });
     names.push(b.tmuxSession);
     await waitFor(() => existsSync(out));
-    assert.deepEqual(readFileSync(out, 'utf8').trim().split('\n'), [`HOME=${home}`, '--settings', join(home, 'hooks.json')], 'blank session: no task argument');
+    assert.deepEqual(readFileSync(out, 'utf8').trim().split('\n'), [`HOME=${home}`, '--settings', join(home, 'hooks.json'), '--mcp-config', join(home, 'claude-mcp.json')], 'blank session: no task argument');
   } finally {
     for (const n of names) try { execFileSync('tmux', ['kill-session', '-t', '=' + n]); } catch { /* gone */ }
   }
@@ -139,7 +139,7 @@ test('without tmux: the server runs claude itself; the CLI (no server to own it)
     const r = await createSession({ repo, task: 'hi', worktree: false, home: '/h', prefix: 'awtest-', spawnDirect: async (...a) => { calls.push(a); } });
     assert.equal(r.direct, true);
     assert.equal(r.pane, null);
-    assert.deepEqual(calls, [[r.tmuxSession, 'claude', ['--settings', '/h/hooks.json', '--', 'hi'], repo, { AGENT_WORLDS_HOME: '/h', AGENT_WORLDS_PTY: r.tmuxSession }]]);
+    assert.deepEqual(calls, [[r.tmuxSession, 'claude', ['--settings', '/h/hooks.json', '--mcp-config', '/h/claude-mcp.json', '--', 'hi'], repo, { AGENT_WORLDS_HOME: '/h', AGENT_WORLDS_PTY: r.tmuxSession }]]);
   } finally { process.env.PATH = path; }
 });
 

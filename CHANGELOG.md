@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-18
+- Sessions message each other, across agents: every session Agent Worlds starts gets the MCP tools `aw_agents`, `aw_send` and `aw_inbox` (through `bin/aw-mcp`, a stdio bridge to `/mcp` that names the pane it runs in). When a session that has mail is free, a one-line notice is typed into its terminal telling it to call `aw_inbox`; a session mid-turn is told when its turn ends. Messages show in both sessions' recent steps. Two sessions get 12 messages without a prompt from you, then are told to ask you.
+
 ## 2026-10-15
 - "Continue in ▾" (a session's panel, or next to Dismiss on an error card) starts another installed agent in the same folder and branch, so the file changes carry over. It first writes a handoff to `<home>/handoffs/<session id>.md` — task, recent steps, working-tree state, plus Claude's conversation excerpt or a pointer to the other agent's transcript — and the new agent's first message is to read it and carry on. The old session stays untouched (`POST /api/sessions/:id/continue`).
 - New sessions can run Kimi Code (`kimi`, 2.1+). It reports through the same hook, from a Kimi home of its own (`<home>/kimi-home`: links to `~/.kimi-code` plus a copy of its config.toml with the hooks), so your Kimi config is never edited. A starting task reaches Kimi as a one-shot `kimi -p` run that `kimi -c` then continues interactively (its TUI drops keys typed before it draws). Kimi doesn't wait on its permission hook, so its cards are answered in the terminal. Esc in Kimi (`Interrupt`) puts the session back at its prompt.
