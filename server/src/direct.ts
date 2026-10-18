@@ -1,4 +1,5 @@
 import type { IPty } from 'node-pty';
+import { ENTER_DELAY_MS } from './sys.ts';
 
 /** What a browser terminal drives: a `tmux attach` process, or a view onto a direct session. */
 export type PtyLike = { write(d: string): void; resize(cols: number, rows: number): void; onData(f: (d: string) => void): unknown; onExit(f: () => void): unknown; kill(): void };
@@ -32,7 +33,7 @@ export class Direct {
     const e = this.map.get(name);
     if (!e) return false;
     e.pty.write(text);
-    setTimeout(() => e.pty.write('\r'), 50); // a separate Enter, so a pasted block is not taken as one keystroke
+    setTimeout(() => e.pty.write('\r'), ENTER_DELAY_MS); // a separate Enter, so a pasted block is not taken as one keystroke
     return true;
   }
 

@@ -90,7 +90,7 @@ export async function typeInto(pane: string, text: string): Promise<boolean> {
   if (text) await new Promise((r) => setTimeout(r, ENTER_DELAY_MS));
   return (await run('tmux', ['send-keys', '-t', pane, 'Enter'])) !== null;
 }
-const ENTER_DELAY_MS = 300;
+export const ENTER_DELAY_MS = 300;
 
 const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '') || 'task';
 
