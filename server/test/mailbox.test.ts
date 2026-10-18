@@ -58,7 +58,7 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
   const init = await rpc('%1', 'initialize', { protocolVersion: '2025-03-26' });
   assert.equal(init.result.protocolVersion, '2025-03-26');
   assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: H, body: '{"jsonrpc":"2.0","method":"notifications/initialized"}' })).status, 202);
-  assert.deepEqual((await rpc('%1', 'tools/list')).result.tools.map((t: any) => t.name), ['aw_agents', 'aw_send', 'aw_inbox']);
+  assert.deepEqual((await rpc('%1', 'tools/list')).result.tools.map((t: any) => t.name), ['aw_agents', 'aw_send', 'aw_inbox', 'aw_handoff']);
   assert.equal((await rpc('%1', 'resources/list')).error.code, -32601);
   assert.equal((await tool('%1', 'aw_agents')).isError, true, 'no session in that pane yet');
   await rpc('%5', 'initialize', {}); // a CLI whose MCP handshake beats its first hook

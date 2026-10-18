@@ -1,5 +1,5 @@
 import { reactive, computed, ref } from 'vue'
-import type { ServerMessage, Session, World, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode } from './types'
+import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
@@ -25,11 +25,12 @@ export interface StoreState {
   update: boolean
   /** tmux is installed on the server (false: sessions run inside Agent Worlds and end when it restarts). */
   tmux: boolean
+  runs: Record<string, Run>
 }
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, order: [], loaded: false, connected: false,
-  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true,
+  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true, runs: {},
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -54,7 +55,11 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.unmanaged = msg.unmanaged ?? []
       st.update = msg.update ?? false
       st.tmux = msg.tmux ?? true
+      st.runs = Object.fromEntries((msg.runs ?? []).map((r) => [r.id, r]))
       st.loaded = true
+      break
+    case 'run':
+      st.runs[msg.run.id] = msg.run
       break
     case 'unmanaged':
       st.unmanaged = msg.unmanaged
@@ -107,6 +112,16 @@ export const ghosts = computed(() => state.unmanaged.map(ghostSession))
 export const groups = computed(() => groupSessions(state.worlds, [...sessionList.value, ...ghosts.value]))
 export const screenSessions = computed(() => screenOrder(groups.value))
 export const needsYou = computed(() => queue(sessionList.value))
+/** Runs held for you: at a checkpoint, a step that stopped without handing off, or one that failed to start. */
+export const runsNeedingYou = computed(() => Object.values(state.runs).filter((r) => r.status === 'waiting' || r.status === 'failed').sort((a, b) => a.startedAt - b.startedAt))
+/** The run a session is (or was) a step of, and which step. */
+export function runOf(sessionId: string): { run: Run; step: number } | null {
+  for (const run of Object.values(state.runs)) {
+    const step = run.steps.findIndex((s) => s.sessionId === sessionId)
+    if (step >= 0) return { run, step }
+  }
+  return null
+}
 const lookup = (id: string): Session | undefined => state.sessions[id] ?? ghosts.value.find((g) => g.id === id)
 export const selected = computed(() => (state.selectedId ? lookup(state.selectedId) ?? null : null))
 /** The terminal the panel shows: its tmux session (or server-run pty), not the conversation in it, so /clear and /resume
@@ -183,6 +198,9 @@ export async function continueIn(id: string, agent: string): Promise<string | nu
   followNew(r.data.tmuxSession)
   return null
 }
+export const startRun = (body: { worldId: string; repo: string; task: string; worktree: boolean; steps: { kind: StepKind; agent: string; checkpoint: boolean }[] }) => api<{ run: Run }>('POST', '/api/runs', body)
+export const runNext = (id: string) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/next`)
+export const runStop = (id: string) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/stop`)
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })

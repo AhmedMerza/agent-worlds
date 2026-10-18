@@ -12,6 +12,8 @@ export type McpContext = {
   /** Send; the result text for the caller, or an Error to report. */
   send(to: string, text: string): string | Error;
   inbox(): string;
+  /** End the caller's step of a run; the result text, or an Error. */
+  handoff(summary: string): Promise<string | Error>;
 };
 
 const TOOLS = [
@@ -34,6 +36,15 @@ const TOOLS = [
     description: 'Read the messages other Agent Worlds sessions sent you (each is shown once). Reply with aw_send.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'aw_handoff',
+    description: 'Only when you are a step of an Agent Worlds run (your first message said so): your part is done, hand over to the next step. The summary goes to the next agent.',
+    inputSchema: {
+      type: 'object',
+      properties: { summary: { type: 'string', description: 'What you did, where your output is, and anything the next step must know' } },
+      required: ['summary'], additionalProperties: false,
+    },
+  },
 ];
 
 /** Every tool's name: sessions we start may call them without asking (hooks.ts). */
@@ -43,7 +54,7 @@ const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.
 const text = (t: string, isError = false) => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) });
 
 /** Answer one JSON-RPC message; null for notifications, which get no reply. */
-export function handleMcp(msg: Record<string, unknown>, ctx: McpContext): unknown {
+export async function handleMcp(msg: Record<string, unknown>, ctx: McpContext): Promise<unknown> {
   const m = msg as { id?: unknown; method?: unknown; params?: Record<string, any> };
   if (typeof m.method !== 'string') return rpcError(m.id, -32600, 'invalid request');
   if (m.id === undefined) return null; // notifications/initialized, notifications/cancelled, …
@@ -61,13 +72,13 @@ export function handleMcp(msg: Record<string, unknown>, ctx: McpContext): unknow
     case 'tools/list':
       return ok({ tools: TOOLS });
     case 'tools/call':
-      return ok(call(String(m.params?.name), m.params?.arguments ?? {}, ctx));
+      return ok(await call(String(m.params?.name), m.params?.arguments ?? {}, ctx));
     default:
       return rpcError(m.id, -32601, `method not found: ${m.method}`);
   }
 }
 
-function call(name: string, args: Record<string, unknown>, ctx: McpContext) {
+async function call(name: string, args: Record<string, unknown>, ctx: McpContext) {
   if (!TOOLS.some((t) => t.name === name)) return text(`unknown tool ${name}`, true);
   if (!ctx.self) return text('Agent Worlds does not know this session yet; try again in a moment.', true);
   if (name === 'aw_agents') {
@@ -75,6 +86,11 @@ function call(name: string, args: Record<string, unknown>, ctx: McpContext) {
     return text(peers.length ? JSON.stringify(peers, null, 1) : 'No other sessions are running.');
   }
   if (name === 'aw_inbox') return text(ctx.inbox());
+  if (name === 'aw_handoff') {
+    if (typeof args.summary !== 'string' || args.summary.length > 10000) return text('aw_handoff needs a `summary` (up to 10000 characters)', true);
+    const r = await ctx.handoff(args.summary);
+    return r instanceof Error ? text(r.message, true) : text(r);
+  }
   if (typeof args.to !== 'string' || !args.to || typeof args.text !== 'string' || !args.text.trim()) return text('aw_send needs `to` and `text`', true);
   if (args.text.length > 10000) return text('text is limited to 10000 characters', true);
   const r = ctx.send(args.to, args.text);
