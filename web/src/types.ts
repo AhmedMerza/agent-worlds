@@ -79,7 +79,7 @@ export type ServerMessage =
 export type StepKind = 'plan' | 'review-plan' | 'build' | 'review-code'
 export interface RunStep { kind: StepKind; agent: string; checkpoint: boolean; status: 'pending' | 'running' | 'handed'; pane?: string | null; direct?: string | null; sessionId: string | null; summary: string | null }
 /** One task carried through steps, each a session on its own agent (POST /api/runs). waiting = a checkpoint, or a step that stopped without handing off. */
-export interface Run { id: string; task: string; worldId: string; repo: string; dir: string | null; steps: RunStep[]; current: number; status: 'running' | 'waiting' | 'done' | 'stopped' | 'failed'; note: string | null; startedAt: number }
+export interface Run { id: string; task: string; worldId: string; repo: string; dir: string | null; steps: RunStep[]; current: number; rounds?: number; earlier?: Pick<RunStep, 'pane' | 'direct' | 'sessionId'>[]; status: 'running' | 'waiting' | 'done' | 'stopped' | 'failed'; note: string | null; startedAt: number }
 
 export interface RoomGroup { world: World; sessions: Session[] }
 

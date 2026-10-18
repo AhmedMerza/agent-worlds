@@ -22,7 +22,7 @@ import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
 import { handleMcp, type Peer } from './mcp.ts';
-import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, STEP_KINDS, type Run } from './runs.ts';
+import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, reviewVerdict, STEP_KINDS, RUN_FILES, MAX_ROUNDS, type Run } from './runs.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -108,6 +108,8 @@ function sendHtml(res: ServerResponse, status: number, html: string) {
 
 /** Starts the line typed into a session that has mail; a prompt starting so is not one you typed. */
 const MAIL_NOTICE = '[Agent Worlds]';
+/** How long mail waits for a recipient that has not come back since a restart. */
+const MAIL_WAITS = 24 * 3600_000;
 
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((ok, fail) => {
@@ -148,7 +150,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const alive = new WeakSet<WebSocket>();
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
-  const mailbox = new Mailbox();
+  const mailbox = new Mailbox(Date.now, join(opts.home ?? homeDir(), 'mailbox.json'));
   const runsFile = join(opts.home ?? homeDir(), 'runs.json');
   const runs = new Map<string, Run>(loadRuns(runsFile).map((r) => [r.id, r]));
   // The server stopped between starting a step and its session being made: nothing will ever link it
@@ -174,8 +176,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
   const earlyMcp = new Set<string>();
   const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
+  /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
+  let closing = false;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); }
+    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -624,7 +628,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (over && !ending) return send(res, 409, { error: `the run is already ${r.status}` });
         if (!over) { r.status = 'stopped'; r.note = null; pushRun(r); }
         if (ending) {
-          const ofRun = [...store.sessions.values()].filter((s) => r.steps.some((st) => st.sessionId === s.id
+          const ofRun = [...store.sessions.values()].filter((s) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id
             || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct)));
           const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
           if (failed.length) return send(res, 502, { error: `could not end ${failed.join('; ')}`, run: r });
@@ -855,8 +859,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     // No session to read (it never started, or it ended): no handoff, rather than the step before's under this one's name
     let path: string | null = null;
     if (s) try { path = await writeHandoff(s, opts.home ?? homeDir()); } catch (e) { console.error('[agent-worlds] handoff not written', (e as Error).message); }
-    r.handoff = path ? { path, summary } : null;
+    r.handoff = path ? { path, summary, from: r.current } : null;
     if (r.status === 'stopped') return pushRun(r);
+    // A code review that asks for changes sends the work back to the build step before it. Not when you moved it on yourself.
+    const build = r.steps.slice(0, r.current).map((x) => x.kind).lastIndexOf('build');
+    if (!force && step.kind === 'review-code' && build >= 0 && r.dir && await reviewVerdict(join(r.dir, RUN_FILES(r.id), 'code-review.md')) === 'CHANGES') {
+      if (r.rounds >= MAX_ROUNDS) { r.status = 'waiting'; r.note = `Review code still asks for changes after ${MAX_ROUNDS} rounds back to Build. Read ${RUN_FILES(r.id)}/code-review.md, then go on or stop the run.`; return pushRun(r); }
+      r.rounds++;
+      for (const x of r.steps.slice(build, r.current + 1)) r.earlier.push({ pane: x.pane, direct: x.direct, sessionId: x.sessionId });
+      for (const x of r.steps.slice(build, r.current + 1)) Object.assign(x, { status: 'pending', pane: null, direct: null, sessionId: null, summary: null });
+      return startStep(r, build);
+    }
     if (r.current + 1 >= r.steps.length) { r.status = 'done'; r.note = null; return pushRun(r); }
     if (step.checkpoint && !force) { r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} is done. Read what it wrote, then start ${STEP_KINDS[r.steps[r.current + 1].kind].label}.`; return pushRun(r); }
     await startStep(r, r.current + 1);
@@ -916,14 +929,18 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   async function deliverPass() {
     for (const id of mailbox.waiting()) {
       const s = store.sessions.get(id);
-      if (!s) { mailbox.forget(id); if (mailboxed.delete(id)) saveMailboxed(); continue; }
+      if (!s) {
+        // Not back yet after a restart: its mail waits until its next hook names it, for a day at most
+        if (mailboxed.has(id) && mailbox.unnotified(id).some((m) => Date.now() - m.at < MAIL_WAITS)) continue;
+        mailbox.forget(id); if (mailboxed.delete(id)) saveMailboxed(); continue;
+      }
       if (!['idle', 'done', 'error'].includes(s.state) || s.pending.length) continue;
       const mail = mailbox.unnotified(id);
       // Agent and id only: a repo folder or branch name could carry a newline (typed as Enter) or text aimed at the agent.
       const from = [...new Set(mail.map((m) => store.sessions.get(m.from)).filter((x) => !!x).map((x) => `${AGENTS[x.agent].name} ${x.id.slice(0, 8).replace(/[^\w-]/g, '')}`))].join(', ') || 'another session';
       const notice = `${MAIL_NOTICE} ${mail.length === 1 ? 'A new message' : `${mail.length} new messages`} from ${from}: call the aw_inbox tool to read, and aw_send to reply.`;
       const typed = s.direct ? direct.type(s.direct, notice) : s.tmux ? await (opts.typeInto ?? sys.typeInto)(s.tmux.pane, notice) : false;
-      if (typed) for (const m of mail) m.notified = true;
+      if (typed) mailbox.markNotified(mail);
     }
   }
 
@@ -958,6 +975,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }))).then(() => {});
     },
     close(): Promise<void> {
+      closing = true;
       if (sweeper) clearInterval(sweeper);
       if (interrupts) clearInterval(interrupts);
       if (scanner) clearInterval(scanner);

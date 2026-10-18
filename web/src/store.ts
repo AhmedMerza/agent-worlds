@@ -2,7 +2,7 @@ import { reactive, computed, ref } from 'vue'
 import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
-import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou } from './logic'
+import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf } from './logic'
 
 export interface StoreState {
   worlds: World[]
@@ -115,9 +115,9 @@ export const needsYou = computed(() => queue(sessionList.value))
 /** Runs held for you: at a checkpoint, a step that stopped without handing off, or one that failed to start. */
 export const runsNeedingYou = computed(() => Object.values(state.runs).filter((r) => r.status === 'waiting' || r.status === 'failed').sort((a, b) => a.startedAt - b.startedAt))
 /** The run a session is (or was) a step of, and which step. */
-export function runOf(sessionId: string): { run: Run; step: number } | null {
+export function runOf(s: Session): { run: Run; step: number } | null {
   for (const run of Object.values(state.runs)) {
-    const step = run.steps.findIndex((s) => s.sessionId === sessionId)
+    const step = run.steps.findIndex((st) => isStepOf(st, s))
     if (step >= 0) return { run, step }
   }
   return null

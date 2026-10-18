@@ -1,4 +1,4 @@
-import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind } from './types'
+import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
@@ -11,6 +11,21 @@ export const LABEL: Record<SessionState, string> = {
 /** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 /** What each kind of run step does, in the order a run usually has them. */
 export const STEP_LABEL: Record<StepKind, string> = { plan: 'Plan', 'review-plan': 'Review plan', build: 'Build', 'review-code': 'Review code' }
+/** Whether a session is (or was) a step's: by id, or by its terminal before its first hook names it (Claude asks to trust a new worktree first). */
+export const isStepOf = (st: Pick<RunStep, 'pane' | 'direct' | 'sessionId'>, s: Pick<Session, 'id' | 'tmux' | 'direct'>) =>
+  st.sessionId === s.id || (!!st.pane && s.tmux?.pane === st.pane) || (!!st.direct && s.direct === st.direct)
+/** "step 2/4 · Review plan" for each session that is a step of a live run, by session id. */
+export function stepTags(runs: Run[], sessions: Session[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const r of runs) {
+    if (r.status !== 'running' && r.status !== 'waiting') continue
+    for (const s of sessions) {
+      const i = r.steps.findIndex((st) => isStepOf(st, s))
+      if (i >= 0) out[s.id] = `step ${i + 1}/${r.steps.length} · ${STEP_LABEL[r.steps[i].kind]}`
+    }
+  }
+  return out
+}
 /** What a session is called: the name you gave it, else its repo. */
 export const nameOf = (s: { label?: string | null; repoName: string }): string => s.label || s.repoName
 export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'

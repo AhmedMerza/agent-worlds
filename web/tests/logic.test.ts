@@ -401,3 +401,20 @@ describe('otherAgents', () => {
     expect(otherAgents(null, 'claude')).toEqual([])
   })
 })
+
+import { stepTags } from '../src/logic'
+import type { Run, Session, StepKind } from '../src/types'
+
+describe('stepTags', () => {
+  const step = (kind: StepKind, sessionId: string | null) => ({ kind, agent: 'claude', checkpoint: false, status: 'running' as const, sessionId, summary: null })
+  const run = (status: Run['status'], steps: Run['steps']): Run => ({ id: 'r', task: 't', worldId: 'w', repo: '/r', dir: null, steps, current: 0, status, note: null, startedAt: 0 })
+  const ses = (id: string, pane: string | null = null) => ({ id, tmux: pane ? { session: 'x', pane } : null }) as Session
+  it('tags each step session of a live run with its place and kind, and nothing of a finished run', () => {
+    expect(stepTags([run('waiting', [step('plan', 'a'), step('review-plan', 'b'), step('build', null), step('review-code', null)]), run('done', [step('plan', 'c')])], [ses('a'), ses('b'), ses('c'), ses('d')]))
+      .toEqual({ a: 'step 1/4 · Plan', b: 'step 2/4 · Review plan' })
+  })
+  it('tags a step still starting (before its first hook names it) by its terminal', () => {
+    expect(stepTags([run('running', [{ ...step('plan', null), pane: '%7' }, step('build', null)])], [ses('starting-1', '%7'), ses('other', '%8')]))
+      .toEqual({ 'starting-1': 'step 1/2 · Plan' })
+  })
+})

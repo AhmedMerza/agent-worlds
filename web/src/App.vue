@@ -18,6 +18,7 @@ import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } fr
 const help = ref(false)
 const worldsPanel = ref<InstanceType<typeof WorldsPanel> | null>(null)
 const newTaskWorld = ref<string | null>(null)
+const newTaskRun = ref(false)
 type Tab = 'inbox' | 'rooms' | 'term'
 const tab = ref<Tab>('inbox')
 const mq = matchMedia('(max-width: 699px)')
@@ -27,7 +28,8 @@ const showTab = (t: Tab) => !phone.value || tab.value === t
 watch(termFocusTick, () => { if (phone.value) tab.value = 'term' })
 const tabs = computed<[Tab, string][]>(() => [['inbox', 'Inbox'], ['rooms', 'Rooms'], ['term', 'Terminal']])
 
-function openNewTask(worldId?: string) {
+function openNewTask(worldId?: string, run = false) {
+  newTaskRun.value = run
   const g = selected.value ? groups.value.find((x) => x.sessions.includes(selected.value!)) : undefined
   const c = defaultWorld(state.worlds, { explicit: worldId, selectedWorldId: g?.world.id, filter: state.filter })
   if (c.kind === 'world') newTaskWorld.value = c.id
@@ -110,6 +112,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
           <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All worlds</button>
           <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" @click="state.filter = g.world.id">{{ g.world.name }}</button>
         </nav>
+        <button class="hdr-btn" title="One task through plan, review, build and review, each step on its own agent" @click="openNewTask(undefined, true)">New run</button>
         <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Manage worlds</button>
         <button class="hdr-btn" @click="ui.recentRepo = null; ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
         <button class="hdr-btn toggle" :aria-pressed="!prefs.muted" title="Sound for new requests (M)" @click="onMute"><i aria-hidden="true" />Sound {{ prefs.muted ? 'off' : 'on' }}</button>
@@ -156,7 +159,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
       {{ state.sessions[ui.drag.id]?.repoName }}<template v-if="ui.drag.over && ui.drag.over !== state.sessions[ui.drag.id]?.worldId"> → {{ state.worlds.find((w) => w.id === ui.drag!.over)?.name }}</template>
     </div>
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
-    <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" @close="newTaskWorld = null" />
+    <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" :run="newTaskRun" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>
   </div>
 </template>

@@ -10,7 +10,7 @@ import RunCard from './RunCard.vue'
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
 const touch = isTouch()
-const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value.id) : null))
+const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value) : null))
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
 
 const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))

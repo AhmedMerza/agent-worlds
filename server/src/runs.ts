@@ -8,6 +8,7 @@ import { isAgent, type AgentId } from './agents.ts';
 /**
  * A run carries one task through ordered steps, each a session on its own agent, all in one folder.
  * A step ends when its agent calls aw_handoff (or you move it on); a checkpoint step then waits for your OK.
+ * A code review that asks for CHANGES sends the work back to the build step before it, up to MAX_ROUNDS times.
  * Kept in <home>/runs.json, so a restart (an update) picks them up: session ids and panes stay the same.
  */
 export type StepKind = 'plan' | 'review-plan' | 'build' | 'review-code';
@@ -22,9 +23,11 @@ export type Run = {
   id: string; task: string; worldId: string; repo: string; worktree: boolean;
   /** The folder every step runs in: the repo, or the worktree the first step made. */
   dir: string | null;
-  /** The last handoff written, for the next step. */
-  handoff: { path: string; summary: string | null } | null;
+  /** The last handoff written, for the next step; from: the step that wrote it (the one before, unless a review sent the work back). */
+  handoff: { path: string; summary: string | null; from?: number } | null;
   steps: Step[]; current: number;
+  /** Times a code review sent the work back to the build step, and the sessions of the steps it sent back (still the run's). */
+  rounds: number; earlier: Pick<Step, 'pane' | 'direct' | 'sessionId'>[];
   /** waiting: a checkpoint, or a step that ended without a handoff, needs you. */
   status: 'running' | 'waiting' | 'done' | 'stopped' | 'failed';
   note: string | null; startedAt: number;
@@ -34,8 +37,10 @@ export const STEP_KINDS: Record<StepKind, { label: string; brief: (files: string
   plan: { label: 'Plan', brief: (f) => `Your part: plan the work. Read the code you need, then write the plan to ${f}/plan.md. Do not change any code.` },
   'review-plan': { label: 'Review plan', brief: (f) => `Your part: review the plan in ${f}/plan.md against the code. Write your review to ${f}/plan-review.md, its first line APPROVED or CHANGES. If CHANGES, fix the plan in place and say what you changed. Do not change any code.` },
   build: { label: 'Build', brief: (f) => `Your part: implement the plan in ${f}/plan.md (read ${f}/plan-review.md too if it exists). Run the tests and commit your work.` },
-  'review-code': { label: 'Review code', brief: (f) => `Your part: review the changes made for this task (git log and diff against where the branch started) against ${f}/plan.md. Fix real bugs you find and commit. Write your review to ${f}/code-review.md.` },
+  'review-code': { label: 'Review code', brief: (f) => `Your part: review the changes made for this task (git log and diff against where the branch started) against ${f}/plan.md. Do not change any code. Write your review to ${f}/code-review.md (replace any earlier one), its first line APPROVED or CHANGES. CHANGES sends the work back to the build step with your review, so list exactly what must change.` },
 };
+/** Times a code review can send the work back to the build step; after that, a CHANGES review waits for you. */
+export const MAX_ROUNDS = 2;
 const RUN_STATUSES: unknown[] = ['running', 'waiting', 'done', 'stopped', 'failed'];
 export const isStepKind = (k: unknown): k is StepKind => typeof k === 'string' && Object.hasOwn(STEP_KINDS, k);
 
@@ -46,11 +51,13 @@ export const RUN_FILES = (id: string) => `.aw/run-${id}`;
 export function stepPrompt(run: Run, i: number): string {
   const h = run.handoff;
   const s = run.steps[i];
+  const from = h ? run.steps[h.from ?? i - 1] : null;
   return [
     `You are step ${i + 1} of ${run.steps.length} (${STEP_KINDS[s.kind].label}) in an Agent Worlds run: other coding agents do the other steps in this same folder.`,
     `The task: ${run.task}`,
     STEP_KINDS[s.kind].brief(RUN_FILES(run.id)),
-    h ? `The step before you (${STEP_KINDS[run.steps[i - 1].kind].label}, ${run.steps[i - 1].agent}) left a handoff: read "${h.path}" first.${h.summary ? ` Its summary: ${h.summary}` : ''}` : '',
+    s.kind === 'build' && run.rounds ? `This is round ${run.rounds + 1}: the code review asked for changes. Make the ones listed in ${RUN_FILES(run.id)}/code-review.md, run the tests and commit.` : '',
+    h && from ? `The step before you (${STEP_KINDS[from.kind].label}, ${from.agent}) left a handoff: read "${h.path}" first.${h.summary ? ` Its summary: ${h.summary}` : ''}` : '',
     'When your part is done, call the aw_handoff tool with a short summary for the next step. If you need the user, ask them instead.',
   ].filter(Boolean).join('\n\n');
 }
@@ -59,7 +66,7 @@ export function newRun(o: { task: string; worldId: string; repo: string; worktre
   return {
     id: randomBytes(3).toString('hex'), task: o.task, worldId: o.worldId, repo: o.repo, worktree: o.worktree, dir: null, handoff: null,
     steps: o.steps.map((s) => ({ ...s, status: 'pending', pane: null, direct: null, sessionId: null, summary: null })),
-    current: 0, status: 'running', note: null, startedAt: o.now,
+    current: 0, rounds: 0, earlier: [], status: 'running', note: null, startedAt: o.now,
   };
 }
 
@@ -85,7 +92,15 @@ export function loadRuns(file: string): Run[] {
   const okStep = (s: any) => !!s && ['pending', 'running', 'handed'].includes(s.status) && isStepKind(s.kind) && isAgent(s.agent);
   return (Array.isArray(v) ? v : []).filter((r): r is Run => !!r && typeof r.id === 'string' && RUN_STATUSES.includes(r.status)
     && Array.isArray(r.steps) && r.steps.length > 0 && r.steps.every(okStep)
-    && Number.isInteger(r.current) && r.current >= 0 && r.current < r.steps.length);
+    && Number.isInteger(r.current) && r.current >= 0 && r.current < r.steps.length)
+    .map((r) => ({ ...r, rounds: Number.isInteger(r.rounds) ? r.rounds : 0, earlier: Array.isArray(r.earlier) ? r.earlier : [] })); // runs.json from before rounds
+}
+
+/** A review's verdict: the first line of its file says APPROVED or CHANGES (markdown around it is fine). Null when there is none. */
+export async function reviewVerdict(file: string): Promise<'APPROVED' | 'CHANGES' | null> {
+  const first = (await readFile(file, 'utf8').catch(() => '')).split('\n').find((l) => l.trim()) ?? '';
+  const m = first.match(/^\W*(APPROVED|CHANGES)\b/i);
+  return m ? (m[1].toUpperCase() as 'APPROVED' | 'CHANGES') : null;
 }
 
 export function saveRuns(file: string, runs: Map<string, Run>, now: number) {

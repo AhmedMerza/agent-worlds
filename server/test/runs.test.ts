@@ -86,6 +86,57 @@ test('a run: plan hands off, waits at its checkpoint, build starts with the hand
   assert.equal((await post(`/api/runs/${id}/next`)).status, 409, 'done is done');
 });
 
+test('a code review that says CHANGES sends the work back to Build, at most twice; stopping ends every round\'s sessions', async () => {
+  const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'build', agent: 'claude' }, { kind: 'review-code', agent: 'claude' }] });
+  const id = body.run.id, files = join(dir, `.aw/run-${id}`);
+  mkdirSync(files, { recursive: true });
+  const panes: string[] = [];
+  const step = async (sid: string, summary: string) => {
+    const pane = `%${50 + launched.length}`; panes.push(pane);
+    await hook(ev.start, sid, pane); await hook(ev.prompt, sid, pane);
+    return (await handoff(pane, summary)).content[0].text as string;
+  };
+  const run = async () => ((await (await fetch(`${base}/api/state`, { headers: H })).json()) as any).runs.find((x: any) => x.id === id);
+  assert.match(launched.at(-1).task, /step 1 of 2 \(Build\)/);
+  assert.doesNotMatch(launched.at(-1).task, /round/);
+  for (const round of [2, 3]) {
+    await step(`cb-build-${round}`, 'built');
+    writeFileSync(join(files, 'code-review.md'), '## **CHANGES**\n\n- the export skips the header row\n');
+    assert.match(await step(`cb-review-${round}`, 'needs a header row'), /next step has started/);
+    assert.match(launched.at(-1).task, new RegExp(`step 1 of 2 \\(Build\\)[\\s\\S]*round ${round}: the code review asked for changes[\\s\\S]*The step before you \\(Review code, claude\\) left a handoff[\\s\\S]*needs a header row`));
+    const r = await run();
+    assert.equal(r.current, 0); assert.equal(r.rounds, round - 1); assert.equal(r.steps[0].sessionId, null, 'the new build session links on its first hook');
+  }
+  await step('cb-build-4', 'built');
+  const n = launched.length;
+  assert.match(await step('cb-review-4', 'still no header'), /user checks your work/);
+  assert.equal(launched.length, n, 'no third round');
+  const held = await run();
+  assert.equal(held.status, 'waiting'); assert.match(held.note, /still asks for changes after 2 rounds/);
+  assert.equal((await post(`/api/runs/${id}/next`)).body.run.status, 'done', 'you can go on anyway');
+  assert.equal((await post(`/api/runs/${id}/stop`, { endSessions: true })).status, 200);
+  assert.deepEqual(panes.filter((p) => !ended.includes(p)), [], 'earlier rounds\' sessions end too');
+});
+
+test('a code review that says APPROVED, or that you move on yourself, goes on as usual', async () => {
+  const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'build', agent: 'claude' }, { kind: 'review-code', agent: 'claude' }, { kind: 'plan', agent: 'claude' }] });
+  const id = body.run.id, files = join(dir, `.aw/run-${id}`);
+  mkdirSync(files, { recursive: true });
+  let pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'ap-build', pane); await hook(ev.prompt, 'ap-build', pane); await handoff(pane, 'built');
+  writeFileSync(join(files, 'code-review.md'), 'APPROVED\n');
+  pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'ap-review', pane); await hook(ev.prompt, 'ap-review', pane); await handoff(pane, 'fine');
+  assert.match(launched.at(-1).task, /step 3 of 3 \(Plan\)/);
+  const { body: b2 } = await post('/api/runs', { ...RUN, steps: [{ kind: 'build', agent: 'claude' }, { kind: 'review-code', agent: 'claude' }, { kind: 'plan', agent: 'claude' }] });
+  mkdirSync(join(dir, `.aw/run-${b2.run.id}`), { recursive: true });
+  writeFileSync(join(dir, `.aw/run-${b2.run.id}`, 'code-review.md'), 'CHANGES\n');
+  await post(`/api/runs/${b2.run.id}/next`); // build moved on by hand
+  pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'mv-review', pane); await hook(ev.prompt, 'mv-review', pane); await hook(ev.stop, 'mv-review', pane);
+  assert.match((await post(`/api/runs/${b2.run.id}/next`)).body.run.steps[2].status, /running/, 'moved on by hand: no round back');
+});
+
 test('a step whose turn ends without a handoff waits for you; "next" moves it on, "stop" ends the run', async () => {
   const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'review-plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
   const id = body.run.id, pane = `%${50 + launched.length}`;
