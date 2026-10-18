@@ -1,6 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { saveRuns, loadRuns, excludeRunFiles, newRun } from '../src/runs.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
@@ -9,6 +11,7 @@ import { ev } from './fixtures.ts';
 
 const TOKEN = 'c'.repeat(64);
 const launched: any[] = [];
+let failNext = false, slow = 0;
 const dir = mkdtempSync(join(tmpdir(), 'aw-run-'));
 let app: ReturnType<typeof startServer>;
 let base = '';
@@ -20,6 +23,8 @@ before(async () => {
     home,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
     createSession: (async (o: any) => {
+      if (slow) await new Promise((r) => setTimeout(r, slow));
+      if (failNext) { failNext = false; throw new Error('tmux is gone'); }
       launched.push(o);
       return { tmuxSession: `awtest-run-${launched.length}`, dir, branch: null, pane: `%${50 + launched.length}` };
     }) as any,
@@ -129,4 +134,84 @@ test('a worktree run is named after the run; /clear in a step keeps it able to h
   assert.equal(run.steps[0].sessionId, 'plan-4b');
   await hook(ev.prompt, 'plan-4b', pane);
   assert.match((await handoff(pane, 'planned after a /clear')).content[0].text, /next step has started/);
+});
+
+const runOfState = async (id: string) => ((await (await fetch(`${base}/api/state`, { headers: H })).json()) as any).runs.find((x: any) => x.id === id);
+
+test('a step that cannot start fails the run, which can be dismissed; Stop while a step starts stays stopped', async () => {
+  failNext = true;
+  const bad = await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude' }] });
+  assert.equal(bad.status, 422);
+  assert.deepEqual([bad.body.run.status, bad.body.run.steps[0].status], ['failed', 'pending']);
+  assert.match(bad.body.run.note, /could not start: tmux is gone/);
+  assert.equal((await post(`/api/runs/${bad.body.run.id}/stop`)).body.run.status, 'stopped', 'Dismiss');
+
+  const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
+  const pane = launched.at(-1) && `%${50 + launched.length}`;
+  await hook(ev.start, 'plan-5', pane);
+  await hook(ev.prompt, 'plan-5', pane);
+  slow = 150;
+  const handing = handoff(pane, 'plan ready');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await post(`/api/runs/${body.run.id}/next`)).status, 409, 'a second move-on while the first is in flight');
+  assert.equal((await handoff(pane, 'again')).isError, true);
+  assert.equal((await post(`/api/runs/${body.run.id}/stop`)).body.run.status, 'stopped');
+  assert.match((await handing).content[0].text, /stopped the run/);
+  slow = 0;
+  assert.equal((await runOfState(body.run.id)).status, 'stopped', 'not run on by the step that was starting');
+});
+
+test('a step whose session ends waits; moving on gives no borrowed handoff; a pause-after step moves on by hand; work resumes the run', async () => {
+  const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude', checkpoint: true }, { kind: 'review-plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
+  const id = body.run.id;
+  let pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'plan-6', pane);
+  await hook(ev.prompt, 'plan-6', pane);
+  await hook(ev.stop, 'plan-6', pane);
+  assert.equal((await runOfState(id)).status, 'waiting');
+  await hook({ ...ev.prompt, prompt: 'use the existing exporter' }, 'plan-6', pane); // you answered it: at work again (a different payload: identical ones within 500 ms are deduplicated)
+  assert.equal((await runOfState(id)).status, 'running');
+  await hook({ ...ev.stop, last_assistant_message: 'Plan written.' }, 'plan-6', pane);
+  const n = launched.length;
+  await post(`/api/runs/${id}/next`); // a pause-after step that never handed off: moved on by hand anyway
+  assert.equal(launched.length, n + 1);
+  pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'review-6', pane);
+  await hook(ev.end, 'review-6', pane);
+  const gone = await runOfState(id);
+  assert.equal(gone.status, 'waiting');
+  assert.match(gone.note, /session ended before handing off/);
+  await post(`/api/runs/${id}/next`);
+  assert.doesNotMatch(launched.at(-1).task, /left a handoff/, 'the step before had no session, so there is no handoff to point at');
+});
+
+test('runs.json: finished runs are pruned, live ones never; a corrupt file is ignored', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aw-runs-'));
+  const file = join(dir, 'runs.json');
+  const map = new Map();
+  const mk = (status: string, startedAt: number) => { const r = { ...newRun({ task: 't', worldId: 'w', repo: '/r', worktree: false, now: startedAt, steps: [{ kind: 'plan', agent: 'claude', checkpoint: false }] }), status }; map.set(r.id, r); return r; };
+  const now = Date.now();
+  const oldWaiting = mk('waiting', now - 30 * 864e5);
+  mk('done', now - 30 * 864e5);
+  for (let i = 0; i < 55; i++) mk('done', now - i);
+  saveRuns(file, map, now);
+  const kept = loadRuns(file);
+  assert.equal(kept.filter((r) => r.status === 'done').length, 50);
+  assert.ok(kept.some((r) => r.id === oldWaiting.id), 'a live run is never pruned');
+  writeFileSync(file, '[null, {"id": 1}, {"id": "x", "steps": [], "current": 0}, {"id": "y", "steps": [{}], "current": 3}]');
+  assert.deepEqual(loadRuns(file), []);
+  writeFileSync(file, '{not json');
+  assert.deepEqual(loadRuns(file), []);
+});
+
+test('excludeRunFiles adds .aw/ to the repo\'s exclude once, and leaves a non-git folder alone', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'aw-ex-'));
+  execFileSync('git', ['init', '-q', repo]);
+  await excludeRunFiles(repo);
+  await excludeRunFiles(repo);
+  const ex = readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8');
+  assert.equal(ex.split('\n').filter((l) => l === '.aw/').length, 1);
+  const plain = mkdtempSync(join(tmpdir(), 'aw-ex-'));
+  mkdirSync(join(plain, 'x'));
+  await excludeRunFiles(plain); // no throw, nothing written
 });

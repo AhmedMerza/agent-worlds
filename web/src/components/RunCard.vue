@@ -42,6 +42,9 @@ async function copyFiles() { if (files.value) showToast(await copyText(files.val
     <p v-if="last?.summary" class="now"><span class="lbl">{{ STEP_LABEL[last.kind] }} ({{ agentName(last) }}) says</span>{{ last.summary }}</p>
     <p v-if="files" class="why run-files">Plan and reviews: <code>{{ files }}</code> <button type="button" class="btn" @click="copyFiles">Copy</button></p>
     <p v-if="r.note" class="why">{{ r.note }}</p>
+    <div v-if="r.status === 'failed'" class="actions">
+      <button class="btn" :disabled="busy" @click="act(runStop)">Dismiss</button>
+    </div>
     <div v-if="live" class="actions">
       <button v-if="r.status === 'waiting'" class="btn primary" :disabled="busy" @click="act(runNext)">{{ nextLabel }}</button>
       <button v-else class="btn" :disabled="busy" title="Move on without waiting for this step to hand off" @click="act(runNext)">Skip to next step</button>

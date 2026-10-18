@@ -149,6 +149,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const mailbox = new Mailbox();
   const runsFile = join(opts.home ?? homeDir(), 'runs.json');
   const runs = new Map<string, Run>(loadRuns(runsFile).map((r) => [r.id, r]));
+  // The server stopped between starting a step and its session being made: nothing will ever link it
+  for (const r of runs.values()) {
+    const st = r.steps[r.current];
+    if (r.status === 'running' && st.status === 'running' && !st.pane && !st.direct && !st.sessionId) {
+      st.status = 'pending'; r.status = 'waiting'; r.note = `Agent Worlds restarted while step ${r.current + 1} was starting: start it again, or stop the run.`;
+    }
+  }
   /**
    * Sessions that reached /mcp: only they have the mailbox tools (a plain `claude` reporting through global hooks has not).
    * Kept in <home>/mailboxed.json: a CLI connects to its MCP servers once, at start, so after a server restart
@@ -592,9 +599,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         return send(res, 200, { run: r });
       }
       if (r.status !== 'waiting' && r.status !== 'running') return send(res, 409, { error: `the run is ${r.status}` });
+      if (moving.has(r.id)) return send(res, 409, { error: 'the run is already moving on to the next step' });
       // A checkpoint passed, or you move a step on that never handed off.
-      if (r.steps[r.current].status === 'handed') { if (r.current + 1 < r.steps.length) await startStep(r, r.current + 1); else { r.status = 'done'; pushRun(r); } }
-      else await stepOver(r, null, true);
+      await moveOn(r, async () => {
+        if (r.steps[r.current].status !== 'handed') return stepOver(r, null, true);
+        if (r.current + 1 < r.steps.length) return startStep(r, r.current + 1);
+        r.status = 'done'; pushRun(r);
+      });
       return send(res, 200, { run: r });
     }
     // Restart: a fresh claude resumes the same conversation and draws it from scratch (fixes a wrecked screen for good).
@@ -757,11 +768,18 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   // Runs: one task through steps on different agents (see runs.ts).
   const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
+  /** Runs with a handoff or a step start in flight: a second "next" or handoff meanwhile would skip a step. */
+  const moving = new Set<string>();
+  async function moveOn(r: Run, f: () => Promise<void>) {
+    moving.add(r.id);
+    try { await f(); } finally { moving.delete(r.id); }
+  }
   const stepOf = (id: string) => {
     for (const r of runs.values()) if ((r.status === 'running' || r.status === 'waiting') && r.steps[r.current].sessionId === id) return r;
     return null;
   };
   async function startStep(r: Run, i: number) {
+    if (r.status === 'stopped') return;
     const step = r.steps[i];
     r.current = i; step.status = 'running'; r.status = 'running'; r.note = null;
     pushRun(r);
@@ -774,7 +792,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: step.direct, dir: c.dir, task: `${STEP_KINDS[step.kind].label}: ${r.task}`, agent: step.agent });
     } catch (e) {
-      r.status = 'failed'; r.note = `Step ${i + 1} could not start: ${(e as Error).message}`;
+      step.status = 'pending';
+      // Stopped while it was starting: stopped it stays
+      if ((r.status as Run['status']) !== 'stopped') { r.status = 'failed'; r.note = `Step ${i + 1} could not start: ${(e as Error).message}`; }
     }
     pushRun(r);
   }
@@ -782,8 +802,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   async function stepOver(r: Run, summary: string | null, force = false) {
     const step = r.steps[r.current];
     const s = step.sessionId ? store.sessions.get(step.sessionId) : undefined;
-    r.handoff = s ? { path: await writeHandoff(s, opts.home ?? homeDir()), summary } : r.handoff;
     step.status = 'handed'; step.summary = summary;
+    // No session to read (it never started, or it ended): no handoff, rather than the step before's under this one's name
+    r.handoff = s ? { path: await writeHandoff(s, opts.home ?? homeDir()), summary } : null;
+    if (r.status === 'stopped') return pushRun(r);
     if (r.current + 1 >= r.steps.length) { r.status = 'done'; r.note = null; return pushRun(r); }
     if (step.checkpoint && !force) { r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} is done. Read what it wrote, then start ${STEP_KINDS[r.steps[r.current + 1].kind].label}.`; return pushRun(r); }
     await startStep(r, r.current + 1);
@@ -791,10 +813,14 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   async function handoff(id: string, summary: string): Promise<string | Error> {
     const r = stepOf(id);
     if (!r || r.steps[r.current].status !== 'running') return new Error('this session is not the current step of a run, so there is nothing to hand off');
+    if (moving.has(r.id)) return new Error('the run is already moving on to the next step');
     const step = r.steps[r.current];
-    await stepOver(r, summary);
+    await moveOn(r, () => stepOver(r, summary));
     return r.status === 'waiting' && r.steps[r.current] === step ? 'Handed off. The user checks your work before the next step starts; you can stop here.'
-      : r.status === 'done' ? 'Handed off: that was the last step, the run is done.' : 'Handed off: the next step has started. You can stop here.';
+      : r.status === 'done' ? 'Handed off: that was the last step, the run is done.'
+      : r.status === 'failed' ? `Handed off, but the next step could not start (${r.note}). The user has been told; you can stop here.`
+      : r.status === 'stopped' ? 'Handed off. The user stopped the run; you can stop here.'
+      : 'Handed off: the next step has started. You can stop here.';
   }
   /** A step's session: link it on its first hook; a turn that ends without a handoff needs you. */
   function runEvent(s: { id: string; state: string; tmux: { pane: string } | null; direct: string | null }, ev: string) {
@@ -803,6 +829,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if ((r.status !== 'running' && r.status !== 'waiting') || step.status !== 'running') continue;
       // Its first hook, or a new conversation in the same pane (/clear) after the old one went away
       if (!step.sessionId && ((step.pane && s.tmux?.pane === step.pane) || (step.direct && s.direct === step.direct))) { step.sessionId = s.id; pushRun(r); }
+      // Waiting on a step that is at work again (you answered it, or a new conversation took over): running again
+      if (r.status === 'waiting' && step.sessionId === s.id && (ev === 'UserPromptSubmit' || ev === 'PreToolUse')) { r.status = 'running'; r.note = null; pushRun(r); }
       if (r.status === 'running' && step.sessionId === s.id && (ev === 'Stop' || ev === 'StopFailure') && (s.state === 'done' || s.state === 'error')) {
         r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} ended its turn without handing off: talk to it, or go on.`;
         pushRun(r);
@@ -817,9 +845,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     pushRun(r);
   }
 
-  /** Tell sessions that are free (at their prompt, or their turn ended) that mail is waiting, by typing a notice into them. */
   // One pass at a time: each notice waits ENTER_DELAY_MS, so a pass can outlast the 2 s tick and type the same notice twice.
   let delivering = false;
+  /** Tell sessions that are free (at their prompt, or their turn ended) that mail is waiting, by typing a notice into them. */
   async function deliverMail() {
     if (delivering) return;
     delivering = true;

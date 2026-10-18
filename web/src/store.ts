@@ -114,7 +114,7 @@ export const screenSessions = computed(() => screenOrder(groups.value))
 export const needsYou = computed(() => queue(sessionList.value))
 /** Runs held for you: at a checkpoint, a step that stopped without handing off, or one that failed to start. */
 export const runsNeedingYou = computed(() => Object.values(state.runs).filter((r) => r.status === 'waiting' || r.status === 'failed').sort((a, b) => a.startedAt - b.startedAt))
-/** The live run a session is a step of, and which step. */
+/** The run a session is (or was) a step of, and which step. */
 export function runOf(sessionId: string): { run: Run; step: number } | null {
   for (const run of Object.values(state.runs)) {
     const step = run.steps.findIndex((s) => s.sessionId === sessionId)

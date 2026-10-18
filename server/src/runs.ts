@@ -73,17 +73,22 @@ export async function excludeRunFiles(dir: string): Promise<void> {
   await appendFile(file, `${has && !has.endsWith('\n') ? '\n' : ''}# Agent Worlds run files\n.aw/\n`);
 }
 
-/** Finished runs kept in runs.json for this long; the newest ones beyond MAX_RUNS are dropped too. */
+/** Finished runs kept in runs.json for this long, and at most MAX_RUNS of them (the oldest go first). Live runs always stay. */
 const KEEP_FINISHED = 7 * 24 * 3600_000;
 const MAX_RUNS = 50;
 
 export function loadRuns(file: string): Run[] {
-  try { const v = JSON.parse(readFileSync(file, 'utf8')); return Array.isArray(v) ? v : []; } catch { return []; }
+  let v: unknown;
+  try { v = JSON.parse(readFileSync(file, 'utf8')); } catch { return []; }
+  // A hand-edited or half-written file must not take the server down: keep only runs with the shape the code reads
+  return (Array.isArray(v) ? v : []).filter((r): r is Run => !!r && typeof r.id === 'string' && Array.isArray(r.steps) && r.steps.length > 0
+    && Number.isInteger(r.current) && r.current >= 0 && r.current < r.steps.length);
 }
 
 export function saveRuns(file: string, runs: Map<string, Run>, now: number) {
   for (const [id, r] of runs) if (!['running', 'waiting'].includes(r.status) && now - r.startedAt > KEEP_FINISHED) runs.delete(id);
-  for (const id of [...runs.keys()].slice(0, Math.max(0, runs.size - MAX_RUNS))) runs.delete(id);
+  const finished = [...runs.values()].filter((r) => !['running', 'waiting'].includes(r.status));
+  for (const r of finished.slice(0, Math.max(0, finished.length - MAX_RUNS))) runs.delete(r.id);
   try {
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
     writeFileSync(file + '.tmp', JSON.stringify([...runs.values()]), { mode: 0o600 });
