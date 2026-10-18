@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName } from '../logic'
-import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession } from '../store'
+import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf } from '../logic'
+import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import type { Turn } from '../types'
 
@@ -73,6 +73,30 @@ async function restart() {
   showToast(r.ok ? `Restarting ${cur.repoName}: Claude comes back with the same conversation.` : `Could not restart: ${r.error}`)
 }
 watch(() => s.value?.id, () => { restartArmed.value = false })
+/** Quits its agent and closes its terminal. There is no undo, so it always asks once; mid-turn it says what it cuts short. */
+const endArmed = ref(false)
+let endTimer: ReturnType<typeof setTimeout> | undefined
+async function end() {
+  const cur = s.value
+  if (!cur) return
+  if (!endArmed.value) { endArmed.value = true; clearTimeout(endTimer); endTimer = setTimeout(() => { endArmed.value = false }, 6000); return }
+  endArmed.value = false
+  const r = await endSession(cur.id, true)
+  showToast(r.ok ? `Ended ${nameOf(cur)}.` : `Could not end it: ${r.error}`)
+}
+const endLabel = computed(() => !endArmed.value ? 'End session' : s.value?.state === 'working' ? 'Stop the turn and end?' : s.value?.state === 'waiting' ? 'It is waiting on you. End?' : 'End it? Click again')
+/** Your name for the session, edited in place of its name in the header. */
+const renaming = ref<string | null>(null)
+const renameIn = ref<HTMLInputElement | null>(null)
+function startRename() { renaming.value = s.value?.label ?? ''; void nextTick(() => renameIn.value?.select()) }
+async function saveRename() {
+  const cur = s.value, v = renaming.value
+  renaming.value = null
+  if (!cur || v === null || v.trim() === (cur.label ?? '')) return
+  const r = await renameSession(cur.id, v)
+  if (!r.ok) showToast(`Could not rename: ${r.error}`)
+}
+watch(() => s.value?.id, () => { endArmed.value = false; renaming.value = null })
 function openHistory() { historyOpen.value = true; history.value = null; void loadHistory() }
 watch(() => s.value?.id, () => { historyOpen.value = false; history.value = null })
 
@@ -181,13 +205,15 @@ watch(termFocusTick, async () => {
   <section ref="root" :class="['term', { typing: hasTmux && termFocused }]" aria-label="Session terminal" :style="{ '--tint': world?.color ?? '#8a92a0' }">
     <div class="term-head">
       <template v-if="s">
-        <span :class="['dot', s.state]" /><b>{{ s.repoName }}</b> {{ world?.name }} · {{ stateLabel(s, state.now) }}
+        <span :class="['dot', s.state]" /><input v-if="renaming !== null" ref="renameIn" v-model="renaming" class="rename-in" maxlength="40" :placeholder="s.repoName" aria-label="Name this session (empty: its repo name)" @keydown.enter.prevent="saveRename" @keydown.esc.prevent="renaming = null" @blur="saveRename" /><b v-else :title="s.label ? s.repoName : undefined">{{ nameOf(s) }}</b> {{ world?.name }} · {{ stateLabel(s, state.now) }}
         <span v-if="s.context"> · {{ s.context.pct }}% context</span>
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into {{ s ? agentName(s) : 'Claude' }}</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
         <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" :title="`Jump to ${agentName(s)}'s latest output (Ctrl+End)`" @click="jumpToLatest">Jump to latest</button>
         <button v-if="hasTmux && !historyOpen && link === 'live' && (s?.agent ?? 'claude') === 'claude'" :class="['hdr-btn', 'term-scroll', { danger: restartArmed }]" title="Screen looks wrecked? Quit this Claude and resume the same conversation in a fresh one" @click="restart">{{ restartArmed ? 'Stop the turn and restart?' : 'Restart' }}</button>
+        <button v-if="!s.ghost && renaming === null" class="hdr-btn term-scroll" title="Give this session a name for its name tag" @click="startRename">Rename</button>
+        <button v-if="hasTmux" :class="['hdr-btn', 'term-scroll', { danger: endArmed }]" :title="`Quit ${agentName(s)} and close this terminal`" @click="end">{{ endLabel }}</button>
         <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
         <span v-if="s?.direct" class="term-note" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">Runs without tmux · stops if Agent Worlds restarts</span>

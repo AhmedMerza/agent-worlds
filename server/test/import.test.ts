@@ -344,3 +344,43 @@ test('restart: resumes the same session in its pane with its own flags; asks bef
     assert.equal(calls.length, 1);
   } finally { await app.close(); }
 });
+
+test('end: closes the pane after a yes mid-turn, and drops the card; label: names it on its tag, kept across a restart', async () => {
+  const root = tmp();
+  const ended: string[] = [];
+  const cfg = { ...parseConfig({}), port: 0 };
+  const opts = {
+    home: root,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
+    endPane: async (pane: string) => { ended.push(pane); return null; },
+  };
+  let app = startServer(cfg, 'i'.repeat(64), opts);
+  await app.store.handle({ ...ev.start, session_id: 's-7', cwd: root }, '%7');
+  await app.listen();
+  let base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  const post = async (path: string, b: unknown) => { const r = await fetch(`${base}/api/sessions/${path}`, { method: 'POST', headers: { 'x-aw-token': 'i'.repeat(64), 'content-type': 'application/json' }, body: JSON.stringify(b) }); return { status: r.status, body: await r.json() as any }; };
+  try {
+    assert.equal((await post('s-7/label', { label: 'x'.repeat(41) })).status, 400);
+    assert.equal((await post('s-7/label', { label: 42 })).status, 400);
+    assert.equal((await post('s-7/label', { label: '  CSV export  ' })).status, 200);
+    assert.equal(app.store.sessions.get('s-7')!.label, 'CSV export');
+    await app.close();
+    app = startServer(cfg, 'i'.repeat(64), opts); // a new server start: the label comes back with the session
+    await app.store.handle({ ...ev.start, session_id: 's-7', cwd: root }, '%7');
+    await app.listen();
+    base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+    assert.equal(app.store.sessions.get('s-7')!.label, 'CSV export');
+    assert.equal((await post('s-7/label', { label: ' ' })).status, 200);
+    assert.equal(app.store.sessions.get('s-7')!.label, null, 'blank: back to the repo name');
+
+    await app.store.handle({ ...ev.prompt, session_id: 's-7', cwd: root }, '%7');
+    const busy = await post('s-7/end', {});
+    assert.equal(busy.status, 409);
+    assert.equal(busy.body.working, true);
+    assert.deepEqual(ended, [], 'nothing ended without a yes');
+    assert.equal((await post('s-7/end', { force: true })).status, 200);
+    assert.deepEqual(ended, ['%7']);
+    assert.equal(app.store.sessions.has('s-7'), false, 'the card is gone');
+    assert.equal((await post('s-7/end', {})).status, 404);
+  } finally { await app.close(); }
+});

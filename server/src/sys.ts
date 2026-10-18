@@ -82,6 +82,12 @@ export function restartClaude(pane: string, sessionId: string, cwd: string, argv
   return runErr('tmux', ['respawn-pane', '-k', '-t', pane, '-c', cwd, ...env, argv[0], '--resume', sessionId, ...keptFlags(argv)]);
 }
 
+/** Closes a session's pane: its agent gets SIGHUP and quits. Only that pane, since it may be in a tmux session of yours. */
+export function endPane(pane: string): Promise<string | null> {
+  if (!PANE_RE.test(pane)) return Promise.resolve('not a tmux pane');
+  return runErr('tmux', ['kill-pane', '-t', pane]);
+}
+
 /** Type literal text into a pane, then press Enter. Text never touches a shell. */
 export async function typeInto(pane: string, text: string): Promise<boolean> {
   if (!PANE_RE.test(pane)) return false;

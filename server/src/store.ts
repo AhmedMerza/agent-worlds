@@ -49,6 +49,8 @@ export type Session = {
   branch: string | null; worktree: boolean; tmux: { session: string | null; pane: string } | null;
   /** Set when the server runs this session itself (no tmux): the name of its pty. */
   direct: string | null;
+  /** Your name for it, shown on its name tag. */
+  label: string | null;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];
@@ -99,6 +101,8 @@ export type Deps = {
   stats: { get(repo: string, rule: string): number; inc(repo: string, rule: string): number };
   /** Sessions moved to a world by hand, by conversation id (see placements.ts). */
   placements?: { get(id: string): string | undefined; set(id: string, worldId: string | null): void };
+  /** Names you gave sessions, by conversation id. */
+  labels?: { get(id: string): string | undefined; set(id: string, label: string | null): void };
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
@@ -108,6 +112,7 @@ export type Emit = (ev: { type: 'session'; session: unknown } | { type: 'session
 
 const SUBAGENT_TOOLS = new Set(['Agent', 'Task']);
 const LOG_MAX = 20;
+const LABEL_MAX = 40;
 
 export const oneLine = (s: unknown, max = 160): string | null => {
   if (typeof s !== 'string') return null;
@@ -247,6 +252,20 @@ export class Store {
     if (s.log.length > LOG_MAX) s.log.splice(0, s.log.length - LOG_MAX);
   }
 
+  /** Names a session on its name tag (null or blank: back to its repo's name). */
+  relabel(id: string, label: unknown): [number, string] | null {
+    const s = this.sessions.get(id);
+    if (!s) return [404, 'no such session'];
+    if (label !== null && typeof label !== 'string') return [400, 'label must be a string or null'];
+    const v = label?.trim() || null;
+    if (v && v.length > LABEL_MAX) return [400, `label must be at most ${LABEL_MAX} characters`];
+    if (!this.deps.labels) return [500, 'cannot save labels'];
+    this.deps.labels.set(id, v);
+    s.label = v;
+    this.push(s);
+    return null;
+  }
+
   /**
    * A session we just launched in tmux, shown at once as 'starting'. Claude may first ask to
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
@@ -282,9 +301,13 @@ export class Store {
     const moved = prior && this.deps.placements?.get(prior.id);
     if (moved && !this.deps.placements!.get(id)) this.deps.placements!.set(id, moved);
     if (moved && starting) this.deps.placements!.set(starting.id, null); // a placeholder id is never seen again
+    // ...and keeps the name you gave it
+    const named = prior && this.deps.labels?.get(prior.id);
+    if (named && !this.deps.labels!.get(id)) this.deps.labels!.set(id, named);
+    if (named && starting) this.deps.labels!.set(starting.id, null);
     const s: Session = {
       id, agent, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
-      branch: info.branch, worktree: info.worktree, tmux: null, direct,
+      branch: info.branch, worktree: info.worktree, tmux: null, direct, label: this.deps.labels?.get(id) ?? null,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
