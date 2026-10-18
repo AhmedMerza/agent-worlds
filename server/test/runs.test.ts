@@ -117,3 +117,16 @@ test('runs.json brings a run back after a restart, and its step can still hand o
     assert.equal(launched.at(-1).repo, dir);
   } finally { await again.close(); }
 });
+
+test('a worktree run is named after the run; /clear in a step keeps it able to hand off', async () => {
+  const { body } = await post('/api/runs', { ...RUN, worktree: true, steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
+  const first = launched.at(-1);
+  assert.deepEqual([first.worktree, first.branch], [true, `aw/run-${body.run.id}`]);
+  const pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'plan-4', pane);
+  await hook(ev.start, 'plan-4b', pane); // /clear: a new conversation replaces the old one in the same pane
+  const run = ((await (await fetch(`${base}/api/state`, { headers: H })).json()) as any).runs.find((x: any) => x.id === body.run.id);
+  assert.equal(run.steps[0].sessionId, 'plan-4b');
+  await hook(ev.prompt, 'plan-4b', pane);
+  assert.match((await handoff(pane, 'planned after a /clear')).content[0].text, /next step has started/);
+});

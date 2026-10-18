@@ -757,7 +757,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     try {
       const first = r.dir === null;
       const task = stepPrompt(r, i);
-      const c = await createSession({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+      // A worktree's branch is named after the run, not after the step's long first message.
+      const c = await createSession({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
       if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
       step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: step.direct, dir: c.dir, task: `${STEP_KINDS[step.kind].label}: ${r.task}`, agent: step.agent });
@@ -788,9 +789,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   function runEvent(s: { id: string; state: string; tmux: { pane: string } | null; direct: string | null }, ev: string) {
     for (const r of runs.values()) {
       const step = r.steps[r.current];
-      if (r.status !== 'running' || step.status !== 'running') continue;
+      if ((r.status !== 'running' && r.status !== 'waiting') || step.status !== 'running') continue;
+      // Its first hook, or a new conversation in the same pane (/clear) after the old one went away
       if (!step.sessionId && ((step.pane && s.tmux?.pane === step.pane) || (step.direct && s.direct === step.direct))) { step.sessionId = s.id; pushRun(r); }
-      if (step.sessionId === s.id && (ev === 'Stop' || ev === 'StopFailure') && (s.state === 'done' || s.state === 'error')) {
+      if (r.status === 'running' && step.sessionId === s.id && (ev === 'Stop' || ev === 'StopFailure') && (s.state === 'done' || s.state === 'error')) {
         r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} ended its turn without handing off: talk to it, or go on.`;
         pushRun(r);
       }
