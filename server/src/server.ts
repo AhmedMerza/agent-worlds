@@ -154,6 +154,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const st = r.steps[r.current];
     if (r.status === 'running' && st.status === 'running' && !st.pane && !st.direct && !st.sessionId) {
       st.status = 'pending'; r.status = 'waiting'; r.note = `Agent Worlds restarted while step ${r.current + 1} was starting: start it again, or stop the run.`;
+    } else if (r.status === 'running' && st.status === 'handed') {
+      r.status = 'waiting'; r.note = `Agent Worlds restarted while step ${r.current + 1} was handing off: go on to the next step, or stop the run.`;
     }
   }
   /**
@@ -810,7 +812,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const s = step.sessionId ? store.sessions.get(step.sessionId) : undefined;
     step.status = 'handed'; step.summary = summary;
     // No session to read (it never started, or it ended): no handoff, rather than the step before's under this one's name
-    r.handoff = s ? { path: await writeHandoff(s, opts.home ?? homeDir()), summary } : null;
+    let path: string | null = null;
+    if (s) try { path = await writeHandoff(s, opts.home ?? homeDir()); } catch (e) { console.error('[agent-worlds] handoff not written', (e as Error).message); }
+    r.handoff = path ? { path, summary } : null;
     if (r.status === 'stopped') return pushRun(r);
     if (r.current + 1 >= r.steps.length) { r.status = 'done'; r.note = null; return pushRun(r); }
     if (step.checkpoint && !force) { r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} is done. Read what it wrote, then start ${STEP_KINDS[r.steps[r.current + 1].kind].label}.`; return pushRun(r); }

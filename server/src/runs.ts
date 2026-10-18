@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
-import type { AgentId } from './agents.ts';
+import { isAgent, type AgentId } from './agents.ts';
 
 /**
  * A run carries one task through ordered steps, each a session on its own agent, all in one folder.
@@ -36,6 +36,7 @@ export const STEP_KINDS: Record<StepKind, { label: string; brief: (files: string
   build: { label: 'Build', brief: (f) => `Your part: implement the plan in ${f}/plan.md (read ${f}/plan-review.md too if it exists). Run the tests and commit your work.` },
   'review-code': { label: 'Review code', brief: (f) => `Your part: review the changes made for this task (git log and diff against where the branch started) against ${f}/plan.md. Fix real bugs you find and commit. Write your review to ${f}/code-review.md.` },
 };
+const RUN_STATUSES: unknown[] = ['running', 'waiting', 'done', 'stopped', 'failed'];
 export const isStepKind = (k: unknown): k is StepKind => typeof k === 'string' && Object.hasOwn(STEP_KINDS, k);
 
 /** The folder, inside the run's working folder, where steps leave their files (kept out of git). */
@@ -81,7 +82,9 @@ export function loadRuns(file: string): Run[] {
   let v: unknown;
   try { v = JSON.parse(readFileSync(file, 'utf8')); } catch { return []; }
   // A hand-edited or half-written file must not take the server down: keep only runs with the shape the code reads
-  return (Array.isArray(v) ? v : []).filter((r): r is Run => !!r && typeof r.id === 'string' && Array.isArray(r.steps) && r.steps.length > 0
+  const okStep = (s: any) => !!s && ['pending', 'running', 'handed'].includes(s.status) && isStepKind(s.kind) && isAgent(s.agent);
+  return (Array.isArray(v) ? v : []).filter((r): r is Run => !!r && typeof r.id === 'string' && RUN_STATUSES.includes(r.status)
+    && Array.isArray(r.steps) && r.steps.length > 0 && r.steps.every(okStep)
     && Number.isInteger(r.current) && r.current >= 0 && r.current < r.steps.length);
 }
 

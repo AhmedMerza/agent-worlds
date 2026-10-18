@@ -198,7 +198,8 @@ test('runs.json: finished runs are pruned, live ones never; a corrupt file is ig
   const kept = loadRuns(file);
   assert.equal(kept.filter((r) => r.status === 'done').length, 50);
   assert.ok(kept.some((r) => r.id === oldWaiting.id), 'a live run is never pruned');
-  writeFileSync(file, '[null, {"id": 1}, {"id": "x", "steps": [], "current": 0}, {"id": "y", "steps": [{}], "current": 3}]');
+  writeFileSync(file, '[null, {"id": 1}, {"id": "x", "status": "running", "steps": [], "current": 0}, {"id": "y", "status": "running", "steps": [{}], "current": 3},'
+    + ' {"id": "z", "status": "running", "steps": [null], "current": 0}, {"id": "w", "status": "running", "steps": [{"status": "running", "kind": "dance", "agent": "claude"}], "current": 0}]');
   assert.deepEqual(loadRuns(file), []);
   writeFileSync(file, '{not json');
   assert.deepEqual(loadRuns(file), []);
