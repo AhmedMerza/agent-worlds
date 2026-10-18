@@ -1,8 +1,9 @@
 # Agent Worlds
 
-**Run and watch many Claude Code sessions from one browser tab.** Sessions live in illustrated
-rooms, everything that needs you lands in one inbox, and each session is the real `claude`
-CLI in a real terminal.
+**Run and watch many coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code) from one
+browser tab.** Sessions live in illustrated rooms, everything that needs you lands in one inbox,
+each session is the real agent CLI in a real terminal, and the agents can work together: they
+message each other and pass one task through steps.
 
 ![Agent Worlds: sessions working in rooms, a permission request appears, you allow it, the session goes back to work, then a finished session shows its review](docs/media/hero.gif)
 
@@ -15,10 +16,19 @@ CLI in a real terminal.
   one is waiting for you. Rooms, timers and a "needs you" count make that visible at a glance.
 - **Answer everything from one inbox.** Permission requests, questions, errors and finished
   turns from every session, oldest first. Allow, deny, answer or review without switching windows.
-- **A real terminal underneath.** Every session is the real `claude` CLI in a real terminal, so skills,
-  slash commands and your own keybindings all work. The GUI adds to the terminal, it does not replace it.
+- **A real terminal underneath.** Every session is the real agent CLI (`claude`, `codex`, `qwen`, `kimi`)
+  in a real terminal, so skills, slash commands and your own keybindings all work. The GUI adds to the terminal, it does not replace it.
+- **Agents that work together.** One agent writes a plan, another reviews it, a third builds it.
+  They message each other through the app, and you approve at checkpoints.
 
 ## Features
+
+### Agents working together
+
+Sessions on any agent can [message each other](#sessions-message-each-other), and a
+[run](#runs-one-task-several-agents) carries one task through steps on different agents (for
+example Claude plans, Codex reviews, Claude builds, Codex reviews), pausing for you where you
+ask it to. Which agents you can start is covered in [Other agent CLIs](#other-agent-clis).
 
 ### Worlds and rooms
 
@@ -286,7 +296,7 @@ Runs are saved in `<home>/runs.json`, so a restart (for example **Update now**) 
 - git, curl
 - tmux (optional, recommended): keeps sessions running across restarts and lets you open them from your own terminal
 - [Claude Code](https://claude.com/claude-code) (`claude` on your PATH)
-- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) or [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`), to start sessions with those instead (see [Other agent CLIs](#other-agent-cli))
+- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) or [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`), to start sessions with those instead (see [Other agent CLIs](#other-agent-clis)). A local model through Ollama works for Qwen Code in its OpenAI-compatible mode: set `security.auth.selectedType` to `"openai"` in a workspace `.qwen/settings.json`, and `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in the environment Agent Worlds starts from. Small models (an 8B on an 8 GB GPU, say) are too weak for real agent work.
 - A C/C++ toolchain for `node-pty` if no prebuilt binary matches your platform
 
 ## Quick start
