@@ -52,5 +52,8 @@ export class Direct {
     };
   }
 
+  /** Ends one session; its exit removes the card. */
+  kill(name: string) { this.map.get(name)?.pty.kill(); }
+
   killAll() { for (const e of this.map.values()) e.pty.kill(); this.map.clear(); }
 }

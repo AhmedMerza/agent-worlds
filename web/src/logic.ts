@@ -11,6 +11,8 @@ export const LABEL: Record<SessionState, string> = {
 /** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 /** What each kind of run step does, in the order a run usually has them. */
 export const STEP_LABEL: Record<StepKind, string> = { plan: 'Plan', 'review-plan': 'Review plan', build: 'Build', 'review-code': 'Review code' }
+/** What a session is called: the name you gave it, else its repo. */
+export const nameOf = (s: { label?: string | null; repoName: string }): string => s.label || s.repoName
 export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
 
 /** The state label, with the busy-but-not-you variants of 'working'. */
