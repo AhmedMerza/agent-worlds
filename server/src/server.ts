@@ -146,8 +146,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
   const mailbox = new Mailbox();
+  /** Sessions that reached /mcp: only they have the mailbox tools (a plain `claude` reporting through global hooks has not). */
+  const mailboxed = new Set<string>();
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); }
+    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); mailboxed.delete(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -385,6 +387,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = await readBody(req);
       const pane = req.headers['x-aw-pane'], pty = req.headers['x-aw-pty'];
       const self = [...store.sessions.values()].find((s) => (typeof pane === 'string' && pane && s.tmux?.pane === pane) || (typeof pty === 'string' && pty && s.direct === pty));
+      if (self) mailboxed.add(self.id);
       const out = handleMcp(body, mcpContext(self?.id ?? null));
       if (out === null) { res.writeHead(202); return res.end(); }
       return send(res, 200, out);
@@ -679,11 +682,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   function mcpContext(self: string | null) {
     return {
       self,
-      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && s.state !== 'starting')
+      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id))
         .map((s) => ({ id: s.id, agent: AGENTS[s.agent].name, repo: s.repoName, branch: s.branch, task: s.task, state: s.state })),
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
-        const hits = [...store.sessions.values()].filter((s) => s.id !== self && s.id.startsWith(to));
+        const hits = [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id) && s.id.startsWith(to));
         if (hits.length !== 1) return new Error(hits.length ? `"${to}" matches ${hits.length} sessions: use more of the id` : `no session "${to}": see aw_agents`);
         const r = mailbox.send(from.id, hits[0].id, text);
         if (typeof r === 'string') return new Error(r);

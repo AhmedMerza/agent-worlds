@@ -61,9 +61,12 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
 
   await hook(ev.start, A, '%1');
   await hook(ev.start, B, '%2');
+  await hook(ev.start, 'cccc3333-0000', '%3'); // a plain `claude` reporting through global hooks: no mailbox tools
+  await rpc('%2', 'initialize', {}); // B's CLI connected to the mailbox
   await hook(ev.prompt, B, '%2'); // B is mid-turn
   const peers = JSON.parse((await tool('%1', 'aw_agents')).content[0].text);
-  assert.deepEqual(peers.map((p: any) => p.id), [B]);
+  assert.deepEqual(peers.map((p: any) => p.id), [B], 'only sessions that reached the mailbox');
+  assert.match((await tool('%1', 'aw_send', { to: 'cccc', text: 'x' })).content[0].text, /no session "cccc"/);
   assert.match((await tool('%1', 'aw_send', { to: 'nope', text: 'x' })).content[0].text, /no session "nope"/);
   assert.match((await tool('%1', 'aw_send', { to: 'bbbb', text: 'step 3 misses the auth check' })).content[0].text, /working now/);
   await app.deliverMail();
