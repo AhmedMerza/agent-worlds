@@ -3,6 +3,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-18
+- Text sent to a session (the reply box, the mail notice) now presses Enter a moment after typing it. Codex took an Enter right behind the text as part of a paste and left the message sitting in its input box.
 - Sessions message each other, across agents: every session Agent Worlds starts gets the MCP tools `aw_agents`, `aw_send` and `aw_inbox` (through `bin/aw-mcp`, a stdio bridge to `/mcp` that names the pane it runs in). When a session that has mail is free, a one-line notice is typed into its terminal telling it to call `aw_inbox`; a session mid-turn is told when its turn ends. Messages show in both sessions' recent steps. Two sessions get 12 messages without a prompt from you, then are told to ask you.
 
 ## 2026-10-15

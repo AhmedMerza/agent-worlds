@@ -86,8 +86,11 @@ export function restartClaude(pane: string, sessionId: string, cwd: string, argv
 export async function typeInto(pane: string, text: string): Promise<boolean> {
   if (!PANE_RE.test(pane)) return false;
   if (text && (await run('tmux', ['send-keys', '-t', pane, '-l', '--', text])) === null) return false;
+  // An Enter right behind the text lands in the same paste burst: Codex then keeps it as a newline in its input box.
+  if (text) await new Promise((r) => setTimeout(r, ENTER_DELAY_MS));
   return (await run('tmux', ['send-keys', '-t', pane, 'Enter'])) !== null;
 }
+const ENTER_DELAY_MS = 300;
 
 const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '') || 'task';
 
