@@ -278,7 +278,7 @@ then Review code. You can change, remove or add steps (up to 8).
 - **Files stay out of git.** The step files live in `.aw/`, which Agent Worlds adds to the repo's
   `.git/info/exclude`.
 
-Runs are kept in memory: a server restart forgets them, but their sessions keep running in tmux.
+Runs are saved in `<home>/runs.json`, so a restart (for example **Update now**) picks them up where they were. Finished runs are kept for a week.
 
 ## Requirements
 

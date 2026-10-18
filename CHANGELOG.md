@@ -3,7 +3,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-18
-- Runs: New session can carry one task through steps on different agents (Plan → Review plan → Build → Review code by default, editable), each a session in the same folder. A step ends when its agent calls the new `aw_handoff` MCP tool; Agent Worlds writes a handoff and starts the next step. A step marked Check, or one whose turn ends without a handoff, holds the run under Needs you (Start next / Stop run). A step's panel shows the whole run. Step files go in `.aw/run-<id>/`, added to `.git/info/exclude` (`POST /api/runs`, `/api/runs/:id/next`, `/api/runs/:id/stop`).
+- Runs: New session can carry one task through steps on different agents (Plan → Review plan → Build → Review code by default, editable), each a session in the same folder. A step ends when its agent calls the new `aw_handoff` MCP tool; Agent Worlds writes a handoff and starts the next step. A step marked Check, or one whose turn ends without a handoff, holds the run under Needs you (Start next / Stop run). A step's panel shows the whole run. Step files go in `.aw/run-<id>/`, added to `.git/info/exclude`. Runs survive a server restart (`<home>/runs.json`) (`POST /api/runs`, `/api/runs/:id/next`, `/api/runs/:id/stop`).
 - Sessions message each other, across agents: every session Agent Worlds starts gets the MCP tools `aw_agents`, `aw_send` and `aw_inbox` (through `bin/aw-mcp`, a stdio bridge to `/mcp` that names the pane it runs in). When a session that has mail is free, a one-line notice is typed into its terminal telling it to call `aw_inbox`; a session mid-turn is told when its turn ends. Messages show in both sessions' recent steps. Two sessions get 12 messages without a prompt from you, then are told to ask you.
 
 ## 2026-10-15

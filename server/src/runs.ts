@@ -1,13 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { AgentId } from './agents.ts';
 
 /**
  * A run carries one task through ordered steps, each a session on its own agent, all in one folder.
  * A step ends when its agent calls aw_handoff (or you move it on); a checkpoint step then waits for your OK.
- * Kept in memory: a server restart forgets runs, while their sessions live on in tmux.
+ * Kept in <home>/runs.json, so a restart (an update) picks them up: session ids and panes stay the same.
  */
 export type StepKind = 'plan' | 'review-plan' | 'build' | 'review-code';
 export type Step = {
@@ -70,4 +71,22 @@ export async function excludeRunFiles(dir: string): Promise<void> {
   if (has.split('\n').includes('.aw/')) return;
   await mkdir(dirname(file), { recursive: true });
   await appendFile(file, `${has && !has.endsWith('\n') ? '\n' : ''}# Agent Worlds run files\n.aw/\n`);
+}
+
+/** Finished runs kept in runs.json for this long; the newest ones beyond MAX_RUNS are dropped too. */
+const KEEP_FINISHED = 7 * 24 * 3600_000;
+const MAX_RUNS = 50;
+
+export function loadRuns(file: string): Run[] {
+  try { const v = JSON.parse(readFileSync(file, 'utf8')); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+export function saveRuns(file: string, runs: Map<string, Run>, now: number) {
+  for (const [id, r] of runs) if (!['running', 'waiting'].includes(r.status) && now - r.startedAt > KEEP_FINISHED) runs.delete(id);
+  for (const id of [...runs.keys()].slice(0, Math.max(0, runs.size - MAX_RUNS))) runs.delete(id);
+  try {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(file + '.tmp', JSON.stringify([...runs.values()]), { mode: 0o600 });
+    renameSync(file + '.tmp', file);
+  } catch (e) { console.error('[agent-worlds] cannot save runs', (e as Error).message); }
 }

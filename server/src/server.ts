@@ -22,7 +22,7 @@ import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
 import { handleMcp, type Peer } from './mcp.ts';
-import { newRun, stepPrompt, excludeRunFiles, isStepKind, STEP_KINDS, type Run } from './runs.ts';
+import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, STEP_KINDS, type Run } from './runs.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -147,7 +147,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
   const mailbox = new Mailbox();
-  const runs = new Map<string, Run>();
+  const runsFile = join(opts.home ?? homeDir(), 'runs.json');
+  const runs = new Map<string, Run>(loadRuns(runsFile).map((r) => [r.id, r]));
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
     if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); runSessionGone(msg.id); }
     const text = JSON.stringify(msg);
@@ -741,7 +742,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     };
   }
   // Runs: one task through steps on different agents (see runs.ts).
-  const pushRun = (r: Run) => broadcast({ type: 'run', run: r });
+  const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
   const stepOf = (id: string) => {
     for (const r of runs.values()) if ((r.status === 'running' || r.status === 'waiting') && r.steps[r.current].sessionId === id) return r;
     return null;

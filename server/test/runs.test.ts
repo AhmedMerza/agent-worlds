@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
@@ -12,11 +12,12 @@ const launched: any[] = [];
 const dir = mkdtempSync(join(tmpdir(), 'aw-run-'));
 let app: ReturnType<typeof startServer>;
 let base = '';
+const home = mkdtempSync(join(tmpdir(), 'aw-run-home-'));
 
 before(async () => {
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
   app = startServer(cfg, TOKEN, {
-    home: mkdtempSync(join(tmpdir(), 'aw-run-home-')),
+    home,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
     createSession: (async (o: any) => {
       launched.push(o);
@@ -71,6 +72,9 @@ test('a run: plan hands off, waits at its checkpoint, build starts with the hand
   await hook(ev.start, 'build-1', '%52');
   await hook(ev.prompt, 'build-1', '%52');
   assert.match((await handoff('%52', 'built and committed')).content[0].text, /run is done/);
+  const saved = JSON.parse(readFileSync(join(home, 'runs.json'), 'utf8')).find((x: any) => x.id === id);
+  assert.equal(saved.status, 'done', 'kept in runs.json for the next server start');
+  assert.deepEqual(saved.steps.map((s: any) => s.sessionId), ['plan-1', 'build-1']);
   assert.equal(next.body.run.id, id);
   assert.equal((await post(`/api/runs/${id}/next`)).status, 409, 'done is done');
 });
@@ -90,4 +94,26 @@ test('a step whose turn ends without a handoff waits for you; "next" moves it on
   assert.equal(r.body.run.current, 1);
   assert.equal((await post(`/api/runs/${id}/stop`)).body.run.status, 'stopped');
   assert.equal((await post(`/api/runs/${id}/next`)).status, 409);
+});
+
+test('runs.json brings a run back after a restart, and its step can still hand off', async () => {
+  const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
+  const pane = `%${50 + launched.length}`;
+  await hook(ev.start, 'plan-3', pane);
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
+  const again = startServer(cfg, TOKEN, {
+    home,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    createSession: (async (o: any) => { launched.push(o); return { tmuxSession: 'awtest-again', dir, branch: null, pane: '%99' }; }) as any,
+  });
+  await again.listen();
+  try {
+    const b2 = `http://127.0.0.1:${(again.server.address() as { port: number }).port}`;
+    const state = (await (await fetch(`${b2}/api/state`, { headers: H })).json()) as any;
+    assert.equal(state.runs.find((x: any) => x.id === body.run.id).status, 'running');
+    await fetch(`${b2}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...ev.prompt, session_id: 'plan-3', cwd: dir }) });
+    const r = await fetch(`${b2}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'aw_handoff', arguments: { summary: 'after the restart' } } }) });
+    assert.match(((await r.json()) as any).result.content[0].text, /next step has started/);
+    assert.equal(launched.at(-1).repo, dir);
+  } finally { await again.close(); }
 });
