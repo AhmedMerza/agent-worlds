@@ -207,8 +207,8 @@ Allow/Deny work the same. These features are Claude-only for now:
 
 On its first start, Codex asks you in the terminal to review the new hooks. Choose "Trust all
 and continue". It remembers that choice, so later sessions don't ask again. Codex sends no
-event when a turn fails (for example when you hit a usage limit), so such a session stays at
-the desks until you look at it.
+event when a turn fails (for example when you hit a usage limit), so Agent Worlds reads Codex's
+own session log instead: a failed turn moves to the Help desk with its error a few seconds later.
 
 Kimi Code is different in two ways:
 

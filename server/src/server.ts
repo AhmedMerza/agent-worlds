@@ -167,6 +167,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     try { writeFileSync(mailboxedFile + '.tmp', JSON.stringify([...mailboxed]), { mode: 0o600 }); renameSync(mailboxedFile + '.tmp', mailboxedFile); }
     catch (e) { console.error('[agent-worlds] cannot save mailboxed.json', (e as Error).message); }
   };
+  /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
+  const earlyMcp = new Set<string>();
+  const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
     if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); }
     const text = JSON.stringify(msg);
@@ -184,6 +187,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       // text, not lastPrompt: lastPrompt keeps the previous prompt when a CLI sends none. Kimi sends content blocks.
       const text = typeof p.prompt === 'string' ? p.prompt : Array.isArray(p.prompt) ? p.prompt.map((b: { text?: unknown }) => (typeof b?.text === 'string' ? b.text : '')).join('') : '';
       if (ev === 'UserPromptSubmit' && text.trim() && !text.startsWith(MAIL_NOTICE)) mailbox.prompted(s.id);
+      for (const k of [s.tmux && `pane:${s.tmux.pane}`, s.direct && `pty:${s.direct}`]) if (k && earlyMcp.delete(k)) markMailboxed(s.id);
       runEvent(s, ev);
     },
     ...opts.deps,
@@ -409,7 +413,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = await readBody(req);
       const pane = req.headers['x-aw-pane'], pty = req.headers['x-aw-pty'];
       const self = [...store.sessions.values()].find((s) => (typeof pane === 'string' && pane && s.tmux?.pane === pane) || (typeof pty === 'string' && pty && s.direct === pty));
-      if (self && !mailboxed.has(self.id)) { mailboxed.add(self.id); saveMailboxed(); }
+      if (self) markMailboxed(self.id);
+      else if (typeof pane === 'string' && sys.PANE_RE.test(pane)) earlyMcp.add(`pane:${pane}`);
+      else if (typeof pty === 'string' && pty) earlyMcp.add(`pty:${pty}`);
       const out = await handleMcp(body, mcpContext(self?.id ?? null));
       if (out === null) { res.writeHead(202); return res.end(); }
       return send(res, 200, out);

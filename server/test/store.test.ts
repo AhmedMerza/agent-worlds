@@ -456,6 +456,49 @@ test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is th
   assert.equal(view().state, 'idle');
 });
 
+test('a Codex turn that ends without a hook is read from its rollout log', async () => {
+  const { mkdtempSync, writeFileSync, appendFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  let t = Date.parse('2026-10-18T10:00:00Z');
+  const { store, view } = setup({ now: () => t });
+  const log = `${mkdtempSync(`${tmpdir()}/awcodex-`)}/rollout.jsonl`;
+  const entry = (payload: object, at: number) => JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'event_msg', payload }) + '\n';
+  const prompt = async () => { await store.handle({ ...ev.prompt, transcript_path: log }, '%5', undefined, null, 'codex'); };
+  // an earlier turn's ending is stale: the new prompt came after it
+  writeFileSync(log, entry({ type: 'task_complete', last_agent_message: 'old' }, t - 60_000));
+  await prompt();
+  t += 10_000;
+  await store.checkInterrupts();
+  assert.equal(view().state, 'working');
+  // a long tool run: started, quiet, still running
+  appendFileSync(log, entry({ type: 'task_started' }, t));
+  t += 60_000;
+  await store.checkInterrupts();
+  assert.equal(view().state, 'working');
+  // a usage limit: task_complete carries the error, and no Stop ever comes
+  appendFileSync(log, entry({ type: 'task_complete', last_agent_message: null, error: { message: "You've hit your usage limit.", codex_error_info: 'usage_limit_exceeded' } }, t));
+  await store.checkInterrupts();
+  assert.equal(view().state, 'working', 'its Stop hook gets a moment first');
+  t += 6_000;
+  await store.checkInterrupts();
+  assert.equal(view().state, 'error');
+  assert.deepEqual(view().card, { kind: 'error', summary: "You've hit your usage limit." });
+  // Esc: turn_aborted sends it to the lounge, not to an error card
+  await prompt();
+  appendFileSync(log, entry({ type: 'task_started' }, t) + entry({ type: 'turn_aborted', reason: 'interrupted' }, t + 1000));
+  t += 7_000;
+  await store.checkInterrupts();
+  assert.equal(view().state, 'idle');
+  assert.equal(view().now, 'Interrupted');
+  // a finished turn whose Stop never arrived
+  await prompt();
+  appendFileSync(log, entry({ type: 'task_started' }, t) + entry({ type: 'task_complete', last_agent_message: 'All set.' }, t + 1000));
+  t += 7_000;
+  await store.checkInterrupts();
+  assert.equal(view().state, 'done');
+  assert.equal(view().card.summary, 'All set.');
+});
+
 test('moving one session to another world: its repo stays, /clear keeps the move, moving back clears it', async () => {
   const placements = new Map<string, string>();
   const { store } = setup({ placements });

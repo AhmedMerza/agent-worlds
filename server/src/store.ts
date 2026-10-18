@@ -26,6 +26,9 @@ type Busy = null | { kind: 'compact' } | { kind: 'background'; tasks: number; ne
 /** No word from background work for this long: the session is shown as done after all. */
 const BUSY_TTL = 30 * 60_000;
 const WAKE_GRACE = 5 * 60_000;
+/** Codex rollout entries that start or end a turn, and how long its Stop hook gets to arrive first. */
+const CODEX_TURN = new Set(['task_started', 'task_complete', 'turn_aborted']);
+const CODEX_GRACE = 5_000;
 
 type Pending = {
   requestId: string;
@@ -638,10 +641,6 @@ export class Store {
     }
   }
 
-  /**
-   * Esc mid-turn fires no hook (Stop "does not run if the stoppage occurred due to a user interrupt"):
-   * Claude only appends "[Request interrupted by user…]" to its transcript. Polled for working sessions.
-   */
   /** Background work that never reported back: show the turn as done after all. */
   checkBusy() {
     const t = this.now();
@@ -659,9 +658,15 @@ export class Store {
     return !!s.busy || s.helpers.some((h) => h.bg && h.state === 'working');
   }
 
+  /**
+   * Esc mid-turn fires no hook (Stop "does not run if the stoppage occurred due to a user interrupt"):
+   * Claude only appends "[Request interrupted by user…]" to its transcript. Polled for working sessions.
+   */
   async checkInterrupts() {
     for (const s of [...this.sessions.values()]) {
-      if (s.state !== 'working' || s.pending.length || !s.transcriptPath || this.awaited(s)) continue;
+      if (s.state !== 'working' || s.pending.length || this.awaited(s)) continue;
+      if (s.agent === 'codex') { if (s.logPath) await this.checkCodexTurn(s, s.logPath); continue; }
+      if (!s.transcriptPath) continue;
       const last = (await readTail(s.transcriptPath, 8192).catch(() => [])).at(-1);
       const c = last?.type === 'user' ? last.message?.content : undefined;
       const text = typeof c === 'string' ? c : Array.isArray(c) ? c[0]?.text : undefined;
@@ -671,6 +676,35 @@ export class Store {
       s.now = 'Interrupted';
       this.push(s);
     }
+  }
+
+  /**
+   * Codex fires no hook when a turn fails (a usage limit), and none is promised on Esc. Its rollout log still
+   * ends every turn: task_complete (with `error` when it failed) or turn_aborted.
+   */
+  private async checkCodexTurn(s: Session, path: string) {
+    const end = (await readTail(path, 65536).catch(() => []))
+      .findLast((e) => e.type === 'event_msg' && CODEX_TURN.has(e.payload?.type));
+    const at = Date.parse(end?.timestamp);
+    // Still running, an ending from before the last hook (an earlier turn), or one so fresh its Stop may be on the way.
+    if (!end || end.payload.type === 'task_started' || !(at >= s.hookAt) || this.now() - at < CODEX_GRACE) return;
+    if (s.state !== 'working' || !this.sessions.has(s.id)) return;
+    const p = end.payload;
+    s.waitingSince = null;
+    s.testing.clear();
+    if (p.type === 'turn_aborted') {
+      this.afterPending(s, 'idle');
+      s.now = 'Interrupted';
+    } else if (p.error) {
+      const msg = oneLine(p.error.message) ?? 'Stopped with an error';
+      s.state = 'error'; s.now = msg;
+      s.card = { kind: 'error', summary: msg };
+      this.log(s, `Error: ${msg}`);
+    } else {
+      s.state = 'done'; s.now = 'Done';
+      s.card = { kind: 'done', summary: oneLine(p.last_agent_message), review: null };
+    }
+    this.push(s);
   }
 
   /** Drop sessions whose tmux session has gone away. */

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { TOOL_NAMES } from '../src/mcp.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, statSync, chmodSync, existsSync, realpathSync } from 'node:fs';
@@ -18,14 +19,14 @@ test('writeHooksFile writes the same block as `hooks --print` plus the mailbox, 
   const home = tmp();
   const f = writeHooksFile(home);
   assert.equal(f, join(home, 'hooks.json'));
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw__aw_agents', 'mcp__aw__aw_send', 'mcp__aw__aw_inbox'] } });
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: TOOL_NAMES.map((t) => `mcp__aw__${t}`) } });
   assert.equal(statSync(f).mode & 0o777, 0o600);
   const mcp = JSON.parse(readFileSync(join(home, 'claude-mcp.json'), 'utf8')).mcpServers.aw;
   assert.match(mcp.command, /\/bin\/aw-mcp$/);
   assert.deepEqual(mcp.args, ['claude']);
   assert.equal(statSync(join(home, 'claude-mcp.json')).mode & 0o777, 0o600);
   writeHooksFile(home); // refresh in place
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw__aw_agents', 'mcp__aw__aw_send', 'mcp__aw__aw_inbox'] } });
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: TOOL_NAMES.map((t) => `mcp__aw__${t}`) } });
 });
 
 test('createSession launches claude with --settings <home>/hooks.json and AGENT_WORLDS_HOME; task optional', async () => {

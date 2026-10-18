@@ -47,6 +47,9 @@ const TOOLS = [
   },
 ];
 
+/** Every tool's name: sessions we start may call them without asking (hooks.ts). */
+export const TOOL_NAMES = TOOLS.map((t) => t.name);
+
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 const text = (t: string, isError = false) => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) });
 
