@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { Run } from '../types'
 import { STEP_LABEL, agentName } from '../logic'
 import { state, runNext, runStop, select, showToast } from '../store'
+import { copyText } from '../clipboard'
 
 /** A run's steps and what it waits on; `here` marks the step of the session being looked at. */
 const props = defineProps<{ run: Run; here?: number }>()
@@ -21,6 +22,10 @@ async function act(f: typeof runNext) {
   if (!res.ok) showToast(res.error)
 }
 const open = (id: string | null) => { if (id && state.sessions[id]) select(id) }
+/** The last step that handed off, and where the steps leave their files (plan.md, reviews). */
+const last = computed(() => r.value.steps.filter((s) => s.status === 'handed').at(-1) ?? null)
+const files = computed(() => (r.value.dir ? `${r.value.dir}/.aw/run-${r.value.id}` : null))
+async function copyFiles() { if (files.value) showToast(await copyText(files.value) ? 'Copied: ' + files.value : files.value) }
 </script>
 
 <template>
@@ -30,10 +35,12 @@ const open = (id: string | null) => { if (id && state.sessions[id]) select(id) }
     <ol class="steps">
       <li v-for="(st, i) in r.steps" :key="i" :class="[st.status, { current: i === r.current && live, here: i === here }]">
         <button type="button" class="step" :disabled="!st.sessionId || !state.sessions[st.sessionId]" :title="st.summary ?? undefined" @click="open(st.sessionId)">
-          {{ st.status === 'handed' ? '✓' : i === r.current && live ? '●' : '○' }} {{ STEP_LABEL[st.kind] }} · {{ agentName(st) }}<template v-if="st.checkpoint"> · check</template>
+          {{ st.status === 'handed' ? '✓' : i === r.current && live ? '●' : '○' }} {{ STEP_LABEL[st.kind] }} · {{ agentName(st) }}<template v-if="st.checkpoint"> · then pause</template>
         </button>
       </li>
     </ol>
+    <p v-if="last?.summary" class="now"><span class="lbl">{{ STEP_LABEL[last.kind] }} ({{ agentName(last) }}) says</span>{{ last.summary }}</p>
+    <p v-if="files" class="why run-files">Plan and reviews: <code>{{ files }}</code> <button type="button" class="btn" @click="copyFiles">Copy</button></p>
     <p v-if="r.note" class="why">{{ r.note }}</p>
     <div v-if="live" class="actions">
       <button v-if="r.status === 'waiting'" class="btn primary" :disabled="busy" @click="act(runNext)">{{ nextLabel }}</button>
@@ -50,4 +57,6 @@ const open = (id: string | null) => { if (id && state.sessions[id]) select(id) }
 .handed .step { border-color: #4f9d6b; }
 .current .step { border-color: #d9a441; font-weight: 600; }
 .here .step { outline: 1px dashed currentColor; outline-offset: 1px; }
+.run-files code { word-break: break-all; }
+.run-files .btn { width: auto; display: inline-block; padding: 1px 8px; margin-left: 4px; }
 </style>

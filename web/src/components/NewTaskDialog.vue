@@ -119,12 +119,12 @@ async function submit() {
       </label>
       <label class="row"><input v-model="asRun" type="checkbox"> Run it through steps, each on its own agent</label>
       <fieldset v-if="asRun" class="run-steps">
-        <legend class="why">One session per step, all in the same folder. A step ends when its agent hands off; a checked step waits for you to look before the next starts.</legend>
+        <legend class="why">One session per step, all in the same folder. Each step starts on its own when the one before finishes, except after a step marked “Pause after”: then it waits for you.</legend>
         <div v-for="(st, i) in steps" :key="i" class="run-step">
           <span>{{ i + 1 }}.</span>
           <select v-model="st.kind" :aria-label="`Step ${i + 1}`"><option v-for="k in kinds" :key="k" :value="k">{{ STEP_LABEL[k] }}</option></select>
           <select v-model="st.agent" :aria-label="`Step ${i + 1} agent`"><option v-for="a in agents" :key="a.id" :value="a.id" :disabled="!a.installed">{{ a.name }}</option></select>
-          <label class="row" title="Wait for you to look before the next step starts"><input v-model="st.checkpoint" type="checkbox"> Check</label>
+          <label class="row" title="When this step finishes, wait for you before the next one starts"><input v-model="st.checkpoint" type="checkbox"> Pause after</label>
           <button type="button" class="btn" :aria-label="`Remove step ${i + 1}`" @click="steps.splice(i, 1)">×</button>
         </div>
         <button v-if="steps.length < 8" type="button" class="btn" @click="addStep">Add a step</button>

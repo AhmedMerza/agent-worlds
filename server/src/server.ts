@@ -774,7 +774,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     r.handoff = s ? { path: await writeHandoff(s, opts.home ?? homeDir()), summary } : r.handoff;
     step.status = 'handed'; step.summary = summary;
     if (r.current + 1 >= r.steps.length) { r.status = 'done'; r.note = null; return pushRun(r); }
-    if (step.checkpoint && !force) { r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} is done: check it, then go on to ${STEP_KINDS[r.steps[r.current + 1].kind].label}.`; return pushRun(r); }
+    if (step.checkpoint && !force) { r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} is done. Read what it wrote, then start ${STEP_KINDS[r.steps[r.current + 1].kind].label}.`; return pushRun(r); }
     await startStep(r, r.current + 1);
   }
   async function handoff(id: string, summary: string): Promise<string | Error> {

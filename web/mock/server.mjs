@@ -203,8 +203,10 @@ const server = http.createServer(async (req, res) => {
     const sid = `repo-run-${sessions.size}`
     const s = mkSession(sid, b.worldId, { state: 'done', now: 'Done', repoName: path.basename(b.repo), repo: b.repo, task: `Plan: ${b.task}`, agent: b.steps[0].agent, card: { kind: 'done', summary: 'plan.md is ready', review: null } })
     sessions.set(sid, s); upsert(s)
-    const run = { id, task: b.task, worldId: b.worldId, repo: b.repo, dir: b.repo, current: 0, status: 'waiting', note: `${b.steps[0].kind === 'plan' ? 'Plan' : 'The step'} is done: check it, then go on.`, startedAt: Date.now(),
-      steps: b.steps.map((st, i) => ({ ...st, status: i === 0 ? 'handed' : 'pending', sessionId: i === 0 ? sid : null, summary: i === 0 ? 'plan.md is ready' : null })) }
+    // Like the server: a step marked "Pause after" waits for you, any other goes straight on.
+    const hold = b.steps[0].checkpoint || b.steps.length === 1
+    const run = { id, task: b.task, worldId: b.worldId, repo: b.repo, dir: b.repo, current: hold ? 0 : 1, status: hold ? (b.steps.length === 1 ? 'done' : 'waiting') : 'running', note: hold && b.steps.length > 1 ? 'The first step is done. Read what it wrote, then start the next.' : null, startedAt: Date.now(),
+      steps: b.steps.map((st, i) => ({ ...st, status: i === 0 ? 'handed' : i === 1 && !hold ? 'running' : 'pending', sessionId: i === 0 ? sid : null, summary: i === 0 ? 'Wrote the plan to plan.md: three changes, in cli.py and its test.' : null })) }
     runs.set(id, run); broadcast({ type: 'run', run })
     return json(201, { run })
   }
@@ -212,7 +214,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && rn) {
     const run = runs.get(rn[1])
     if (!run) return json(404, { error: 'no such run' })
-    if (rn[2] === 'stop') run.status = 'stopped'
+    if (rn[2] === 'stop') { run.status = 'stopped'; run.note = null }
     else if (run.current + 1 >= run.steps.length) run.status = 'done'
     else { run.current++; run.steps[run.current].status = 'running'; run.status = 'running'; run.note = null }
     broadcast({ type: 'run', run })
