@@ -450,6 +450,18 @@ test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is th
   await store.checkInterrupts();
   assert.equal(view().state, 'idle');
   assert.equal(view().now, 'Interrupted');
+  // as written in real transcripts: other lines follow the marker, and a hook (an interrupted tool's failure) may come after it
+  await store.handle({ ...ev.prompt, transcript_path: tp }, '%5');
+  appendFileSync(tp, JSON.stringify({ type: 'assistant', timestamp: new Date(Date.now() + 1500).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: 'Working on it' }] } }) + '\n');
+  await store.checkInterrupts();
+  assert.equal(view().state, 'working', 'a reply after the old marker: still at work');
+  appendFileSync(tp, line('[Request interrupted by user]', Date.now())
+    + JSON.stringify({ type: 'system', subtype: 'informational' }) + '\n' + JSON.stringify({ type: 'last-prompt', lastPrompt: 'x' }) + '\n'
+    + JSON.stringify({ type: 'file-history-snapshot' }) + '\n' + line('<task-notification>a helper finished</task-notification>', Date.now() + 2500));
+  await new Promise((r) => setTimeout(r, 5)); // the hook lands after the marker was written
+  await store.handle({ ...ev.prompt, hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: {}, transcript_path: tp }, '%5');
+  await store.checkInterrupts();
+  assert.equal(view().state, 'idle', 'interrupted, whatever follows the marker');
   // no transcript marker at all: Claude's idle_prompt notification still ends 'working'
   await store.handle(ev.prompt, '%5');
   await store.handle({ ...ev.notifyPerm, notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }, '%5');

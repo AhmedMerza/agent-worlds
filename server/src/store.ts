@@ -79,14 +79,16 @@ export type Session = {
   logPath: string | null;
   tests: Review['tests'];
   testing: Set<string>;
-  /** When the last hook event arrived: a transcript interrupt marker older than this is stale. */
+  /** When the last hook event arrived: a Codex turn end older than this is stale. */
   hookAt: number;
+  /** When you last prompted it: a transcript interrupt marker older than this is from an earlier turn. */
+  promptAt: number;
   /** A background wait gives up at `at` and shows `summary` as done. */
   busyEnd: { at: number; summary: string | null } | null;
   /** Since your last prompt Claude started background work (a background helper or command, a monitor) that can bring it back. */
   launched: boolean;
 };
-const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'logPath', 'tests', 'testing', 'hookAt', 'busyEnd', 'launched'] as const;
+const INTERNAL = ['pending', 'top', 'reviewTop', 'workDir', 'baseSha', 'taskSure', 'catchupSig', 'branchAt', 'branchTimer', 'model', 'transcriptPath', 'logPath', 'tests', 'testing', 'hookAt', 'promptAt', 'busyEnd', 'launched'] as const;
 
 export type Deps = {
   repoInfo: (cwd: string) => Promise<RepoInfo>;
@@ -107,6 +109,12 @@ export type Deps = {
 export type Emit = (ev: { type: 'session'; session: unknown } | { type: 'session-removed'; id: string }) => void;
 
 const SUBAGENT_TOOLS = new Set(['Agent', 'Task']);
+/** Claude's "[Request interrupted by user…]" line, written on Esc. */
+const interruptMark = (e: { type?: unknown; message?: { content?: unknown } }) => {
+  const c = e.type === 'user' ? e.message?.content : undefined;
+  const text = typeof c === 'string' ? c : Array.isArray(c) ? c[0]?.text : undefined;
+  return typeof text === 'string' && text.startsWith('[Request interrupted');
+};
 const LOG_MAX = 20;
 
 export const oneLine = (s: unknown, max = 160): string | null => {
@@ -288,7 +296,7 @@ export class Store {
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
-      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, logPath: null, tests: null, testing: new Set(), launched: false, hookAt: t,
+      pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, logPath: null, tests: null, testing: new Set(), launched: false, hookAt: t, promptAt: t,
     };
     if (starting) {
       s.task = starting.task;
@@ -375,7 +383,7 @@ export class Store {
         if (!s.task && prompt && !prompt.startsWith('/')) s.task = oneLine(prompt, 200);
         s.lastPrompt = oneLine(prompt, 200) ?? s.lastPrompt;
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Thinking';
-        s.busy = null; s.busyEnd = null; s.launched = false;
+        s.busy = null; s.busyEnd = null; s.launched = false; s.promptAt = this.now();
         this.log(s, `You: ${prompt}`);
         this.refreshBranch(s);
         break;
@@ -667,11 +675,11 @@ export class Store {
       if (s.state !== 'working' || s.pending.length || this.awaited(s)) continue;
       if (s.agent === 'codex') { if (s.logPath) await this.checkCodexTurn(s, s.logPath); continue; }
       if (!s.transcriptPath) continue;
-      const last = (await readTail(s.transcriptPath, 8192).catch(() => [])).at(-1);
-      const c = last?.type === 'user' ? last.message?.content : undefined;
-      const text = typeof c === 'string' ? c : Array.isArray(c) ? c[0]?.text : undefined;
-      if (typeof text !== 'string' || !text.startsWith('[Request interrupted')) continue;
-      if (!(Date.parse(last!.timestamp) >= s.hookAt) || s.state !== 'working' || !this.sessions.has(s.id)) continue;
+      // The marker is rarely the last line: system, last-prompt, file-history-snapshot or a task notification follow it.
+      // Interrupted when it comes after Claude's last reply, and after your prompt (else it is an earlier turn's).
+      const last = (await readTail(s.transcriptPath, 32 * 1024).catch(() => [])).findLast((e) => e.type === 'assistant' || interruptMark(e));
+      if (!last || last.type !== 'user') continue;
+      if (!(Date.parse(last.timestamp) >= s.promptAt) || s.state !== 'working' || !this.sessions.has(s.id)) continue;
       this.afterPending(s, 'idle');
       s.now = 'Interrupted';
       this.push(s);
