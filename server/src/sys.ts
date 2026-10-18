@@ -69,8 +69,8 @@ export function keptFlags(argv: string[]): string[] {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') break;
-    if (a === '--dangerously-skip-permissions' || /^--(settings|permission-mode|model)=/.test(a)) out.push(a);
-    else if (/^--(settings|permission-mode|model)$/.test(a) && i + 1 < argv.length) out.push(a, argv[++i]);
+    if (a === '--dangerously-skip-permissions' || /^--(settings|permission-mode|model|mcp-config)=/.test(a)) out.push(a);
+    else if (/^--(settings|permission-mode|model|mcp-config)$/.test(a) && i + 1 < argv.length) out.push(a, argv[++i]);
   }
   return out;
 }
@@ -86,8 +86,11 @@ export function restartClaude(pane: string, sessionId: string, cwd: string, argv
 export async function typeInto(pane: string, text: string): Promise<boolean> {
   if (!PANE_RE.test(pane)) return false;
   if (text && (await run('tmux', ['send-keys', '-t', pane, '-l', '--', text])) === null) return false;
+  // An Enter right behind the text lands in the same paste burst: Codex then keeps it as a newline in its input box.
+  if (text) await new Promise((r) => setTimeout(r, ENTER_DELAY_MS));
   return (await run('tmux', ['send-keys', '-t', pane, 'Enter'])) !== null;
 }
+export const ENTER_DELAY_MS = 300;
 
 const slug = (s: string, max = 24) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '') || 'task';
 

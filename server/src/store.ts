@@ -242,7 +242,7 @@ export class Store {
     for (const x of changed) if (this.sessions.has(x.id)) this.emit({ type: 'session', session: this.view(x) });
   }
 
-  private log(s: Session, text: string) {
+  log(s: Session, text: string) {
     s.log.push({ t: this.now(), text: oneLine(text, 200) ?? '' });
     if (s.log.length > LOG_MAX) s.log.splice(0, s.log.length - LOG_MAX);
   }

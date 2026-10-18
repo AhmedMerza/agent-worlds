@@ -132,7 +132,7 @@ test('permissionMode: argv, validation on both endpoints, /api/claude-defaults',
   const r = await createSession({ repo: tmp(), worktree: false, claudeBin: bin, prefix: 'awtest-', home: '/h', permissionMode: 'plan' });
   try {
     await waitFor(() => existsSync(out));
-    assert.deepEqual(readFileSync(out, 'utf8').trim().split('\n'), ['--permission-mode', 'plan', '--settings', '/h/hooks.json']);
+    assert.deepEqual(readFileSync(out, 'utf8').trim().split('\n'), ['--permission-mode', 'plan', '--settings', '/h/hooks.json', '--mcp-config', '/h/claude-mcp.json']);
   } finally { try { execFileSync('tmux', ['kill-session', '-t', '=' + r.tmuxSession]); } catch { /* gone */ } }
 
   const root = tmp();

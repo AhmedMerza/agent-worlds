@@ -223,6 +223,34 @@ servers) and holds a copy of your `config.toml` with the hooks added. The copy i
 time a session starts, so change settings in your own `~/.kimi-code/config.toml`. Changes made from
 inside a running Kimi session go to the copy and are lost.
 
+## Sessions message each other
+
+Every session Agent Worlds starts, whichever agent runs it, gets three MCP tools from a server named `aw`:
+
+- `aw_agents` lists the other sessions: id, agent, repo, branch, task and state.
+- `aw_send` sends one of them a message.
+- `aw_inbox` reads the messages sent to this session.
+
+So you can tell Claude "ask the Codex session to review your plan". As soon as the recipient is free
+(at its prompt, or its turn has ended), Agent Worlds types a one-line notice into its terminal:
+"[Agent Worlds] A new message from Claude Code 1a2b3c4d…: call the aw_inbox tool". The message
+itself only travels through the tool, never through the terminal. A session that is mid-turn gets
+the notice when its turn ends. Every message shows in both sessions' recent steps.
+
+Two sessions can trade 12 messages without a prompt from you. After that, sending is refused and
+the agent is told to ask you. Any prompt you type into either session starts the count again.
+
+How it connects: each CLI starts `bin/aw-mcp`, a small stdio bridge like `aw-hook`. It forwards
+the agent's MCP calls to `/mcp` with the token and the tmux pane it runs in, which tells the server
+who is speaking. It is set up only for the sessions Agent Worlds starts:
+
+- Claude: `--mcp-config <home>/claude-mcp.json`, with the tools allowed in `<home>/hooks.json`.
+- Codex: `-c mcp_servers.aw.*` overrides.
+- Qwen: the system settings file Agent Worlds already writes for it.
+- Kimi: an `mcp.json` in its own home, holding your servers plus `aw`.
+
+The mailbox tools run without asking for permission, because they only talk to Agent Worlds.
+
 ## Requirements
 
 - Node.js 24 or newer (the server is TypeScript run directly by Node; there is no build step)
