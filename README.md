@@ -230,6 +230,7 @@ Every session Agent Worlds starts, whichever agent runs it, gets three MCP tools
 - `aw_agents` lists the other sessions: id, agent, repo, branch, task and state.
 - `aw_send` sends one of them a message.
 - `aw_inbox` reads the messages sent to this session.
+- `aw_handoff` ends this session's step of a run (see Runs).
 
 So you can tell Claude "ask the Codex session to review your plan". As soon as the recipient is free
 (at its prompt, or its turn has ended), Agent Worlds types a one-line notice into its terminal:
@@ -250,6 +251,34 @@ who is speaking. It is set up only for the sessions Agent Worlds starts:
 - Kimi: an `mcp.json` in its own home, holding your servers plus `aw`.
 
 The mailbox tools run without asking for permission, because they only talk to Agent Worlds.
+
+## Runs: one task, several agents
+
+In New session, tick **Run it through steps, each on its own agent**. The task then goes through
+steps, each one a session on the agent you pick, all in the same folder and branch:
+
+| Step | What its agent is told |
+|---|---|
+| Plan | write the plan to `.aw/run-<id>/plan.md`, no code changes |
+| Review plan | review the plan against the code, write `plan-review.md` (APPROVED or CHANGES), fix the plan |
+| Build | implement the plan, run the tests, commit |
+| Review code | review the commits against the plan, fix real bugs, write `code-review.md` |
+
+The default is Plan (your default agent), then Review plan (another installed agent), then Build,
+then Review code. You can change, remove or add steps (up to 8).
+
+- **How a step ends.** Its agent calls the `aw_handoff` tool with a summary. Agent Worlds then
+  writes a handoff (the same one "Continue in" writes) and starts the next step, whose first message
+  names the handoff and repeats the summary.
+- **Checkpoints.** A step marked **Check** waits for you: the run shows under Needs you with
+  **Start <next step>** and **Stop run**.
+- **A step that doesn't hand off.** If a step's turn ends without a handoff (or its session ends),
+  the run waits for you the same way. You can talk to the agent, or move on.
+- **Progress.** The panel of any step's session shows the whole run. Click a step to open its session.
+- **Files stay out of git.** The step files live in `.aw/`, which Agent Worlds adds to the repo's
+  `.git/info/exclude`.
+
+Runs are kept in memory: a server restart forgets them, but their sessions keep running in tmux.
 
 ## Requirements
 

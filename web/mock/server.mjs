@@ -153,6 +153,7 @@ function tick() {
 if (!DEMO && !process.env.MOCK_NOTICK) setInterval(tick, 9000)
 
 // ---- http ----
+const runs = new Map()
 const readBody = (req) => new Promise((res) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => { try { res(JSON.parse(d || '{}')) } catch { res({}) } }) })
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' }
 const server = http.createServer(async (req, res) => {
@@ -192,6 +193,30 @@ const server = http.createServer(async (req, res) => {
     sessions.set(sid, { ...s, id: sid }); upsert(sessions.get(sid))
     setTimeout(() => { sessions.delete(sid); broadcast({ type: 'session-removed', id: sid }); sessions.set(id, { ...s, state: 'working', now: 'Working' }); upsert(sessions.get(id)) }, 2500)
     return json(201, { id, tmuxSession: s.tmux.session })
+  }
+  // Runs: the first step starts as a session and hands off at once, so its checkpoint shows under Needs you.
+  if (req.method === 'POST' && url.pathname === '/api/runs') {
+    const b = await readBody(req)
+    console.log('run', JSON.stringify(b))
+    if (!b.task) return json(400, { error: 'task must be a non-empty string up to 10000 chars' })
+    const id = `run${runs.size + 1}`
+    const sid = `repo-run-${sessions.size}`
+    const s = mkSession(sid, b.worldId, { state: 'done', now: 'Done', repoName: path.basename(b.repo), repo: b.repo, task: `Plan: ${b.task}`, agent: b.steps[0].agent, card: { kind: 'done', summary: 'plan.md is ready', review: null } })
+    sessions.set(sid, s); upsert(s)
+    const run = { id, task: b.task, worldId: b.worldId, repo: b.repo, dir: b.repo, current: 0, status: 'waiting', note: `${b.steps[0].kind === 'plan' ? 'Plan' : 'The step'} is done: check it, then go on.`, startedAt: Date.now(),
+      steps: b.steps.map((st, i) => ({ ...st, status: i === 0 ? 'handed' : 'pending', sessionId: i === 0 ? sid : null, summary: i === 0 ? 'plan.md is ready' : null })) }
+    runs.set(id, run); broadcast({ type: 'run', run })
+    return json(201, { run })
+  }
+  const rn = url.pathname.match(/^\/api\/runs\/([^/]+)\/(next|stop)$/)
+  if (req.method === 'POST' && rn) {
+    const run = runs.get(rn[1])
+    if (!run) return json(404, { error: 'no such run' })
+    if (rn[2] === 'stop') run.status = 'stopped'
+    else if (run.current + 1 >= run.steps.length) run.status = 'done'
+    else { run.current++; run.steps[run.current].status = 'running'; run.status = 'running'; run.note = null }
+    broadcast({ type: 'run', run })
+    return json(200, { run })
   }
   const cm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/continue$/)
   if (req.method === 'POST' && cm) {
@@ -287,7 +312,7 @@ server.on('upgrade', (req, socket) => {
     socket.on('close', () => wsClients.delete(socket))
     socket.on('error', () => wsClients.delete(socket))
     onFrames(socket, () => {})
-    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()], unmanaged })))
+    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()], unmanaged, runs: [...runs.values()] })))
     return
   }
   // /pty: echo terminal (imitates the Claude prompt with a slash-command menu; MOCK_ECHO=1 for a plain echo)

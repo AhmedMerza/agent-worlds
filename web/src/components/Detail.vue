@@ -2,13 +2,15 @@
 import { copyText } from '../clipboard'
 import { computed } from 'vue'
 import { stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
-import { selected, groups, focusTerminal, askClaude, showToast, ui, state } from '../store'
+import { selected, groups, focusTerminal, askClaude, showToast, ui, state, runOf } from '../store'
 import ResumeButton from './ResumeButton.vue'
 import ContinueIn from './ContinueIn.vue'
+import RunCard from './RunCard.vue'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
 const touch = isTouch()
+const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value.id) : null))
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
 
 const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))
@@ -36,6 +38,7 @@ async function copyAttach() {
       <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
       <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p class="path" :title="s.cwd">{{ s.cwd }}</p>
+      <RunCard v-if="run" :run="run.run" :here="run.step" />
       <p v-if="s.task" class="now"><span class="lbl">Task (first prompt)</span>{{ s.task }}</p>
       <p v-if="s.lastPrompt && s.lastPrompt !== s.task" class="now"><span class="lbl">Last message you sent</span>{{ s.lastPrompt }}</p>
       <p class="now"><span class="lbl">Now</span>{{ nowText(s.now) }}</p>

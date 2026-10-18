@@ -2,9 +2,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import type { Session, Question, Card } from '../types'
 import { fmtWait, permissionAsk, permissionWho, permissionDetail, waitMinutes, buildAnswers, scopeAvailability, showLearnNudge, cardLive, inboxOrder, agentName } from '../logic'
-import { state, needsYou, groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
+import { state, needsYou, runsNeedingYou, groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
 import ContinueIn from './ContinueIn.vue'
+import RunCard from './RunCard.vue'
 
 const cardKey = (c: Card) => (c.kind === 'permission' || c.kind === 'question' ? c.requestId : c.kind)
 const keyOf = (s: Session) => s.id + ':' + cardKey(s.card!)
@@ -70,8 +71,9 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
 
 <template>
   <section class="panel" aria-label="Needs you" @mouseenter="hover = true" @mouseleave="hover = false">
-    <h3>Needs you <span class="count">{{ needsYou.length }}</span><span class="hint">permissions first, then oldest</span></h3>
-    <p v-if="!needsYou.length" class="empty">Nothing needs you. Every session is working or idle.</p>
+    <h3>Needs you <span class="count">{{ needsYou.length + runsNeedingYou.length }}</span><span class="hint">permissions first, then oldest</span></h3>
+    <div v-if="runsNeedingYou.length" class="cards"><RunCard v-for="r in runsNeedingYou" :key="r.id" :run="r" /></div>
+    <p v-if="!needsYou.length && !runsNeedingYou.length" class="empty">Nothing needs you. Every session is working or idle.</p>
     <TransitionGroup name="card" tag="div" class="cards">
     <article v-for="{ s, c, k } in items" :key="k" :class="['card', { current: state.selectedId === s.id, fresh: fresh.includes(k) }]" :style="{ '--tint': world(s)?.color ?? '#8a92a0' }">
       <div class="who">

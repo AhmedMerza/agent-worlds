@@ -22,6 +22,7 @@ import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
 import { handleMcp, type Peer } from './mcp.ts';
+import { newRun, stepPrompt, excludeRunFiles, isStepKind, STEP_KINDS, type Run } from './runs.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -146,8 +147,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
   const mailbox = new Mailbox();
+  const runs = new Map<string, Run>();
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); }
+    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); runSessionGone(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -161,6 +163,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       insights?.onEvent(s, ev);
       // a prompt you typed (not our mail notice) lets its conversations with other sessions go on
       if (ev === 'UserPromptSubmit' && !s.lastPrompt?.startsWith(MAIL_NOTICE)) mailbox.prompted(s.id);
+      runEvent(s, ev);
     },
     ...opts.deps,
   }, broadcast);
@@ -385,7 +388,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = await readBody(req);
       const pane = req.headers['x-aw-pane'], pty = req.headers['x-aw-pty'];
       const self = [...store.sessions.values()].find((s) => (typeof pane === 'string' && pane && s.tmux?.pane === pane) || (typeof pty === 'string' && pty && s.direct === pty));
-      const out = handleMcp(body, mcpContext(self?.id ?? null));
+      const out = await handleMcp(body, mcpContext(self?.id ?? null));
       if (out === null) { res.writeHead(202); return res.end(); }
       return send(res, 200, out);
     }
@@ -424,7 +427,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       setTimeout(opts.onRestart, 200);
       return;
     }
-    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), unmanaged });
+    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), unmanaged, runs: [...runs.values()] });
     if (method === 'GET' && url.pathname === '/api/history') {
       const n = Number(url.searchParams.get('limit') ?? 50);
       const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
@@ -544,6 +547,41 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
 
+    if (method === 'POST' && url.pathname === '/api/runs') {
+      const b = await readBody(req);
+      const world = cfg.worlds.find((w) => w.id === b.worldId);
+      if (!world) return send(res, 400, { error: 'unknown worldId' });
+      if (typeof b.repo !== 'string' || !world.repos.includes(b.repo)) return send(res, 400, { error: `repo is not one of the ${world.name} world's repos` });
+      if (typeof b.task !== 'string' || !b.task.trim() || b.task.length > 10000) return send(res, 400, { error: 'task must be a non-empty string up to 10000 chars' });
+      if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
+      const steps = Array.isArray(b.steps) ? b.steps as Record<string, unknown>[] : [];
+      if (!steps.length || steps.length > 8) return send(res, 400, { error: 'steps must list 1 to 8 steps' });
+      for (const st of steps) {
+        if (!st || !isStepKind(st.kind)) return send(res, 400, { error: `each step needs a kind: ${Object.keys(STEP_KINDS).join(', ')}` });
+        if (!isAgent(st.agent)) return send(res, 400, { error: `each step needs an agent: ${Object.keys(AGENTS).join(', ')}` });
+        if (st.agent !== 'claude' && !onPath(AGENTS[st.agent].bin)) return send(res, 422, { error: `${AGENTS[st.agent].name} is not installed (no ${AGENTS[st.agent].bin} on PATH)` });
+      }
+      const r = newRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, now: Date.now(),
+        steps: steps.map((st) => ({ kind: st.kind as never, agent: st.agent as AgentId, checkpoint: st.checkpoint === true })) });
+      runs.set(r.id, r);
+      await startStep(r, 0);
+      return r.status === 'failed' ? send(res, 422, { error: r.note, run: r }) : send(res, 201, { run: r });
+    }
+    const runm = url.pathname.match(/^\/api\/runs\/([^/]+)\/(next|stop)$/);
+    if (runm && method === 'POST') {
+      const r = runs.get(decodeURIComponent(runm[1]));
+      if (!r) return send(res, 404, { error: 'no such run' });
+      if (runm[2] === 'stop') {
+        if (r.status === 'done' || r.status === 'stopped') return send(res, 409, { error: `the run is already ${r.status}` });
+        r.status = 'stopped'; r.note = null; pushRun(r);
+        return send(res, 200, { run: r });
+      }
+      if (r.status !== 'waiting' && r.status !== 'running') return send(res, 409, { error: `the run is ${r.status}` });
+      // A checkpoint passed, or you move a step on that never handed off.
+      if (r.steps[r.current].status === 'handed') { if (r.current + 1 < r.steps.length) await startStep(r, r.current + 1); else { r.status = 'done'; pushRun(r); } }
+      else await stepOver(r, null, true);
+      return send(res, 200, { run: r });
+    }
     // Restart: a fresh claude resumes the same conversation and draws it from scratch (fixes a wrecked screen for good).
     const rm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/restart$/);
     if (rm && method === 'POST') {
@@ -662,7 +700,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
-        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged, update, tmux }));
+        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged, update, tmux, runs: [...runs.values()] }));
       });
     }
     if (url.pathname === '/pty') {
@@ -692,6 +730,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         store.push(from); store.push(hits[0]);
         return `Sent to ${label(hits[0])}. ${hits[0].state === 'working' ? 'It is working now and will be told when it is free.' : 'It is being told now.'}`;
       },
+      handoff: (summary: string) => handoff(self!, summary),
       inbox(): string {
         const got = mailbox.take(self!);
         return got.length ? got.map((m) => {
@@ -701,6 +740,66 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       },
     };
   }
+  // Runs: one task through steps on different agents (see runs.ts).
+  const pushRun = (r: Run) => broadcast({ type: 'run', run: r });
+  const stepOf = (id: string) => {
+    for (const r of runs.values()) if ((r.status === 'running' || r.status === 'waiting') && r.steps[r.current].sessionId === id) return r;
+    return null;
+  };
+  async function startStep(r: Run, i: number) {
+    const step = r.steps[i];
+    r.current = i; step.status = 'running'; r.status = 'running'; r.note = null;
+    pushRun(r);
+    try {
+      const first = r.dir === null;
+      const task = stepPrompt(r, i);
+      const c = await createSession({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+      if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
+      step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
+      await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: step.direct, dir: c.dir, task: `${STEP_KINDS[step.kind].label}: ${r.task}`, agent: step.agent });
+    } catch (e) {
+      r.status = 'failed'; r.note = `Step ${i + 1} could not start: ${(e as Error).message}`;
+    }
+    pushRun(r);
+  }
+  /** The current step is over (handed off, or you moved it on): wait at a checkpoint, or start the next. */
+  async function stepOver(r: Run, summary: string | null, force = false) {
+    const step = r.steps[r.current];
+    const s = step.sessionId ? store.sessions.get(step.sessionId) : undefined;
+    r.handoff = s ? { path: await writeHandoff(s, opts.home ?? homeDir()), summary } : r.handoff;
+    step.status = 'handed'; step.summary = summary;
+    if (r.current + 1 >= r.steps.length) { r.status = 'done'; r.note = null; return pushRun(r); }
+    if (step.checkpoint && !force) { r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} is done: check it, then go on to ${STEP_KINDS[r.steps[r.current + 1].kind].label}.`; return pushRun(r); }
+    await startStep(r, r.current + 1);
+  }
+  async function handoff(id: string, summary: string): Promise<string | Error> {
+    const r = stepOf(id);
+    if (!r || r.steps[r.current].status !== 'running') return new Error('this session is not the current step of a run, so there is nothing to hand off');
+    const step = r.steps[r.current];
+    await stepOver(r, summary);
+    return r.status === 'waiting' && r.steps[r.current] === step ? 'Handed off. The user checks your work before the next step starts; you can stop here.'
+      : r.status === 'done' ? 'Handed off: that was the last step, the run is done.' : 'Handed off: the next step has started. You can stop here.';
+  }
+  /** A step's session: link it on its first hook; a turn that ends without a handoff needs you. */
+  function runEvent(s: { id: string; state: string; tmux: { pane: string } | null; direct: string | null }, ev: string) {
+    for (const r of runs.values()) {
+      const step = r.steps[r.current];
+      if (r.status !== 'running' || step.status !== 'running') continue;
+      if (!step.sessionId && ((step.pane && s.tmux?.pane === step.pane) || (step.direct && s.direct === step.direct))) { step.sessionId = s.id; pushRun(r); }
+      if (step.sessionId === s.id && (ev === 'Stop' || ev === 'StopFailure') && (s.state === 'done' || s.state === 'error')) {
+        r.status = 'waiting'; r.note = `${STEP_KINDS[step.kind].label} ended its turn without handing off: talk to it, or go on.`;
+        pushRun(r);
+      }
+    }
+  }
+  function runSessionGone(id: string) {
+    const r = stepOf(id);
+    if (!r || r.steps[r.current].status !== 'running') return;
+    r.status = 'waiting'; r.note = `${STEP_KINDS[r.steps[r.current].kind].label}'s session ended before handing off.`;
+    r.steps[r.current].sessionId = null; // gone: a handoff can't read it
+    pushRun(r);
+  }
+
   /** Tell sessions that are free (at their prompt, or their turn ended) that mail is waiting, by typing a notice into them. */
   async function deliverMail() {
     for (const id of mailbox.waiting()) {

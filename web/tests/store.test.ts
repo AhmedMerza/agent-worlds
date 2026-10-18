@@ -1,11 +1,25 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { modeField, modeOptions } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, runsNeedingYou, runOf } from '../src/store'
+import type { Run } from '../src/types'
 import { mk, perm } from './helpers'
 
 const worlds = [{ id: 'web', name: 'Web', color: '#fff', repos: [] }]
 
 describe('applyMessage', () => {
+  it('runs: the snapshot and run messages keep them; the ones held for you and a session\'s step are found', () => {
+    const run = (id: string, status: Run['status'], sessionId: string | null): Run => ({ id, task: 't', worldId: 'web', repo: '/r', dir: '/r', current: 0, status, note: null, startedAt: 1,
+      steps: [{ kind: 'plan', agent: 'claude', checkpoint: true, status: 'handed', sessionId, summary: 's' }, { kind: 'build', agent: 'codex', checkpoint: false, status: 'pending', sessionId: null, summary: null }] })
+    applyMessage(state, { type: 'snapshot', worlds, sessions: [], runs: [run('r1', 'running', 'sa')] })
+    expect(runsNeedingYou.value).toEqual([])
+    applyMessage(state, { type: 'run', run: run('r1', 'waiting', 'sa') })
+    applyMessage(state, { type: 'run', run: run('r2', 'done', 'sb') })
+    expect(runsNeedingYou.value.map((r) => r.id)).toEqual(['r1'])
+    expect(runOf('sa')).toMatchObject({ run: { id: 'r1' }, step: 0 })
+    expect(runOf('nobody')).toBeNull()
+    applyMessage(state, { type: 'snapshot', worlds, sessions: [] })
+    expect(state.runs).toEqual({})
+  })
   it('snapshot replaces everything and selects the oldest needing you', () => {
     const st = newState()
     applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('a'), mk('b', { state: 'waiting', card: perm, waitingSince: 1 })] })

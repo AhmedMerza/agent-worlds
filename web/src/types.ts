@@ -65,13 +65,19 @@ export interface Unmanaged { pid: number; cwd: string; repo: string | null; worl
 export interface HistorySession { sessionId: string; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean }
 
 export type ServerMessage =
-  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; unmanaged?: Unmanaged[]; update?: boolean; tmux?: boolean }
+  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; unmanaged?: Unmanaged[]; update?: boolean; tmux?: boolean; runs?: Run[] }
+  | { type: 'run'; run: Run }
   | { type: 'update' }
   | { type: 'unmanaged'; unmanaged: Unmanaged[] }
   | { type: 'session'; session: Session }
   | { type: 'session-removed'; id: string }
   | { type: 'worlds'; worlds: World[] }
   | { type: 'toast'; text: string }
+
+export type StepKind = 'plan' | 'review-plan' | 'build' | 'review-code'
+export interface RunStep { kind: StepKind; agent: string; checkpoint: boolean; status: 'pending' | 'running' | 'handed'; sessionId: string | null; summary: string | null }
+/** One task carried through steps, each a session on its own agent (POST /api/runs). waiting = a checkpoint, or a step that stopped without handing off. */
+export interface Run { id: string; task: string; worldId: string; repo: string; dir: string | null; steps: RunStep[]; current: number; status: 'running' | 'waiting' | 'done' | 'stopped' | 'failed'; note: string | null; startedAt: number }
 
 export interface RoomGroup { world: World; sessions: Session[] }
 
