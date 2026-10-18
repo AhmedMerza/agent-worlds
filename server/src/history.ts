@@ -1,4 +1,6 @@
 import { readdirSync, statSync, readFileSync, readlinkSync, existsSync } from 'node:fs';
+import { glob, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { readHead, readTail, userPrompt } from './transcript.ts';
 
@@ -60,7 +62,7 @@ const oneLine = (s: string, max = 200) => {
   return l.length > max ? l.slice(0, max - 1) + '…' : l;
 };
 
-export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: string | null; lastActivity: number };
+export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: string | null; lastActivity: number; agent?: 'kimi' };
 
 /** A folder that belongs to `repo`: the repo itself, a folder inside it, or one of its `<repo>-worktrees`. */
 export const inRepo = (cwd: string, repo: string) => cwd === repo || cwd.startsWith(repo + '/') || cwd.startsWith(repo + '-worktrees/');
@@ -80,6 +82,54 @@ export async function history(dir: string, limit: number, repo?: string): Promis
     for (const h of await Promise.all(files.slice(i, i + 50).map(read))) if (h.cwd && inRepo(h.cwd, repo) && out.length < limit) out.push(h);
   }
   return out;
+}
+
+/** Kimi Code's homes: yours, and the one Agent Worlds starts it with (whose sessions folder links to yours). */
+const kimiHomes = (home: string) => [process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code'), join(home, 'kimi-home')];
+
+/** A Kimi session's folder, <kimi home>/sessions/wd_*\/session_<uuid>. Its hooks name it `session_<uuid>`. */
+export async function kimiSessionDir(id: string, home: string): Promise<string | null> {
+  const dir = (id.startsWith('session_') ? id : `session_${id}`).replace(/[*?[\]\\{}]/g, (c) => `\\${c}`); // the id is data, not a pattern
+  for (const base of kimiHomes(home)) {
+    if (!existsSync(base)) continue;
+    try { for await (const f of glob(`sessions/wd_*/${dir}`, { cwd: base })) return join(base, f); } catch { /* unreadable home */ }
+  }
+  return null;
+}
+
+/** A Kimi session's folder and last change, from its state.json; null when unreadable or archived. */
+export async function kimiState(dir: string): Promise<{ cwd: string; updatedAt: number } | null> {
+  try {
+    const s = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
+    return typeof s.cwd === 'string' && !s.archived ? { cwd: s.cwd, updatedAt: Number(s.updatedAt) || 0 } : null;
+  } catch { return null; }
+}
+
+/** The last thing you typed to a Kimi session: its last `turn.prompt` from you in the wire log. */
+async function kimiLastPrompt(dir: string): Promise<string | null> {
+  try {
+    const e = (await readTail(join(dir, 'agents', 'main', 'wire.jsonl'), 64 * 1024)).findLast((x) => x.type === 'turn.prompt' && x.origin?.kind === 'user');
+    const text = Array.isArray(e?.input) ? e.input.map((p: { text?: unknown }) => (typeof p?.text === 'string' ? p.text : '')).join(' ').trim() : '';
+    return text ? oneLine(text) : null;
+  } catch { return null; }
+}
+
+/** Most recent Kimi sessions, newest first, like history(); `repo` keeps that repo's. */
+export async function kimiHistory(home: string, limit: number, repo?: string): Promise<HistoryItem[]> {
+  const found = new Map<string, { dir: string; cwd: string; updatedAt: number }>();
+  for (const base of kimiHomes(home)) {
+    if (!existsSync(base)) continue;
+    try {
+      for await (const f of glob('sessions/wd_*/session_*', { cwd: base })) {
+        const id = basename(f);
+        if (found.has(id) || !SESSION_ID_RE.test(id)) continue;
+        const st = await kimiState(join(base, f));
+        if (st && (!repo || inRepo(st.cwd, repo))) found.set(id, { dir: join(base, f), ...st });
+      }
+    } catch { /* unreadable home */ }
+  }
+  const newest = [...found].sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, limit);
+  return Promise.all(newest.map(async ([sessionId, s]) => ({ sessionId, cwd: s.cwd, lastPrompt: await kimiLastPrompt(s.dir), lastActivity: s.updatedAt, agent: 'kimi' as const })));
 }
 
 /** A transcript's folder and the last thing the user asked, from its tail (and its head when the tail has neither). */
