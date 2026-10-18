@@ -344,3 +344,48 @@ test('restart: resumes the same session in its pane with its own flags; asks bef
     assert.equal(calls.length, 1);
   } finally { await app.close(); }
 });
+
+test('kimi: recent sessions list Kimi sessions with their last prompt; resume starts kimi --session in their folder', async () => {
+  const root = tmp();
+  const repo = join(root, 'repo-k');
+  mkdirSync(repo);
+  const id = 'session_dfcc5aab-c009-48c6-98c6-92c3f528d709';
+  // Agent Worlds' Kimi home (its sessions folder is yours, linked)
+  const sdir = join(root, 'kimi-home', 'sessions', 'wd_repo-k_abc', id);
+  mkdirSync(join(sdir, 'agents', 'main'), { recursive: true });
+  writeFileSync(join(sdir, 'state.json'), JSON.stringify({ id, cwd: repo, updatedAt: Date.now(), archived: false }));
+  writeFileSync(join(sdir, 'agents', 'main', 'wire.jsonl'), [
+    { type: 'turn.prompt', input: [{ type: 'text', text: 'walk the personas' }], origin: { kind: 'user' } },
+    { type: 'turn.prompt', input: [{ type: 'text', text: 'mail notice' }], origin: { kind: 'system' } },
+    { type: 'agent.message.appended' },
+  ].map(line).join(''));
+  const old = join(root, 'kimi-home', 'sessions', 'wd_repo-k_abc', 'session_aaaaaaaa-0000-4000-8000-000000000000');
+  mkdirSync(old);
+  writeFileSync(join(old, 'state.json'), JSON.stringify({ cwd: repo, updatedAt: 1, archived: true }));
+  const calls: any[] = [];
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: join(root, 'none') }), port: 0 };
+  const app = startServer(cfg, 'i'.repeat(64), {
+    home: root,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
+    createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-k-1', dir: o.repo, branch: null, pane: '%40' }; },
+  });
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  const H = { 'x-aw-token': 'i'.repeat(64), 'content-type': 'application/json' };
+  const resume = async (b: object) => { const r = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify(b) }); return { status: r.status, body: await r.json() as any }; };
+  try {
+    const items = ((await (await fetch(`${base}/api/history?repo=${encodeURIComponent(repo)}`, { headers: H })).json()) as any).sessions;
+    assert.deepEqual(items.map((h: any) => [h.sessionId, h.agent, h.lastPrompt, h.worldId]), [[id, 'kimi', 'walk the personas', 'web']], 'archived sessions are left out');
+    assert.equal((await resume({ sessionId: id, agent: 'gemini' })).status, 400);
+    assert.equal((await resume({ sessionId: id, agent: 'kimi', permissionMode: 'plan' })).status, 400, 'modes are Claude-only');
+    assert.equal((await resume({ sessionId: 'session_nope0000', agent: 'kimi' })).status, 404);
+    assert.equal((await resume({ sessionId: id, agent: 'kimi' })).status, 201);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].agent, 'kimi');
+    assert.equal(calls[0].resume, id);
+    assert.equal(calls[0].repo, repo);
+    assert.equal(app.store.sessions.get('starting:aw-repo-k-1')?.agent, 'kimi', 'its starting card is a Kimi one');
+    await app.store.handle({ hook_event_name: 'SessionStart', session_id: id, cwd: repo }, '%40', undefined, null, 'kimi');
+    assert.equal((await resume({ sessionId: id, agent: 'kimi' })).status, 409, 'already running here');
+  } finally { await app.close(); }
+});

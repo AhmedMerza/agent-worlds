@@ -61,7 +61,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   if (agent === 'kimi') {
     // Kimi takes no starting prompt (and drops keys typed before it draws): createSession turns the
     // task into a `kimi -p` + `kimi -c` chain; here the task only names the session.
-    return { args: [], env: o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {} };
+    return { args: o.resume ? ['--session', o.resume] : [], env: o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {} };
   }
   if (agent === 'qwen') {
     // `-i` runs the task and stays interactive (a bare prompt would run once and exit).

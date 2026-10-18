@@ -3,7 +3,8 @@ import { ref } from 'vue'
 import { resumeSession } from '../store'
 import { modeField, type ModeChoice } from '../logic'
 
-const props = defineProps<{ sessionId: string; label?: string; primary?: boolean; mode?: ModeChoice }>()
+/** `agent`: a Kimi session (permission modes are Claude-only). */
+const props = defineProps<{ sessionId: string; label?: string; primary?: boolean; mode?: ModeChoice; agent?: 'kimi' }>()
 const emit = defineEmits<{ started: [] }>()
 const busy = ref(false)
 const error = ref('')
@@ -13,7 +14,7 @@ const running = ref<{ pid: number | null } | null>(null)
 async function go(stop: boolean) {
   if (busy.value) return
   busy.value = true; error.value = ''
-  const r = await resumeSession(props.sessionId, stop, modeField(props.mode ?? 'claude').permissionMode)
+  const r = await resumeSession(props.sessionId, stop, props.agent ? undefined : modeField(props.mode ?? 'claude').permissionMode, props.agent)
   busy.value = false
   if (r.kind === 'ok') { running.value = null; emit('started') }
   else if (r.kind === 'running') running.value = { pid: r.pid }

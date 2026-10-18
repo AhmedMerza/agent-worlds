@@ -1,12 +1,10 @@
 import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { glob } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from './store.ts';
 import { AGENTS } from './agents.ts';
 import { readTail, excerpt } from './transcript.ts';
+import { kimiSessionDir } from './history.ts';
 
 /** Long handoffs keep their start and their most recent part. */
 const HEAD = 4096;
@@ -16,19 +14,6 @@ function run(cmd: string, args: string[], cwd: string): Promise<string | null> {
   return new Promise((done) => {
     execFile(cmd, args, { cwd, timeout: 5000 }, (err, stdout) => done(err ? null : stdout.toString()));
   });
-}
-
-/** Kimi's wire log for `id`: <kimi home>/sessions/wd_* /session_<id>/agents/main/wire.jsonl. */
-async function kimiWireLog(id: string, home: string): Promise<string | null> {
-  const safe = id.replace(/[*?[\]\\]/g, (c) => `\\${c}`); // the id is data, not a pattern
-  const real = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
-  for (const base of [real, join(home, 'kimi-home')]) {
-    if (!existsSync(base)) continue;
-    try {
-      for await (const f of glob(`sessions/wd_*/session_${safe}/agents/main/wire.jsonl`, { cwd: base })) return join(base, f);
-    } catch { /* unreadable home */ }
-  }
-  return null;
 }
 
 /**
@@ -71,11 +56,12 @@ export async function writeHandoff(session: Session, home: string): Promise<stri
       if (text.trim()) parts.push('', '## Conversation (most recent part)', '', '```', text.trimEnd(), '```');
     } catch { /* transcript gone: the steps above still carry the story */ }
   } else if (session.agent === 'kimi') {
-    const wire = session.id.startsWith('starting:') ? null : await kimiWireLog(session.id, home);
+    const kdir = session.id.startsWith('starting:') ? null : await kimiSessionDir(session.id, home);
+    const wire = kdir && join(kdir, 'agents', 'main', 'wire.jsonl');
     parts.push('', '## Previous transcript', '',
       wire
         ? `The ${AGENTS.kimi.name} session's wire log is at ${wire}. Read the relevant parts yourself.`
-        : `The ${AGENTS.kimi.name} session's wire log was not found; it lives under ~/.kimi-code/sessions/wd_*/session_${session.id}/agents/main/wire.jsonl. Look for it there if you need the conversation.`);
+        : `The ${AGENTS.kimi.name} session's wire log was not found; it lives under ~/.kimi-code/sessions/wd_*/${session.id.startsWith('session_') ? '' : 'session_'}${session.id}/agents/main/wire.jsonl. Look for it there if you need the conversation.`);
   } else if (session.logPath) {
     parts.push('', '## Previous transcript', '', `The ${AGENTS[session.agent].name} session's transcript is at ${session.logPath}. Read the relevant parts yourself.`);
   }
