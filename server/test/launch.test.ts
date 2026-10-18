@@ -18,10 +18,14 @@ test('writeHooksFile writes the same block as `hooks --print` plus the mailbox, 
   const home = tmp();
   const f = writeHooksFile(home);
   assert.equal(f, join(home, 'hooks.json'));
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw'] } });
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw__aw_agents', 'mcp__aw__aw_send', 'mcp__aw__aw_inbox'] } });
   assert.equal(statSync(f).mode & 0o777, 0o600);
+  const mcp = JSON.parse(readFileSync(join(home, 'claude-mcp.json'), 'utf8')).mcpServers.aw;
+  assert.match(mcp.command, /\/bin\/aw-mcp$/);
+  assert.deepEqual(mcp.args, ['claude']);
+  assert.equal(statSync(join(home, 'claude-mcp.json')).mode & 0o777, 0o600);
   writeHooksFile(home); // refresh in place
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw'] } });
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), { ...hooksBlock(), permissions: { allow: ['mcp__aw__aw_agents', 'mcp__aw__aw_send', 'mcp__aw__aw_inbox'] } });
 });
 
 test('createSession launches claude with --settings <home>/hooks.json and AGENT_WORLDS_HOME; task optional', async () => {

@@ -17,7 +17,7 @@ import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installClou
 import { history, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, midTurn } from './transcript.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
@@ -146,10 +146,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
   const mailbox = new Mailbox();
-  /** Sessions that reached /mcp: only they have the mailbox tools (a plain `claude` reporting through global hooks has not). */
-  const mailboxed = new Set<string>();
+  /**
+   * Sessions that reached /mcp: only they have the mailbox tools (a plain `claude` reporting through global hooks has not).
+   * Kept in <home>/mailboxed.json: a CLI connects to its MCP servers once, at start, so after a server restart
+   * nothing would tell us again. Session ids survive the restart.
+   */
+  const mailboxedFile = join(opts.home ?? homeDir(), 'mailboxed.json');
+  const mailboxed = new Set<string>((() => { try { const v = JSON.parse(readFileSync(mailboxedFile, 'utf8')); return Array.isArray(v) ? v : []; } catch { return []; } })());
+  const saveMailboxed = () => {
+    try { writeFileSync(mailboxedFile + '.tmp', JSON.stringify([...mailboxed]), { mode: 0o600 }); renameSync(mailboxedFile + '.tmp', mailboxedFile); }
+    catch (e) { console.error('[agent-worlds] cannot save mailboxed.json', (e as Error).message); }
+  };
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); mailboxed.delete(msg.id); }
+    if (msg.type === 'session-removed' && msg.id) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -159,10 +168,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     holdMs: opts.holdMs ?? HOLD_MS,
     stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
-    onEvent: (s, ev) => {
+    onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
-      // a prompt you typed (not our mail notice) lets its conversations with other sessions go on
-      if (ev === 'UserPromptSubmit' && !s.lastPrompt?.startsWith(MAIL_NOTICE)) mailbox.prompted(s.id);
+      // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
+      // text, not lastPrompt: lastPrompt keeps the previous prompt when a CLI sends none. Kimi sends content blocks.
+      const text = typeof p.prompt === 'string' ? p.prompt : Array.isArray(p.prompt) ? p.prompt.map((b: { text?: unknown }) => (typeof b?.text === 'string' ? b.text : '')).join('') : '';
+      if (ev === 'UserPromptSubmit' && text.trim() && !text.startsWith(MAIL_NOTICE)) mailbox.prompted(s.id);
     },
     ...opts.deps,
   }, broadcast);
@@ -387,7 +398,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = await readBody(req);
       const pane = req.headers['x-aw-pane'], pty = req.headers['x-aw-pty'];
       const self = [...store.sessions.values()].find((s) => (typeof pane === 'string' && pane && s.tmux?.pane === pane) || (typeof pty === 'string' && pty && s.direct === pty));
-      if (self) mailboxed.add(self.id);
+      if (self && !mailboxed.has(self.id)) { mailboxed.add(self.id); saveMailboxed(); }
       const out = handleMcp(body, mcpContext(self?.id ?? null));
       if (out === null) { res.writeHead(202); return res.end(); }
       return send(res, 200, out);
@@ -705,13 +716,21 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     };
   }
   /** Tell sessions that are free (at their prompt, or their turn ended) that mail is waiting, by typing a notice into them. */
+  // One pass at a time: each notice waits ENTER_DELAY_MS, so a pass can outlast the 2 s tick and type the same notice twice.
+  let delivering = false;
   async function deliverMail() {
+    if (delivering) return;
+    delivering = true;
+    try { await deliverPass(); } finally { delivering = false; }
+  }
+  async function deliverPass() {
     for (const id of mailbox.waiting()) {
       const s = store.sessions.get(id);
-      if (!s) { mailbox.forget(id); continue; }
+      if (!s) { mailbox.forget(id); if (mailboxed.delete(id)) saveMailboxed(); continue; }
       if (!['idle', 'done', 'error'].includes(s.state) || s.pending.length) continue;
       const mail = mailbox.unnotified(id);
-      const from = [...new Set(mail.map((m) => store.sessions.get(m.from)).filter((x) => !!x).map(label))].join(', ') || 'another session';
+      // Agent and id only: a repo folder or branch name could carry a newline (typed as Enter) or text aimed at the agent.
+      const from = [...new Set(mail.map((m) => store.sessions.get(m.from)).filter((x) => !!x).map((x) => `${AGENTS[x.agent].name} ${x.id.slice(0, 8).replace(/[^\w-]/g, '')}`))].join(', ') || 'another session';
       const notice = `${MAIL_NOTICE} ${mail.length === 1 ? 'A new message' : `${mail.length} new messages`} from ${from}: call the aw_inbox tool to read, and aw_send to reply.`;
       const typed = s.direct ? direct.type(s.direct, notice) : s.tmux ? await (opts.typeInto ?? sys.typeInto)(s.tmux.pane, notice) : false;
       if (typed) for (const m of mail) m.notified = true;

@@ -69,8 +69,8 @@ export function keptFlags(argv: string[]): string[] {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') break;
-    if (a === '--dangerously-skip-permissions' || /^--(settings|permission-mode|model)=/.test(a)) out.push(a);
-    else if (/^--(settings|permission-mode|model)$/.test(a) && i + 1 < argv.length) out.push(a, argv[++i]);
+    if (a === '--dangerously-skip-permissions' || /^--(settings|permission-mode|model|mcp-config)=/.test(a)) out.push(a);
+    else if (/^--(settings|permission-mode|model|mcp-config)$/.test(a) && i + 1 < argv.length) out.push(a, argv[++i]);
   }
   return out;
 }

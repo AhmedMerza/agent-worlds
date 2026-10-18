@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,14 +13,17 @@ import { ev } from './fixtures.ts';
 
 const TOKEN = 'b'.repeat(64);
 const typed: [string, string][] = [];
+let typeOk = true;
 let app: ReturnType<typeof startServer>;
 let base = '';
+const home = mkdtempSync(join(tmpdir(), 'aw-mail-home-'));
 
 before(async () => {
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
   app = startServer(cfg, TOKEN, {
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
-    typeInto: async (pane, text) => { typed.push([pane, text]); return true; },
+    home,
+    typeInto: async (pane, text) => { typed.push([pane, text]); return typeOk; },
   });
   await app.listen();
   base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
@@ -76,7 +79,8 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
   await app.deliverMail();
   assert.equal(typed.length, 1);
   assert.equal(typed[0][0], '%2');
-  assert.match(typed[0][1], /^\[Agent Worlds\] A new message from Claude Code aaaa1111 .*aw_inbox/);
+  assert.match(typed[0][1], /^\[Agent Worlds\] A new message from Claude Code aaaa1111: call the aw_inbox tool/);
+  assert.doesNotMatch(typed[0][1], /repo|main/, 'no repo or branch name is typed into the terminal');
   await app.deliverMail();
   assert.equal(typed.length, 1, 'told once');
 
@@ -121,4 +125,45 @@ test('aw-mcp: forwards each line with token, pane and agent; prints replies; err
   writeFileSync(join(home, 'endpoint'), 'http://127.0.0.1:9\n');
   const down = await bridge({ AGENT_WORLDS_HOME: home }, '{"jsonrpc":"2.0","id":"x-7","method":"tools/list"}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
   assert.equal(down, '{"jsonrpc":"2.0","id":"x-7","error":{"code":-32000,"message":"Agent Worlds is not running"}}\n');
+});
+
+test('/mcp: argument errors are tool errors, a failed notice is retried, a removed session is forgotten', async () => {
+  const D = 'dddd4444-0000';
+  await hook(ev.start, D, '%4');
+  await rpc('%4', 'initialize', {});
+  assert.equal((await tool('%1', 'nope')).isError, true);
+  assert.equal((await tool('%1', 'aw_send', { to: 'dddd' })).isError, true);
+  assert.equal((await tool('%1', 'aw_send', { to: 'dddd', text: '   ' })).isError, true);
+  assert.equal((await tool('%1', 'aw_send', { to: 'dddd', text: 'x'.repeat(10001) })).isError, true);
+  assert.equal((await tool('%1', 'aw_send', { to: 'aaaa', text: 'me?' })).isError, true, 'not to yourself');
+  await hook({ ...ev.prompt, prompt: 'go on' }, A, '%1'); // a fresh streak
+  assert.equal((await tool('%1', 'aw_send', { to: 'dddd', text: 'x'.repeat(10000) })).isError, undefined);
+  const toD = () => typed.filter(([pane]) => pane === '%4').length;
+  typeOk = false;
+  await app.deliverMail();
+  typeOk = true;
+  await app.deliverMail();
+  assert.equal(toD(), 2, 'typed again after a failed attempt');
+  await tool('%1', 'aw_send', { to: 'dddd', text: 'unread when it goes' });
+  await hook(ev.end, D, '%4');
+  assert.equal((await tool('%1', 'aw_send', { to: 'dddd', text: 'gone' })).isError, true);
+  assert.ok(!JSON.parse(readFileSync(join(home, 'mailboxed.json'), 'utf8')).includes(D));
+});
+
+test('mailboxed.json brings the mailbox back after a server restart', async () => {
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
+  const again = startServer(cfg, TOKEN, {
+    home,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    typeInto: async () => true,
+  });
+  await again.listen();
+  try {
+    const b2 = `http://127.0.0.1:${(again.server.address() as { port: number }).port}`;
+    const h2 = (body: object, id: string, pane: string) => fetch(`${b2}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id }) });
+    await h2(ev.prompt, A, '%1');
+    await h2(ev.prompt, B, '%2'); // B never calls /mcp again: its CLI connected before the restart
+    const r = await fetch(`${b2}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': '%1' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'aw_agents', arguments: {} } }) });
+    assert.ok(JSON.parse(((await r.json()) as any).result.content[0].text).some((p: any) => p.id === B));
+  } finally { await again.close(); }
 });
