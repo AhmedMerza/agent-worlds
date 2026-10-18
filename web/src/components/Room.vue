@@ -18,7 +18,7 @@ const real = computed(() => split.value.real)
 const ghostsOpen = ref(false)
 /** The scene draws every real session but only a few ghosts; the rest wait in the chip. */
 const drawn = computed(() => drawnSessions(props.group.sessions))
-const steps = computed(() => stepTags(Object.values(state.runs)))
+const steps = computed(() => stepTags(Object.values(state.runs), Object.values(state.sessions)))
 const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: drawn.value.sessions }))
 const count = (st: (s: string) => boolean) => real.value.filter((s) => st(s.state)).length
 const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))

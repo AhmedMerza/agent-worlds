@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Run } from '../types'
-import { STEP_LABEL, agentName } from '../logic'
+import { STEP_LABEL, agentName, isStepOf } from '../logic'
 import { state, runNext, runStop, select, showToast } from '../store'
 import { copyText } from '../clipboard'
 
@@ -22,8 +22,7 @@ async function act(f: (id: string) => ReturnType<typeof runNext>) {
   if (!res.ok) showToast(res.error)
 }
 /** Sessions its steps started that are still open: stopping can end them too. */
-const sessions = computed(() => Object.values(state.sessions).filter((s) => [...r.value.steps, ...(r.value.earlier ?? [])].some((st) => st.sessionId === s.id
-  || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct))))
+const sessions = computed(() => Object.values(state.sessions).filter((s) => [...r.value.steps, ...(r.value.earlier ?? [])].some((st) => isStepOf(st, s))))
 const stopAndEnd = (id: string) => runStop(id, true)
 const open = (id: string | null) => { if (id && state.sessions[id]) select(id) }
 /** The last step that handed off, and where the steps leave their files (plan.md, reviews). */
