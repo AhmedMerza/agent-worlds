@@ -15,12 +15,16 @@ const nextLabel = computed(() => {
   return i < r.value.steps.length ? `Start ${STEP_LABEL[r.value.steps[i].kind]}` : 'Finish the run'
 })
 const STATUS: Record<Run['status'], string> = { running: 'running', waiting: 'waiting for you', done: 'done', stopped: 'stopped', failed: 'failed' }
-async function act(f: typeof runNext) {
+async function act(f: (id: string) => ReturnType<typeof runNext>) {
   busy.value = true
   const res = await f(r.value.id)
   busy.value = false
   if (!res.ok) showToast(res.error)
 }
+/** Sessions its steps started that are still open: stopping can end them too. */
+const sessions = computed(() => Object.values(state.sessions).filter((s) => r.value.steps.some((st) => st.sessionId === s.id
+  || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct))))
+const stopAndEnd = (id: string) => runStop(id, true)
 const open = (id: string | null) => { if (id && state.sessions[id]) select(id) }
 /** The last step that handed off, and where the steps leave their files (plan.md, reviews). */
 const last = computed(() => r.value.steps.filter((s) => s.status === 'handed').at(-1) ?? null)
@@ -49,6 +53,10 @@ async function copyFiles() { if (files.value) showToast(await copyText(files.val
       <button v-if="r.status === 'waiting'" class="btn primary" :disabled="busy" @click="act(runNext)">{{ nextLabel }}</button>
       <button v-else class="btn" :disabled="busy" title="Move on without waiting for this step to hand off" @click="act(runNext)">Skip to next step</button>
       <button class="btn" :disabled="busy" @click="act(runStop)">Stop run</button>
+      <button v-if="sessions.length" class="btn" :disabled="busy" title="Stop the run, quit its agents and close their terminals" @click="act(stopAndEnd)">Stop and end its {{ sessions.length === 1 ? 'session' : `${sessions.length} sessions` }}</button>
+    </div>
+    <div v-else-if="sessions.length && r.status !== 'failed'" class="actions">
+      <button class="btn" :disabled="busy" title="Quit its agents and close their terminals" @click="act(stopAndEnd)">End its {{ sessions.length === 1 ? 'session' : `${sessions.length} sessions` }}</button>
     </div>
   </article>
 </template>

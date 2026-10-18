@@ -11,6 +11,7 @@ import { ev } from './fixtures.ts';
 
 const TOKEN = 'c'.repeat(64);
 const launched: any[] = [];
+const ended: string[] = [];
 let failNext = false, slow = 0;
 const dir = mkdtempSync(join(tmpdir(), 'aw-run-'));
 let app: ReturnType<typeof startServer>;
@@ -29,6 +30,7 @@ before(async () => {
       return { tmuxSession: `awtest-run-${launched.length}`, dir, branch: null, pane: `%${50 + launched.length}` };
     }) as any,
     typeInto: async () => true,
+    endPane: async (pane: string) => { ended.push(pane); return null; },
   });
   await app.listen();
   base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
@@ -215,4 +217,23 @@ test('excludeRunFiles adds .aw/ to the repo\'s exclude once, and leaves a non-gi
   const plain = mkdtempSync(join(tmpdir(), 'aw-ex-'));
   mkdirSync(join(plain, 'x'));
   await excludeRunFiles(plain); // no throw, nothing written
+});
+
+test('stop can end the run\'s sessions too, also once the run is over', async () => {
+  const { body } = await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
+  const id = body.run.id, plan = `%${50 + launched.length}`;
+  await hook(ev.start, 'plan-end', plan);
+  await hook(ev.prompt, 'plan-end', plan);
+  await handoff(plan, 'planned');
+  const build = `%${50 + launched.length}`; // still a starting card: matched by its pane
+  assert.notEqual(build, plan);
+  ended.length = 0;
+  const r = await post(`/api/runs/${id}/stop`, { endSessions: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.run.status, 'stopped');
+  assert.deepEqual(ended.sort(), [plan, build].sort());
+  const sessions = ((await (await fetch(`${base}/api/state`, { headers: H })).json()) as any).sessions;
+  assert.ok(!sessions.some((s: any) => s.tmux && [plan, build].includes(s.tmux.pane)), 'their cards are gone');
+  assert.equal((await post(`/api/runs/${id}/stop`)).status, 409, 'stopping twice without ending sessions is still refused');
+  assert.equal((await post(`/api/runs/${id}/stop`, { endSessions: true })).status, 200, 'ending what is left of a stopped run is fine');
 });

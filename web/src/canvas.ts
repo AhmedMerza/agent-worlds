@@ -1,5 +1,5 @@
 import type { RoomGroup, Session, SessionState } from './types'
-import { tiredLevel, waitMinutes, ctxColor, roomConflicts } from './logic'
+import { tiredLevel, waitMinutes, ctxColor, roomConflicts, nameOf } from './logic'
 import { ROOM_W, ROOM_H, WALK_MS, assignZones, zoneBounds, countZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, pauseWalker, type Zone, type Walker } from './zones'
 
 export const W = ROOM_W
@@ -189,7 +189,7 @@ function pill(ctx: Ctx, text: string, x: number, y: number, maxW: number, fg = I
 function nameTag(ctx: Ctx, s: Session, x: number, y: number, maxW: number, full: boolean) {
   ctx.save(); ctx.translate(x, y); ctx.scale(ts, ts) // never smaller than ~10 CSS px, whatever the screen
   const lim = full ? 1e9 : maxW / ts - 8
-  font(ctx, 7); const name = fit(ctx, s.repoName, lim), nw = ctx.measureText(name).width
+  font(ctx, 7); const name = fit(ctx, nameOf(s), lim), nw = ctx.measureText(name).width
   font(ctx, 6); const branch = s.branch ? fit(ctx, s.branch, lim) : '', bw = branch ? ctx.measureText(branch).width : 0
   const w = Math.max(nw, bw) + 8, h = branch ? 17 : 11
   ctx.fillStyle = full ? 'rgba(10,13,18,.94)' : 'rgba(10,13,18,.8)'; rr(ctx, -w / 2, -5.5, w, h, 5.5); ctx.fill()
@@ -243,7 +243,7 @@ function drawDesk(ctx: Ctx, x: number, y: number, w: number, s: Session, l: Look
   f.ui.push(() => {
     if (f.focus !== s.id) { // the focused one gets a full tag on top instead
       ctx.save(); ctx.translate(x, y + 12); ctx.scale(ts, ts)
-      font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(fit(ctx, s.repoName, hw * 2 / ts - 8), 0, s.branch ? -3 : 0)
+      font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(fit(ctx, nameOf(s), hw * 2 / ts - 8), 0, s.branch ? -3 : 0)
       if (s.branch) { font(ctx, 6); ctx.fillStyle = '#b8ad9c'; ctx.fillText(fit(ctx, s.branch, hw * 2 / ts - 8), 0, 4) }
       ctx.restore()
     }

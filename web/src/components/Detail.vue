@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { copyText } from '../clipboard'
 import { computed } from 'vue'
-import { stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
+import { nameOf, stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
 import { selected, groups, focusTerminal, askClaude, showToast, ui, state, runOf } from '../store'
 import ResumeButton from './ResumeButton.vue'
 import ContinueIn from './ContinueIn.vue'
@@ -35,7 +35,7 @@ async function copyAttach() {
     </div>
     <div v-else class="detail">
       <p v-if="s.state === 'starting'" class="why">{{ agentName(s) }} may be asking to trust this folder. Answer below in the terminal.</p>
-      <div class="d-head"><h3>{{ s.repoName }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
+      <div class="d-head"><h3>{{ nameOf(s) }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
       <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p class="path" :title="s.cwd">{{ s.cwd }}</p>
       <RunCard v-if="run" :run="run.run" :here="run.step" />
