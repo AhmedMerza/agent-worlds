@@ -271,6 +271,8 @@ the OpenAI API (a friend's llama.cpp, vLLM, LM Studio): a name, its address (lik
 asked for its first one (`/models`). Servers are kept in `servers.json` in the Agent Worlds folder
 (mode 600), their keys in `keys.json`; a server that needs no key gets a placeholder Qwen sends and the
 server ignores. A plain `http` address carries your prompts and code unencrypted, and the dialog says so.
+**Make default** next to Model provider makes New session start on that provider for Qwen (kept as
+`defaultProvider` in `config.json`); removing that server forgets it.
 
 Not supported: **Antigravity CLI** (`agy`). It reads hooks only from a repo's `.agents/hooks.json` or
 the global `~/.gemini/config/hooks.json`, with no flag or environment variable to point it elsewhere,

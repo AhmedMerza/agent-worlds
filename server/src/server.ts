@@ -448,8 +448,18 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     // Model providers for Qwen sessions. A key goes in and never comes back out: clients only learn whether one is saved.
     if (method === 'GET' && url.pathname === '/api/providers') {
-      const home = opts.home ?? homeDir(), keys = readKeys(home);
-      return send(res, 200, { providers: Object.entries(allProviders(home)).map(([id, p]) => ({ id, name: p.name, model: p.model, keyUrl: p.keyUrl, hasKey: Object.hasOwn(keys, id), ...(p.custom ? { custom: true, baseUrl: p.baseUrl } : {}) })) });
+      const home = opts.home ?? homeDir(), keys = readKeys(home), all = allProviders(home);
+      const def = cfg.defaultProvider && Object.hasOwn(all, cfg.defaultProvider) ? cfg.defaultProvider : null;
+      return send(res, 200, { providers: Object.entries(all).map(([id, p]) => ({ id, name: p.name, model: p.model, keyUrl: p.keyUrl, hasKey: Object.hasOwn(keys, id), ...(p.custom ? { custom: true, baseUrl: p.baseUrl } : {}) })), default: def });
+    }
+    // The provider New session picks for Qwen; '' goes back to the user's own Qwen settings.
+    if (method === 'POST' && url.pathname === '/api/providers/default') {
+      const home = opts.home ?? homeDir(), b = await readBody(req);
+      if (b.provider !== '' && (typeof b.provider !== 'string' || !Object.hasOwn(allProviders(home), b.provider))) return send(res, 400, { error: 'unknown provider' });
+      const err = saveConfigKey(join(home, 'config.json'), 'defaultProvider', b.provider || undefined);
+      if (err) return send(res, 500, { error: err });
+      cfg.defaultProvider = (b.provider as string) || undefined;
+      return send(res, 200, { default: cfg.defaultProvider ?? null });
     }
     // A server of the user's own that speaks the OpenAI API. With no model given, it is asked for its first one.
     if (method === 'POST' && url.pathname === '/api/providers') {
@@ -483,6 +493,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const home = opts.home ?? homeDir();
       if (!allProviders(home)[provId[1]]?.custom) return send(res, 404, { error: 'not a server you added' });
       try { removeServer(home, provId[1]); } catch (e) { return send(res, 500, { error: (e as Error).message }); }
+      // A removed default is forgotten, so a later server of that name doesn't quietly become the default.
+      if (cfg.defaultProvider === provId[1] && !saveConfigKey(join(home, 'config.json'), 'defaultProvider', undefined)) cfg.defaultProvider = undefined;
       return send(res, 200, {});
     }
     const provKey = url.pathname.match(/^\/api\/providers\/([a-z0-9-]+)\/key$/);

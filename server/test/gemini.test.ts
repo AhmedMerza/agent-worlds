@@ -234,6 +234,15 @@ test('a server of your own: added by address, its model asked for, no key needed
     // A key, and a typed model, skip nothing else
     assert.equal((await add({ name: 'Box', baseUrl: 'http://127.0.0.1:1/v1', model: 'llama-3', key: 'sk-local-123' })).status, 201);
     assert.equal(readKeys(home).box, 'sk-local-123');
+    // A default provider: kept in config.json, offered first, forgotten with its server
+    const setDefault = (provider: string) => fetch(`${base}/api/providers/default`, { method: 'POST', headers: H, body: JSON.stringify({ provider }) });
+    const listed = async () => (await (await fetch(`${base}/api/providers`, { headers: H })).json() as any).default;
+    assert.equal(await listed(), null);
+    assert.equal((await setDefault('nope')).status, 400);
+    assert.equal((await setDefault('constructor')).status, 400);
+    assert.equal((await setDefault('box')).status, 200);
+    assert.equal(await listed(), 'box');
+    assert.equal(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).defaultProvider, 'box');
     // Added again under its name, at another address and with no key: the old key does not follow it there
     const again = await add({ name: 'Box', baseUrl: 'http://127.0.0.2:1/v1', model: 'llama-3' });
     assert.equal((await again.json() as any).provider.hasKey, false);
@@ -241,6 +250,11 @@ test('a server of your own: added by address, its model asked for, no key needed
     assert.equal(readServers(home).box.baseUrl, 'http://127.0.0.2:1/v1');
     assert.equal((await fetch(`${base}/api/providers/openrouter`, { method: 'DELETE', headers: H })).status, 404, 'built-ins stay');
     assert.equal((await fetch(`${base}/api/providers/box`, { method: 'DELETE', headers: H })).status, 200);
+    assert.equal(await listed(), null, 'a removed default is forgotten');
+    assert.ok(!('defaultProvider' in JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))));
+    assert.equal((await setDefault('sam-s-qwen')).status, 200);
+    assert.equal((await setDefault('')).status, 200);
+    assert.equal(await listed(), null, "'' goes back to your Qwen settings");
     assert.deepEqual(Object.keys(readServers(home)), ['sam-s-qwen']);
     assert.equal(readKeys(home).box, undefined, 'its key goes with it');
     assert.equal((await start({ provider: 'box' })).status, 400);

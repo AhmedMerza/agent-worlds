@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, startRun, showToast, fetchProviders, saveProviderKey, addServer, removeServer, type AgentInfo, type ProviderInfo } from '../store'
+import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, startRun, showToast, fetchProviders, saveProviderKey, saveDefaultProvider, addServer, removeServer, type AgentInfo, type ProviderInfo } from '../store'
 import { baseName, modeField, withRepo, openHttp, STEP_LABEL, type ModeChoice } from '../logic'
 import type { StepKind } from '../types'
 import FolderBrowser from './FolderBrowser.vue'
@@ -32,6 +32,8 @@ onMounted(async () => {
 /** Qwen only: a model provider for this session ('' = whatever the user set up in ~/.qwen). */
 const providers = ref<ProviderInfo[]>([])
 const provider = ref('')
+/** The provider New session starts on for Qwen ('' = your Qwen settings). */
+const defaultProvider = ref('')
 const prov = computed(() => providers.value.find((p) => p.id === provider.value))
 const key = ref('')
 const replacingKey = ref(false)
@@ -58,13 +60,16 @@ async function dropServer(p: ProviderInfo) {
   const r = await removeServer(p.id)
   if (!r.ok) { error.value = r.error; return }
   providers.value = providers.value.filter((x) => x !== p)
-  provider.value = ''
+  if (defaultProvider.value === p.id) defaultProvider.value = ''
+  provider.value = defaultProvider.value
   showToast(`Removed ${p.name}`)
 }
 watch(agent, async (a) => {
   if (a !== 'qwen' || providers.value.length) return
   const r = await fetchProviders()
-  if (r.ok) providers.value = r.data.providers; else error.value = `Couldn't load the model providers: ${r.error}`
+  if (!r.ok) { error.value = `Couldn't load the model providers: ${r.error}`; return }
+  providers.value = r.data.providers
+  defaultProvider.value = provider.value = r.data.default ?? ''
 })
 /** Run mode: the task goes through these steps, each on its own agent, in one folder. */
 const asRun = ref(props.run ?? false)
@@ -77,6 +82,10 @@ const addStep = () => { steps.value.push({ kind: 'review-code', agent: defaultAg
 async function forgetKey(p: ProviderInfo) {
   const r = await saveProviderKey(p.id, null)
   if (r.ok) { p.hasKey = false; replacingKey.value = false } else error.value = r.error
+}
+async function makeProviderDefault() {
+  const r = await saveDefaultProvider(provider.value)
+  if (r.ok) defaultProvider.value = r.data.default ?? ''; else error.value = r.error
 }
 async function makeDefault() {
   const r = await saveDefaultAgent(agent.value)
@@ -185,9 +194,12 @@ async function submit() {
         <button v-if="agent && agent !== defaultAgent" type="button" class="btn" @click="makeDefault">Make default</button>
       </div>
       <template v-if="!asRun && agent === 'qwen' && providers.length">
-        <label>Model provider
-          <select v-model="provider" aria-label="Model provider"><option value="">Your Qwen settings</option><option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.hasKey || p.custom ? '' : ' (needs a key)' }}</option><option :value="ADD">Add a server of your own…</option></select>
-        </label>
+        <div class="folder-row">
+          <label>Model provider
+            <select v-model="provider" aria-label="Model provider"><option value="">Your Qwen settings{{ defaultProvider ? '' : ' (default)' }}</option><option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.id === defaultProvider ? ' (default)' : p.hasKey || p.custom ? '' : ' (needs a key)' }}</option><option :value="ADD">Add a server of your own…</option></select>
+          </label>
+          <button v-if="provider !== ADD && provider !== defaultProvider" type="button" class="btn" @click="makeProviderDefault">Make default</button>
+        </div>
         <template v-if="provider === ADD">
           <p class="why">Any server that speaks the OpenAI API: a friend's llama.cpp, vLLM, LM Studio or Ollama. Sessions on it send it your prompts and the code the agent reads. It is saved on this computer for later sessions; pressing Start saves it too.</p>
           <label>Name

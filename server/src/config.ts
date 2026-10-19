@@ -9,6 +9,8 @@ export type Config = {
   userSettingsPath: string; claudeBin: string; contextLimit: number; claudeProjectsDir: string;
   /** The agent CLI new sessions start with (see agents.ts); Claude when unset or not installed. */
   defaultAgent?: string;
+  /** The model provider New session picks for Qwen Code (see providers.ts); the user's own Qwen settings when unset. */
+  defaultProvider?: string;
 };
 
 export const DEFAULTS: Config = {
@@ -50,6 +52,7 @@ export function parseConfig(raw: unknown): Config {
   if (usp) cfg.userSettingsPath = resolve(usp.replace(/^~(?=\/)/, homedir()));
   cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
   cfg.defaultAgent = str('defaultAgent');
+  cfg.defaultProvider = str('defaultProvider');
   const cpd = str('claudeProjectsDir');
   if (cpd) cfg.claudeProjectsDir = resolve(cpd.replace(/^~(?=\/)/, homedir()));
   if (r.contextLimit !== undefined) {

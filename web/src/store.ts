@@ -232,7 +232,8 @@ export function fetchAgents(): Promise<ApiResult<{ agents: AgentInfo[]; default:
 }
 /** Model providers a Qwen session can use instead of the user's ~/.qwen setup. Keys are never sent back, only whether one is saved. */
 export interface ProviderInfo { id: string; name: string; model: string; keyUrl?: string; hasKey: boolean; custom?: boolean; baseUrl?: string }
-export const fetchProviders = () => api<{ providers: ProviderInfo[] }>('GET', '/api/providers')
+export const fetchProviders = () => api<{ providers: ProviderInfo[]; default: string | null }>('GET', '/api/providers')
+export const saveDefaultProvider = (provider: string) => api<{ default: string | null }>('POST', '/api/providers/default', { provider })
 /** A server of the user's own that speaks the OpenAI API; with no model, the server is asked for one. */
 export const addServer = (s: { name: string; baseUrl: string; model?: string; key?: string }) => api<{ provider: ProviderInfo }>('POST', '/api/providers', s)
 export const removeServer = (id: string) => api<object>('DELETE', `/api/providers/${id}`)
