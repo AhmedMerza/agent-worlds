@@ -61,11 +61,11 @@ export function saveServer(home: string, s: { name: string; baseUrl: string; mod
   return id;
 }
 
-/** Forgets a server and its key. */
+/** Forgets a server and its key (the key first, so a failed write never leaves a key behind for the name). */
 export function removeServer(home: string, id: string) {
+  saveKey(home, id, null);
   const { [id]: _, ...rest } = readServers(home);
   writeJson(home, 'servers.json', rest);
-  saveKey(home, id, null);
 }
 
 /** <home>/keys.json (0600): API keys by provider. Never sent to a client or logged. */

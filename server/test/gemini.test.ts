@@ -8,7 +8,7 @@ import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { launchArgs, writeGeminiHome } from '../src/agents.ts';
 import { fromGemini, toGemini } from '../src/gemini.ts';
-import { readKeys, saveKey, readServers } from '../src/providers.ts';
+import { readKeys, saveKey, readServers, saveServer, serverUrl } from '../src/providers.ts';
 
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const TOKEN = 'g'.repeat(64);
@@ -226,15 +226,45 @@ test('a server of your own: added by address, its model asked for, no key needed
     assert.deepEqual(calls.at(-1).provider, { id: 'sam-s-qwen', auth: 'openai', baseUrl: llmUrl.slice(0, -1), model: 'qwen3.8-flash-next-iq3_s', key: 'no-key' });
     const st = await (await fetch(`${base}/api/state`, { headers: H })).json() as any;
     assert.ok(st.sessions.some((x: any) => x.via === "Sam's Qwen · qwen3.8-flash-next-iq3_s"));
+    assert.equal((await start({ provider: 'constructor' })).status, 400, 'an inherited property is not a provider');
+    // A key saved for the server is the one sessions send
+    assert.equal((await fetch(`${base}/api/providers/sam-s-qwen/key`, { method: 'PUT', headers: H, body: JSON.stringify({ key: 'sk-sam-123456' }) })).status, 200);
+    assert.equal((await start({ provider: 'sam-s-qwen' })).status, 201);
+    assert.equal(calls.at(-1).provider.key, 'sk-sam-123456');
     // A key, and a typed model, skip nothing else
     assert.equal((await add({ name: 'Box', baseUrl: 'http://127.0.0.1:1/v1', model: 'llama-3', key: 'sk-local-123' })).status, 201);
     assert.equal(readKeys(home).box, 'sk-local-123');
+    // Added again under its name, at another address and with no key: the old key does not follow it there
+    const again = await add({ name: 'Box', baseUrl: 'http://127.0.0.2:1/v1', model: 'llama-3' });
+    assert.equal((await again.json() as any).provider.hasKey, false);
+    assert.equal(readKeys(home).box, undefined);
+    assert.equal(readServers(home).box.baseUrl, 'http://127.0.0.2:1/v1');
     assert.equal((await fetch(`${base}/api/providers/openrouter`, { method: 'DELETE', headers: H })).status, 404, 'built-ins stay');
     assert.equal((await fetch(`${base}/api/providers/box`, { method: 'DELETE', headers: H })).status, 200);
     assert.deepEqual(Object.keys(readServers(home)), ['sam-s-qwen']);
     assert.equal(readKeys(home).box, undefined, 'its key goes with it');
     assert.equal((await start({ provider: 'box' })).status, 400);
   } finally { process.env.PATH = path; llm.close(); await app.close(); }
+});
+
+test('servers of your own: addresses, ids, and the Qwen settings they produce', () => {
+  assert.equal(serverUrl(' http://h:8080/v1// '), 'http://h:8080/v1');
+  for (const bad of ['ftp://h/v1', 'http://h/v1?x=1', 'http://h/v1#a', 'http://u@h/v1', 'h:8080/v1', 42, `http://h/${'a'.repeat(500)}`]) assert.equal(serverUrl(bad), null, String(bad));
+  const home = tmp();
+  writeFileSync(join(home, 'servers.json'), JSON.stringify({ openrouter: { name: 'x', baseUrl: 'http://h', model: 'm' }, 'Bad Id': { name: 'x', baseUrl: 'http://h', model: 'm' }, half: { name: 'x' }, ok: { name: 'Ok', baseUrl: 'http://h/v1', model: 'm' } }));
+  assert.deepEqual(Object.keys(readServers(home)), ['ok'], 'built-in ids, bad ids and half entries are dropped');
+  writeFileSync(join(home, 'servers.json'), '[]');
+  assert.deepEqual(readServers(home), {});
+  assert.equal(saveServer(home, { name: '!!!', baseUrl: 'http://h/v1', model: 'm' }), null);
+  assert.equal(saveServer(home, { name: 'Gemini', baseUrl: 'http://h/v1', model: 'm' }), null, 'a built-in id');
+  assert.equal(saveServer(home, { name: 'Sam', baseUrl: 'http://h/v1', model: 'm' }), 'sam');
+  const { env } = launchArgs('qwen', { home, task: '', provider: { id: 'sam', auth: 'openai', baseUrl: 'http://h/v1', model: 'm', key: 'no-key' } });
+  const file = env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+  const s = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual([s.security.auth.selectedType, s.modelProviders.openai, s.env.AGENT_WORLDS_PROVIDER_KEY], ['openai', [{ id: 'm', baseUrl: 'http://h/v1', envKey: 'AGENT_WORLDS_PROVIDER_KEY' }], 'no-key']);
+  saveServer(home, { name: 'Sam', baseUrl: 'http://other/v1', model: 'm' });
+  assert.ok(!existsSync(file), 'a new address drops the settings files that point at the old one');
+  assert.equal(readServers(home).sam.baseUrl, 'http://other/v1');
 });
 
 test('a held Gemini tool is denied when nobody answers in time, or the session ends', async () => {

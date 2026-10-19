@@ -425,6 +425,7 @@ describe('openHttp', () => {
     expect(openHttp('HTTP://example.com/v1')).toBe(true)
     for (const a of ['https://example.com/v1', 'http://192.168.1.20:8080/v1', 'http://10.0.0.5/v1', 'http://172.20.1.1/v1', 'http://localhost:1234/v1', 'http://box.local/v1', 'http://100.101.1.2/v1', 'http://[::1]:8080/v1', 'not a url', ''])
       expect(openHttp(a)).toBe(false)
-    expect(openHttp('http://172.32.0.1/v1')).toBe(true)
+    for (const a of ['http://172.32.0.1/v1', 'http://172.15.0.1/v1', 'http://100.63.0.1/v1', 'http://100.128.0.1/v1']) expect(openHttp(a)).toBe(true)
+    for (const a of ['http://172.16.0.1/v1', 'http://172.31.0.1/v1', 'http://100.64.0.1/v1', 'http://100.127.0.1/v1']) expect(openHttp(a)).toBe(false)
   })
 })

@@ -8,7 +8,7 @@ import { homeDir, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
 import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
-import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE, PROVIDER_ID_RE } from './providers.ts';
+import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
@@ -469,9 +469,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         } catch { /* unreachable or not OpenAI-shaped: said below */ }
         if (!model) return send(res, 422, { error: `couldn't get a model list from ${baseUrl}/models; check the address, or type the model name` });
       }
-      const id = saveServer(home, { name, baseUrl, model });
+      let id;
+      try {
+        id = saveServer(home, { name, baseUrl, model });
+        // A server added again under its name is replaced whole, key included: an old key never follows it to a new address.
+        if (id) saveKey(home, id, key);
+      } catch (e) { return send(res, 500, { error: (e as Error).message }); }
       if (!id) return send(res, 400, { error: 'pick a different name (it needs a letter or digit, and can\'t be a built-in provider\'s)' });
-      if (key !== null) saveKey(home, id, key);
       return send(res, 201, { provider: { id, name, model, hasKey: key !== null, custom: true, baseUrl } });
     }
     const provId = url.pathname.match(/^\/api\/providers\/([a-z0-9-]+)$/);
@@ -643,11 +647,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.provider !== undefined) {
         if (agent !== 'qwen') return send(res, 400, { error: 'provider is only for Qwen Code sessions' });
         const home = opts.home ?? homeDir(), all = allProviders(home);
-        const p = typeof b.provider === 'string' && PROVIDER_ID_RE.test(b.provider) ? all[b.provider] : undefined;
+        const p = typeof b.provider === 'string' && Object.hasOwn(all, b.provider) ? all[b.provider] : undefined;
         if (!p) return send(res, 400, { error: `provider must be one of ${Object.keys(all).join(', ')}` });
         if (b.model !== undefined && (typeof b.model !== 'string' || !MODEL_RE.test(b.model))) return send(res, 400, { error: 'model must be a model id like openrouter/free' });
         // A server of your own may need no key; Qwen still wants one to send, which such a server ignores.
-        const key = readKeys(home)[b.provider as string] ?? (p.custom ? 'no-key' : undefined);
+        const keys = readKeys(home), key = Object.hasOwn(keys, b.provider as string) ? keys[b.provider as string] : p.custom ? 'no-key' : undefined;
         if (!key) return send(res, 400, { error: `add your ${p.name} key first` });
         provider = { id: b.provider as string, auth: p.auth, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), model: (b.model as string | undefined) ?? p.model, key };
         via = `${p.name} · ${provider.model}`;
