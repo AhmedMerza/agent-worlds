@@ -181,3 +181,29 @@ test('a failed invoke_subagent owes no subagent: the next conversation is a new 
     assert.equal((await hook('SessionStart', { conversationId: '', transcriptPath: log })).status, 400, 'no id: refused, not folded in');
   } finally { await app.close(); }
 });
+
+test('a call owes the subagents it asked for once, and only until its turn ends or the next prompt', async () => {
+  const { app, hook, sessions } = await boot();
+  const log = transcript([{ type: 'USER_INPUT', content: 'x' }], 'p3');
+  const call = { name: 'invoke_subagent', args: { Subagents: [{ Role: 'A' }, { Role: 'B' }] } };
+  const ids = async () => (await sessions()).map((s: any) => s.id);
+  // A session that asked for two subagents; `end` then happens before `starts` new conversations arrive
+  const run = async (p: string, starts: string[], end?: [string, object]) => {
+    const parent = (event: string, b: object = {}) => hook(event, { conversationId: p, transcriptPath: log, ...b });
+    await parent('SessionStart');
+    await parent('PreToolUse', { stepIdx: 1, toolCall: call });
+    await parent('PreToolUse', { stepIdx: 1, toolCall: call }); // the same event delivered twice counts once
+    await parent('PostToolUse', { stepIdx: 1, error: '', toolCall: call });
+    await hook('SessionStart', { conversationId: `${p}-a`, transcriptPath: log });
+    if (end) await parent(...end);
+    for (const id of starts) await hook('SessionStart', { conversationId: id, transcriptPath: log });
+  };
+  try {
+    await run('p3', ['p3-b', 'p3-c']);
+    assert.deepEqual(await ids(), ['p3-c'], 'two owed: the third is a new conversation');
+    await run('p4', ['p4-new'], ['Stop', { terminationReason: 'NO_TOOL_CALL' }]);
+    assert.deepEqual(await ids(), ['p4-new'], 'the turn ended: nothing is owed');
+    await run('p5', ['p5-new'], ['PreInvocation', { invocationNum: 0 }]);
+    assert.deepEqual(await ids(), ['p5-new'], 'a new prompt: nothing is owed');
+  } finally { await app.close(); }
+});

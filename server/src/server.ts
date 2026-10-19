@@ -199,11 +199,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (parent) agyChildren.set(id, { parent, log });
     return parent;
   };
-  /** Keeps agyPending: a call adds the subagents it asked for; a failed call, or the next prompt, clears what is owed. */
+  /**
+   * Keeps agyPending: a call adds the subagents it asked for. A failed call, the end of the turn (agy has started
+   * them by then) or the next prompt clears what is owed, so a later conversation is never taken for one of them.
+   */
   const agyCount = (b: Record<string, unknown>) => {
-    const id = String(b.session_id);
-    if (b.hook_event_name === 'UserPromptSubmit' || (b.hook_event_name === 'PostToolUseFailure' && b.tool_name === 'Task')) agyPending.delete(id);
-    else if (b.hook_event_name === 'PreToolUse' && b.tool_name === 'Task') agyPending.set(id, (agyPending.get(id) ?? 0) + Number((b.tool_input as { subagents?: unknown }).subagents ?? 1));
+    const id = String(b.session_id), ev = b.hook_event_name;
+    if (ev === 'UserPromptSubmit' || ev === 'Stop' || ev === 'StopFailure' || ev === 'Interrupt' || (ev === 'PostToolUseFailure' && b.tool_name === 'Task')) agyPending.delete(id);
+    else if (ev === 'PreToolUse' && b.tool_name === 'Task') {
+      const n = Number((b.tool_input as { subagents?: unknown }).subagents);
+      agyPending.set(id, (agyPending.get(id) ?? 0) + (Number.isInteger(n) && n > 0 ? Math.min(n, 16) : 1));
+    }
   };
   const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
@@ -436,7 +442,6 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         const parent = typeof id === 'string' && id ? agyParent(id, body.transcript_path, pane, pty) : undefined;
         if (parent === null) body = null;
         else if (parent) body = asHelper(body, parent);
-        if (body) agyCount(body);
       }
       if (!body) { res.writeHead(204); return res.end(); }
       const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
@@ -447,6 +452,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const key = createHash('sha1').update(String(pane)).update('\0').update(String(pty)).update('\0').update(JSON.stringify(body)).digest('hex');
       let reply = recent.get(key)?.reply;
       if (!reply) {
+        if (agent === 'agy') agyCount(body); // once per event, not again for a repeat of it
         reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal, typeof pty === 'string' && direct.has(pty) ? pty : null, isAgent(agent) ? agent : 'claude');
         const entry = { at: 0, reply };
         recent.set(key, entry);
