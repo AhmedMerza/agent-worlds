@@ -30,16 +30,25 @@ const TOOLS: Record<string, [string, (a: Record<string, unknown>) => Record<stri
   find_by_name: ['Glob', (a) => ({ pattern: a.Pattern, path: a.SearchDirectory })],
   search_web: ['WebSearch', (a) => ({ query: a.query })],
   read_url_content: ['WebFetch', (a) => ({ url: a.Url })],
+  // A helper, as Claude's Task tool is: the call returns at once and the subagent runs on (see asHelper)
+  invoke_subagent: ['Task', (a) => {
+    const first = (Array.isArray(a.Subagents) ? a.Subagents[0] : undefined) as { Role?: unknown; Prompt?: unknown } | undefined;
+    return { description: first?.Role ?? first?.Prompt };
+  }],
 };
 
-/**
- * The content of the last `type` step in agy's transcript ('' when there is none). Only agy's own transcripts
- * are read: the path comes in a hook payload.
- */
-export function lastStep(path: unknown, type: string, root = join(homedir(), '.gemini', 'antigravity-cli')): string {
+/** agy's transcript at `path`, '' when unreadable. Only agy's own transcripts are read: the path comes in a hook payload. */
+function readTranscript(path: unknown, root = join(homedir(), '.gemini', 'antigravity-cli')): string {
   if (typeof path !== 'string' || !resolve(path).startsWith(resolve(root) + '/')) return '';
-  let lines: string[];
-  try { lines = readFileSync(path, 'utf8').split('\n'); } catch { return ''; }
+  try { return readFileSync(path, 'utf8'); } catch { return ''; }
+}
+
+/** Whether the transcript at `path` names conversation `id`: agy records each subagent it creates there (in its TUI, a while later). */
+export const mentions = (path: unknown, id: string): boolean => readTranscript(path).includes(id);
+
+/** The content of the last `type` step in agy's transcript ('' when there is none). */
+export function lastStep(path: unknown, type: string): string {
+  const lines = readTranscript(path).split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
       const st = JSON.parse(lines[i]);
@@ -54,7 +63,8 @@ export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: st
   const ws = Array.isArray(p.workspacePaths) ? p.workspacePaths.filter((w): w is string => typeof w === 'string') : [];
   const base = {
     session_id: p.conversationId, transcript_path: p.transcriptPath,
-    cwd: typeof dir === 'string' && dir.startsWith('/') ? dir : ws.find((w) => resolve(w) !== resolve(hooksDir)),
+    // Node reads header bytes as latin1; aw-hook sent the path as UTF-8
+    cwd: typeof dir === 'string' && dir.startsWith('/') ? Buffer.from(dir, 'latin1').toString('utf8') : ws.find((w) => resolve(w) !== resolve(hooksDir)),
     ...(typeof p.modelName === 'string' && p.modelName !== 'auto' ? { model: p.modelName } : {}),
   };
   const call = (p.toolCall ?? {}) as { name?: unknown; args?: unknown };
@@ -70,7 +80,10 @@ export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: st
       return { ...base, hook_event_name: 'UserPromptSubmit', prompt: prompt.match(/<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/)?.[1] ?? prompt };
     }
     case 'PreToolUse': return { ...base, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input };
-    case 'PostToolUse': return { ...base, hook_event_name: p.error ? 'PostToolUseFailure' : 'PostToolUse', tool_name: tool, tool_input: input, error: p.error || undefined };
+    case 'PostToolUse': return {
+      ...base, hook_event_name: p.error ? 'PostToolUseFailure' : 'PostToolUse', tool_name: tool, tool_input: input, error: p.error || undefined,
+      ...(tool === 'Task' ? { tool_response: { isAsync: true } } : {}),
+    };
     case 'Stop':
       if (p.terminationReason === 'USER_CANCELED') return { ...base, hook_event_name: 'Interrupt' };
       if (p.terminationReason === 'ERROR') return { ...base, hook_event_name: 'StopFailure', error: p.error || undefined };
@@ -79,9 +92,21 @@ export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: st
   }
 }
 
-/** agy's answer: the project note for SessionStart, nothing for anything else (see above). */
-export function toAgy(body: Record<string, unknown>, hooksDir: string): string {
-  if (body.hook_event_name !== 'SessionStart' || typeof body.cwd !== 'string') return '';
-  const systemMessage = `The project you are working on is ${body.cwd}: run commands and edit files there. The workspace folder ${hooksDir} belongs to Agent Worlds, which watches this session: never read, edit or run commands in it.`;
+/**
+ * A subagent's events, as its parent session's helper: agy runs each subagent as a conversation of its own, in the
+ * same pane, which the store would otherwise take for a new conversation replacing the parent. Its prompt is the
+ * parent's call, not yours, so it is dropped.
+ */
+export function asHelper(body: Record<string, unknown>, parent: string): Record<string, unknown> | null {
+  const ev = body.hook_event_name;
+  if (ev === 'UserPromptSubmit') return null;
+  const helperEv = ev === 'SessionStart' ? 'SubagentStart' : ev === 'Stop' || ev === 'StopFailure' || ev === 'Interrupt' ? 'SubagentStop' : ev;
+  return { ...body, session_id: parent, agent_id: body.session_id, hook_event_name: helperEv };
+}
+
+/** agy's answer: the project note for SessionStart (a subagent's too), nothing for anything else (see above). */
+export function toAgy(event: unknown, cwd: unknown, hooksDir: string): string {
+  if (event !== 'SessionStart' || typeof cwd !== 'string') return '';
+  const systemMessage = `The project you are working on is ${cwd}: run commands and edit files there. The workspace folder ${hooksDir} belongs to Agent Worlds, which watches this session: never read, edit or run commands in it.`;
   return JSON.stringify({ injectSteps: [{ systemMessage: { systemMessage } }] });
 }

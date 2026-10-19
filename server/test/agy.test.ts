@@ -14,8 +14,8 @@ const TOKEN = 'a'.repeat(64);
 process.env.HOME = tmp();
 
 /** A transcript_full.jsonl under agy's folder in $HOME, as agy writes it. */
-function transcript(steps: object[]): string {
-  const dir = join(process.env.HOME!, '.gemini', 'antigravity-cli', 'brain', 'c1', '.system_generated', 'logs');
+function transcript(steps: object[], conversation = 'c1'): string {
+  const dir = join(process.env.HOME!, '.gemini', 'antigravity-cli', 'brain', conversation, '.system_generated', 'logs');
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'transcript_full.jsonl');
   writeFileSync(file, steps.map((s) => JSON.stringify(s)).join('\n') + '\n');
@@ -42,12 +42,14 @@ test('agy payloads become Claude-shaped events, in the project rather than our h
   // In a folder it does not trust yet, agy starts with our folder alone: the project comes from aw-hook
   assert.equal(fromAgy({ ...base, workspacePaths: [hooks] }, 'SessionStart', hooks, '/r2')?.cwd, '/r2');
   assert.equal(fromAgy({ ...base, workspacePaths: [hooks] }, 'SessionStart', hooks, 'relative')?.cwd, undefined);
+  const header = Buffer.from('/srv/مشروع', 'utf8').toString('latin1'); // how Node hands over a UTF-8 header
+  assert.equal(fromAgy(base, 'SessionStart', hooks, header)?.cwd, '/srv/مشروع');
 
-  const note = JSON.parse(toAgy({ hook_event_name: 'SessionStart', cwd: '/r' }, hooks)).injectSteps[0].systemMessage.systemMessage;
+  const note = JSON.parse(toAgy('SessionStart', '/r', hooks)).injectSteps[0].systemMessage.systemMessage;
   assert.match(note, /project you are working on is \/r/);
   assert.match(note, /\/h\/agy-hooks belongs to Agent Worlds/);
   // agy takes anything but an empty reply to a tool event as a deny
-  for (const ev of ['PreToolUse', 'PostToolUse', 'Stop']) assert.equal(toAgy({ hook_event_name: ev, cwd: '/r' }, hooks), '');
+  for (const ev of ['PreToolUse', 'PostToolUse', 'Stop']) assert.equal(toAgy(ev, '/r', hooks), '');
 });
 
 test('the prompt and the last answer come from agy\'s transcript, and only from its own folder', () => {
@@ -79,7 +81,7 @@ test('agy sessions get our hooks folder added to the workspace, one hook per eve
   assert.equal(aw.Stop[0].timeout, 10, 'seconds');
 });
 
-test('an agy session: tool use shows on its card, the project note goes back, the turn end is done', async () => {
+async function boot() {
   const repo = tmp(), home = tmp();
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }] }), port: 0 };
   const app = startServer(cfg, TOKEN, {
@@ -88,13 +90,20 @@ test('an agy session: tool use shows on its card, the project note goes back, th
   } as any);
   await app.listen();
   const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
-  const file = transcript([{ type: 'USER_INPUT', content: '<USER_REQUEST>\nlist files\n</USER_REQUEST>' }, { type: 'PLANNER_RESPONSE', content: 'MARKER_PROJ' }]);
   const hook = (event: string, b: object = {}) => fetch(`${base}/api/hook`, {
     method: 'POST',
     headers: { 'x-aw-token': TOKEN, 'content-type': 'application/json', 'x-aw-agent': 'agy', 'x-aw-event': event, 'x-aw-pane': '%7' },
-    body: JSON.stringify({ conversationId: 'agy-1', workspacePaths: [agyHooksDir(home), repo], transcriptPath: file, ...b }),
+    body: JSON.stringify({ conversationId: 'agy-1', workspacePaths: [agyHooksDir(home), repo], ...b }),
   });
-  const session = async () => ((await (await fetch(`${base}/api/state`, { headers: { 'x-aw-token': TOKEN } })).json()) as any).sessions.find((s: any) => s.id === 'agy-1');
+  const sessions = async () => ((await (await fetch(`${base}/api/state`, { headers: { 'x-aw-token': TOKEN } })).json()) as any).sessions;
+  return { app, repo, hook, sessions };
+}
+
+test('an agy session: tool use shows on its card, the project note goes back, the turn end is done', async () => {
+  const { app, repo, hook: post, sessions } = await boot();
+  const file = transcript([{ type: 'USER_INPUT', content: '<USER_REQUEST>\nlist files\n</USER_REQUEST>' }, { type: 'PLANNER_RESPONSE', content: 'MARKER_PROJ' }]);
+  const hook = (event: string, b: object = {}) => post(event, { transcriptPath: file, ...b });
+  const session = async () => (await sessions()).find((s: any) => s.id === 'agy-1');
   try {
     const start = await hook('SessionStart');
     assert.equal(start.status, 200);
@@ -109,5 +118,40 @@ test('an agy session: tool use shows on its card, the project note goes back, th
     assert.equal((await hook('Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true })).status, 204);
     const s = await session();
     assert.deepEqual([s.state, s.card.kind, s.card.summary], ['done', 'done', 'MARKER_PROJ']);
+  } finally { await app.close(); }
+});
+
+test('an agy subagent is a helper of the session that made it, not a conversation replacing it', async () => {
+  const { app, hook, sessions } = await boot();
+  const parentLog = transcript([{ type: 'USER_INPUT', content: '<USER_REQUEST>\nlook around\n</USER_REQUEST>' }], 'p1');
+  const kidLog = transcript([{ type: 'USER_INPUT', content: 'list the files' }], 'kid-1');
+  const parent = (event: string, b: object = {}) => hook(event, { conversationId: 'p1', transcriptPath: parentLog, ...b });
+  const kid = (event: string, b: object = {}) => hook(event, { conversationId: 'kid-1', transcriptPath: kidLog, ...b });
+  const call = { name: 'invoke_subagent', args: { Subagents: [{ Role: 'Helper', Prompt: 'list the files' }] } };
+  try {
+    await parent('SessionStart');
+    await parent('PreInvocation', { invocationNum: 0 });
+    await parent('PreToolUse', { toolCall: call });
+    // In agy's TUI the parent's transcript names the subagent only later: the helper its call made is what claims it
+    await parent('PostToolUse', { error: '', toolCall: call });
+    const start = await kid('SessionStart');
+    assert.match(JSON.stringify(await start.json()), /working on is/, 'the subagent gets the project note too');
+    await kid('PreInvocation', { invocationNum: 0 });
+    await kid('PreToolUse', { toolCall: { name: 'list_dir', args: { DirectoryPath: '/r' } } });
+    let all = await sessions();
+    assert.deepEqual(all.map((s: any) => s.id), ['p1']);
+    assert.deepEqual([all[0].task, all[0].helpers.map((h: any) => [h.task, h.state])], ['look around', [['Helper', 'working']]]);
+    await kid('Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true });
+    all = await sessions();
+    assert.deepEqual([all[0].state, all[0].helpers[0].state], ['working', 'done'], "the subagent's end is not the turn's");
+    // A call that made two: the second is found in the transcript of the one that made it, once written
+    transcript([{ type: 'GENERIC', content: 'Created the following subagents:\n{\n  "conversationId": "kid-2"\n}' }], 'kid-1');
+    await hook('SessionStart', { conversationId: 'kid-2', transcriptPath: kidLog });
+    assert.deepEqual((await sessions()).map((s: any) => s.id), ['p1']);
+    await hook('Stop', { conversationId: 'p1', transcriptPath: parentLog, terminationReason: 'NO_TOOL_CALL', fullyIdle: true });
+    assert.equal((await sessions())[0].state, 'done', 'the parent still ends its own turn');
+    // A conversation nobody created (/new in agy) replaces the session in that pane, as for the other CLIs
+    await hook('SessionStart', { conversationId: 'new-1', transcriptPath: kidLog });
+    assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
   } finally { await app.close(); }
 });

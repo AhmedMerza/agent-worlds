@@ -8,7 +8,7 @@ import { homeDir, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
 import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
-import { agyHooksDir, fromAgy, toAgy } from './agy.ts';
+import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { PROVIDERS, isProvider, readKeys, saveKey, KEY_RE, MODEL_RE } from './providers.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
@@ -178,6 +178,22 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   };
   /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
   const earlyMcp = new Set<string>();
+  /**
+   * The agy session a conversation it has not seen is a subagent of: one in the same pane with a helper no subagent
+   * has claimed yet (its invoke_subagent hook ran before the subagent started), or whose transcript, or one of its
+   * subagents', names it (agy writes that once it created the subagent, though in its TUI only later). Anything else
+   * is a new conversation.
+   */
+  const agyChildren = new Map<string, { parent: string; log: unknown }>();
+  const agyParent = (id: string, log: unknown, pane: unknown, pty: unknown): string | undefined => {
+    if (agyChildren.has(id)) return agyChildren.get(id)!.parent;
+    if (store.sessions.has(id) || (!pane && !pty)) return undefined;
+    const here = [...store.sessions.values()].filter((s) => s.agent === 'agy' && ((pane && s.tmux?.pane === pane) || (pty && s.direct === pty)));
+    const logs = [...here.map((s) => ({ parent: s.id, log: s.logPath as unknown })), ...[...agyChildren.values()].filter((c) => here.some((s) => s.id === c.parent))];
+    const parent = here.find((s) => s.helpers.some((h) => h.state === 'working' && !h.agentId))?.id ?? logs.find((c) => mentions(c.log, id))?.parent;
+    if (parent) agyChildren.set(id, { parent, log });
+    return parent;
+  };
   const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
@@ -401,7 +417,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const pty = req.headers['x-aw-pty'];
       const agent = req.headers['x-aw-agent'];
       const agyDir = agyHooksDir(opts.home ?? homeDir());
-      const body = agent === 'gemini' ? fromGemini(raw) : agent === 'agy' ? fromAgy(raw, req.headers['x-aw-event'], agyDir, req.headers['x-aw-dir']) : raw;
+      const event = req.headers['x-aw-event'];
+      let body = agent === 'gemini' ? fromGemini(raw) : agent === 'agy' ? fromAgy(raw, event, agyDir, req.headers['x-aw-dir']) : raw;
+      const agyCwd = body?.cwd;
+      if (body && agent === 'agy') {
+        const parent = agyParent(String(body.session_id), body.transcript_path, pane, pty);
+        if (parent) body = asHelper(body, parent);
+      }
       if (!body) { res.writeHead(204); return res.end(); }
       const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
       const ac = new AbortController();
@@ -420,7 +442,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
       if (held) out = toGemini(out);
-      if (agent === 'agy') out = toAgy(body, agyDir);
+      if (agent === 'agy') out = toAgy(event, agyCwd, agyDir);
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
