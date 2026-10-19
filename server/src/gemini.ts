@@ -22,7 +22,7 @@ const TOOLS: Record<string, string> = {
 };
 /** What Gemini runs without asking in its default mode (its policies/read-only.toml), plus its own questions and our mailbox. */
 const FREE = new Set(['glob', 'grep_search', 'list_directory', 'read_file', 'read_many_files', 'google_web_search', 'write_todos',
-  'ask_user', 'exit_plan_mode', ...TOOL_NAMES.flatMap((t) => [`aw__${t}`, `mcp__aw__${t}`])]);
+  'ask_user', 'exit_plan_mode', ...TOOL_NAMES.flatMap((t) => [`aw__${t}`, `mcp_aw_${t}`, `mcp__aw__${t}`])]);
 
 /** The Claude-shaped payload for a Gemini hook payload; null for an event the store has no use for. */
 export function fromGemini(p: Record<string, unknown>): Record<string, unknown> | null {

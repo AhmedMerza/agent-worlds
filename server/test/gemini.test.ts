@@ -21,7 +21,7 @@ test('Gemini payloads become Claude-shaped events; only tools it would ask about
   assert.equal(fromGemini({ ...base, hook_event_name: 'BeforeTool', tool_name: 'mcp_other__thing' })?.hook_event_name, 'PermissionRequest', 'an unknown tool asks');
   const read = fromGemini({ ...base, hook_event_name: 'BeforeTool', tool_name: 'read_file', tool_input: { file_path: '/r/a' } });
   assert.deepEqual([read?.hook_event_name, read?.tool_name], ['PreToolUse', 'Read']);
-  assert.equal(fromGemini({ ...base, hook_event_name: 'BeforeTool', tool_name: 'aw__aw_send' })?.hook_event_name, 'PreToolUse', 'the mailbox runs freely');
+  for (const name of ['aw__aw_send', 'mcp_aw_aw_send']) assert.equal(fromGemini({ ...base, hook_event_name: 'BeforeTool', tool_name: name })?.hook_event_name, 'PreToolUse', `the mailbox runs freely (${name}: 0.29, 0.64 naming)`);
   assert.equal(fromGemini({ ...base, hook_event_name: 'AfterTool', tool_name: 'replace', tool_response: { error: 'no match' } })?.hook_event_name, 'PostToolUseFailure');
   const stop = fromGemini({ ...base, hook_event_name: 'AfterAgent', prompt: 'hi', prompt_response: 'All done.' });
   assert.deepEqual([stop?.hook_event_name, stop?.last_assistant_message], ['Stop', 'All done.']);
