@@ -108,9 +108,12 @@ test('a Qwen provider goes into its own 0600 settings file, the key never in arg
   assert.ok(s.hooks.PermissionRequest && s.mcpServers.aw, 'still reports and has the mailbox');
   const plain = launchArgs('qwen', { home, task: '' }).env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
   assert.ok(plain.endsWith('/qwen-settings.json') && !('modelProviders' in JSON.parse(readFileSync(plain, 'utf8'))));
-  // A new key drops the files that carry the old one
+  // A new key drops the files that carry the old one, not those of a server whose id starts the same
+  const other = join(home, 'qwen-openrouter-box-0123456789.json');
+  writeFileSync(other, '{}');
   saveKey(home, 'openrouter', 'sk-new-key-123');
   assert.ok(!existsSync(file));
+  assert.ok(existsSync(other), 'another provider\'s settings stay');
   assert.deepEqual(readKeys(home), { openrouter: 'sk-new-key-123' });
   assert.equal(statSync(join(home, 'keys.json')).mode & 0o777, 0o600);
 });

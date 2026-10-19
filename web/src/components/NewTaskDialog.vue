@@ -188,17 +188,17 @@ async function submit() {
         <template v-if="provider === ADD">
           <p class="why">Any server that speaks the OpenAI API: a friend's llama.cpp, vLLM, LM Studio or Ollama. It is saved for later sessions.</p>
           <label>Name
-            <input v-model="server.name" type="text" autocomplete="off" placeholder="Sam's Qwen">
+            <input @keydown.enter.prevent="saveServer" v-model="server.name" type="text" autocomplete="off" placeholder="Sam's Qwen">
           </label>
           <label>Address
-            <input v-model="server.baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.20:8080/v1" aria-describedby="server-note">
+            <input @keydown.enter.prevent="saveServer" v-model="server.baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.20:8080/v1" aria-describedby="server-note">
           </label>
           <p v-if="server.baseUrl.trim().startsWith('http:')" id="server-note" class="why">This address is plain http: your prompts and code travel to it unencrypted. Fine on your own network; over the internet, anyone on the way can read them.</p>
           <label>API key (optional; most servers of your own don't need one)
-            <input v-model="server.key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty if it has none">
+            <input @keydown.enter.prevent="saveServer" v-model="server.key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty if it has none">
           </label>
           <label>Model (optional; empty asks the server for its model)
-            <input v-model="server.model" type="text" autocomplete="off" spellcheck="false">
+            <input @keydown.enter.prevent="saveServer" v-model="server.model" type="text" autocomplete="off" spellcheck="false">
           </label>
           <button type="button" class="btn" :disabled="adding" @click="saveServer">{{ adding ? 'Checking the server…' : 'Add server' }}</button>
         </template>

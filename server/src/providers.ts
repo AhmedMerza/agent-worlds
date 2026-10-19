@@ -81,6 +81,7 @@ export function saveKey(home: string, id: string, key: string | null) {
   dropSettings(home, id);
 }
 
+/** Removes a provider's session settings files (qwen-<id>-<hash>.json, see agents.ts); not those of an id it is a prefix of. */
 function dropSettings(home: string, id: string) {
-  for (const f of readdirSync(home)) if (f.startsWith(`qwen-${id}-`)) rmSync(join(home, f), { force: true });
+  for (const f of readdirSync(home)) if (f.startsWith(`qwen-${id}-`) && /^[0-9a-f]{10}\.json$/.test(f.slice(`qwen-${id}-`.length))) rmSync(join(home, f), { force: true });
 }
