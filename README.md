@@ -233,8 +233,10 @@ servers) and holds a copy of your `config.toml` with the hooks added. The copy i
 time a session starts, so change settings in your own `~/.kimi-code/config.toml`. Changes made from
 inside a running Kimi session go to the copy and are lost.
 
-**Gemini CLI** works with a free Google login or a free [AI Studio](https://aistudio.google.com/apikey)
-`GEMINI_API_KEY`, so it needs no paid plan. Gemini's own tool prompt can't be answered by a hook
+**Gemini CLI** works with a free [AI Studio](https://aistudio.google.com/apikey) API key, so it needs no
+paid plan: choose "Use Gemini API key" when it first asks how to sign in, or set `GEMINI_API_KEY` where you
+start Agent Worlds. (Signing in with a Google account no longer works for individuals: Google moved that to
+Antigravity.) Gemini's own tool prompt can't be answered by a hook
 (its `BeforeTool` hook fires only after you confirm), so the sessions Agent Worlds starts run with
 `--approval-mode yolo` and the hook is the gate instead. Every tool Gemini would have asked about (edits,
 shell commands, web fetches, other MCP servers) waits under **Needs you** until you allow or deny it,
@@ -256,7 +258,7 @@ Two cases keep Gemini's own prompt as the gate:
   under Needs you.
 
 **Qwen Code with a provider.** When the agent is Qwen Code, New session can pick a **Model provider**:
-OpenRouter (free models such as `qwen/qwen3-coder:free`), Gemini API or Anthropic. Paste a key once;
+OpenRouter (by default `openrouter/free`, which routes to whichever models are free at the moment), Gemini API or Anthropic. Paste a key once;
 it is kept in `keys.json` in the Agent Worlds folder (mode 600), never shown again, and never put on a command
 line. The provider, model and key go into that session's Qwen system settings file, so `~/.qwen` stays
 as it is. "Your Qwen settings" uses whatever you set up yourself. (Anthropic keys go out as a Bearer

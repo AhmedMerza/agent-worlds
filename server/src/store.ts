@@ -51,7 +51,7 @@ export type Session = {
   direct: string | null;
   /** Your name for it, shown on its name tag. */
   label: string | null;
-  /** The model provider and model a Qwen session was started on ("OpenRouter · qwen/qwen3-coder:free"). */
+  /** The model provider and model a Qwen session was started on ("OpenRouter · openrouter/free"). */
   via: string | null;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
   log: { t: number; text: string }[];
@@ -293,7 +293,7 @@ export class Store {
     s.direct = o.direct ?? null;
     s.via = o.via ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
-      : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask you to sign in with Google and to trust this folder in the terminal'
+      : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask for your API key and to trust this folder in the terminal'
       : s.agent === 'kimi' && !o.task ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
       : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);

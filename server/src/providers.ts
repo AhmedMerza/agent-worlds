@@ -6,7 +6,7 @@ import { join } from 'node:path';
  * `auth` is Qwen's auth type; `model` is the default when none is given.
  */
 export const PROVIDERS = {
-  openrouter: { name: 'OpenRouter', auth: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-coder:free', keyUrl: 'https://openrouter.ai/keys' },
+  openrouter: { name: 'OpenRouter', auth: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/free', keyUrl: 'https://openrouter.ai/keys' },
   gemini: { name: 'Gemini API', auth: 'gemini', baseUrl: undefined, model: 'gemini-2.5-flash', keyUrl: 'https://aistudio.google.com/apikey' },
   anthropic: { name: 'Anthropic', auth: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', keyUrl: 'https://console.anthropic.com/settings/keys' },
 } as const;

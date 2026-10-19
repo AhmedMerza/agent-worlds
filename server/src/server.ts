@@ -613,7 +613,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.provider !== undefined) {
         if (agent !== 'qwen') return send(res, 400, { error: 'provider is only for Qwen Code sessions' });
         if (!isProvider(b.provider)) return send(res, 400, { error: `provider must be one of ${Object.keys(PROVIDERS).join(', ')}` });
-        if (b.model !== undefined && (typeof b.model !== 'string' || !MODEL_RE.test(b.model))) return send(res, 400, { error: 'model must be a model id like qwen/qwen3-coder:free' });
+        if (b.model !== undefined && (typeof b.model !== 'string' || !MODEL_RE.test(b.model))) return send(res, 400, { error: 'model must be a model id like openrouter/free' });
         const key = readKeys(opts.home ?? homeDir())[b.provider];
         if (!key) return send(res, 400, { error: `add your ${PROVIDERS[b.provider].name} key first` });
         provider = { id: b.provider, model: (b.model as string | undefined) ?? PROVIDERS[b.provider].model, key };
