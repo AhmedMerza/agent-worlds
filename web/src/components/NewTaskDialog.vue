@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, startRun, showToast, fetchProviders, saveProviderKey, type AgentInfo, type ProviderInfo } from '../store'
-import { baseName, modeField, withRepo, STEP_LABEL, type ModeChoice } from '../logic'
+import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, startRun, showToast, fetchProviders, saveProviderKey, saveDefaultProvider, addServer, removeServer, type AgentInfo, type ProviderInfo } from '../store'
+import { baseName, modeField, withRepo, openHttp, STEP_LABEL, type ModeChoice } from '../logic'
 import type { StepKind } from '../types'
 import FolderBrowser from './FolderBrowser.vue'
 import PermissionSelect from './PermissionSelect.vue'
@@ -32,15 +32,44 @@ onMounted(async () => {
 /** Qwen only: a model provider for this session ('' = whatever the user set up in ~/.qwen). */
 const providers = ref<ProviderInfo[]>([])
 const provider = ref('')
+/** The provider New session starts on for Qwen ('' = your Qwen settings). */
+const defaultProvider = ref('')
 const prov = computed(() => providers.value.find((p) => p.id === provider.value))
 const key = ref('')
 const replacingKey = ref(false)
 const model = ref('')
 watch(provider, () => { key.value = ''; replacingKey.value = false; model.value = '' })
+/** provider === ADD: the form for a server of the user's own. */
+const ADD = '+add'
+const server = ref({ name: '', baseUrl: '', model: '', key: '' })
+const adding = ref(false)
+/** Adds the server in the form and picks it; false if it couldn't (the error says why). */
+async function saveServer(): Promise<boolean> {
+  const s = server.value
+  if (!s.name.trim() || !s.baseUrl.trim()) { error.value = 'A server needs a name and an address.'; return false }
+  adding.value = true; error.value = ''
+  const r = await addServer({ name: s.name.trim(), baseUrl: s.baseUrl.trim(), ...(s.model.trim() ? { model: s.model.trim() } : {}), ...(s.key.trim() ? { key: s.key.trim() } : {}) })
+  adding.value = false
+  if (!r.ok) { error.value = r.error; return false }
+  providers.value = [...providers.value.filter((p) => p.id !== r.data.provider.id), r.data.provider]
+  provider.value = r.data.provider.id
+  server.value = { name: '', baseUrl: '', model: '', key: '' }
+  return true
+}
+async function dropServer(p: ProviderInfo) {
+  const r = await removeServer(p.id)
+  if (!r.ok) { error.value = r.error; return }
+  providers.value = providers.value.filter((x) => x !== p)
+  if (defaultProvider.value === p.id) defaultProvider.value = ''
+  provider.value = defaultProvider.value
+  showToast(`Removed ${p.name}`)
+}
 watch(agent, async (a) => {
   if (a !== 'qwen' || providers.value.length) return
   const r = await fetchProviders()
-  if (r.ok) providers.value = r.data.providers; else error.value = `Couldn't load the model providers: ${r.error}`
+  if (!r.ok) { error.value = `Couldn't load the model providers: ${r.error}`; return }
+  providers.value = r.data.providers
+  defaultProvider.value = provider.value = r.data.default ?? ''
 })
 /** Run mode: the task goes through these steps, each on its own agent, in one folder. */
 const asRun = ref(props.run ?? false)
@@ -53,6 +82,10 @@ const addStep = () => { steps.value.push({ kind: 'review-code', agent: defaultAg
 async function forgetKey(p: ProviderInfo) {
   const r = await saveProviderKey(p.id, null)
   if (r.ok) { p.hasKey = false; replacingKey.value = false } else error.value = r.error
+}
+async function makeProviderDefault() {
+  const r = await saveDefaultProvider(provider.value)
+  if (r.ok) defaultProvider.value = r.data.default ?? ''; else error.value = r.error
 }
 async function makeDefault() {
   const r = await saveDefaultAgent(agent.value)
@@ -101,8 +134,9 @@ async function submit() {
     showToast(`Run started: ${STEP_LABEL[steps.value[0].kind]} first`)
     return emit('close')
   }
+  if (agent.value === 'qwen' && provider.value === ADD && !(await saveServer())) return
   const p = agent.value === 'qwen' ? prov.value : undefined
-  if (p && !p.hasKey && !key.value.trim()) { error.value = `Paste your ${p.name} key, or pick “Your Qwen settings”.`; return }
+  if (p && !p.hasKey && !p.custom && !key.value.trim()) { error.value = `Paste your ${p.name} key, or pick “Your Qwen settings”.`; return }
   sending.value = true; error.value = ''
   if (p && key.value.trim()) {
     const r = await saveProviderKey(p.id, key.value.trim())
@@ -160,17 +194,43 @@ async function submit() {
         <button v-if="agent && agent !== defaultAgent" type="button" class="btn" @click="makeDefault">Make default</button>
       </div>
       <template v-if="!asRun && agent === 'qwen' && providers.length">
-        <label>Model provider
-          <select v-model="provider" aria-label="Model provider"><option value="">Your Qwen settings</option><option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.hasKey ? '' : ' (needs a key)' }}</option></select>
-        </label>
+        <div class="folder-row">
+          <label>Model provider
+            <select v-model="provider" aria-label="Model provider"><option value="">Your Qwen settings{{ defaultProvider ? '' : ' (default)' }}</option><option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.id === defaultProvider ? ' (default)' : p.hasKey || p.custom ? '' : ' (needs a key)' }}</option><option :value="ADD">Add a server of your own…</option></select>
+          </label>
+          <button v-if="provider !== ADD && provider !== defaultProvider" type="button" class="btn" @click="makeProviderDefault">Make default</button>
+        </div>
+        <template v-if="provider === ADD">
+          <p class="why">Any server that speaks the OpenAI API: a friend's llama.cpp, vLLM, LM Studio or Ollama. Sessions on it send it your prompts and the code the agent reads. It is saved on this computer for later sessions; pressing Start saves it too.</p>
+          <label>Name
+            <input @keydown.enter.prevent="saveServer" v-model="server.name" type="text" autocomplete="off" placeholder="Sam's Qwen">
+          </label>
+          <label>Address (usually ends in /v1)
+            <input @keydown.enter.prevent="saveServer" v-model="server.baseUrl" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.20:8080/v1" :aria-describedby="openHttp(server.baseUrl) ? 'server-note' : undefined">
+          </label>
+          <p v-if="openHttp(server.baseUrl)" id="server-note" class="why warn" role="status">This is plain http to a server outside your network: your prompts and code travel unencrypted, and anyone on the way can read them. Use https if the server offers it.</p>
+          <label>Model (optional; empty asks the server)
+            <input @keydown.enter.prevent="saveServer" v-model="server.model" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label>API key (optional; most servers of your own have none)
+            <input @keydown.enter.prevent="saveServer" v-model="server.key" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty if it has none">
+          </label>
+          <button type="button" class="btn" :disabled="adding" @click="saveServer">{{ adding ? 'Checking the server…' : 'Add server' }}</button>
+        </template>
         <template v-if="prov">
-          <p class="why">Only this session uses it. Your own Qwen settings stay as they are.</p>
-          <template v-if="!prov.hasKey || replacingKey">
-            <p id="key-note" class="why">The key is kept on this computer only (in <code>keys.json</code> in the Agent Worlds folder) until you replace or forget it, and is never shown again. <a :href="prov.keyUrl" target="_blank" rel="noopener">Get a {{ prov.name }} key</a></p>
-            <label>{{ prov.name }} API key
+          <p class="why">{{ prov.custom ? 'Saved for later sessions.' : 'Only this session uses it.' }} Your own Qwen settings stay as they are.</p>
+          <p v-if="prov.custom" class="why">Your server at <code>{{ prov.baseUrl }}</code>.
+            <button type="button" class="btn" @click="dropServer(prov)">Remove server</button>
+          </p>
+          <p v-if="prov.custom && !prov.hasKey && !replacingKey" class="why">No key: sessions connect without one.
+            <button type="button" class="btn" @click="replacingKey = true">Add a key</button>
+          </p>
+          <template v-else-if="!prov.hasKey || replacingKey">
+            <p id="key-note" class="why">The key is kept on this computer only (in <code>keys.json</code> in the Agent Worlds folder) until you replace or forget it, and is never shown again. <a v-if="prov.keyUrl" :href="prov.keyUrl" target="_blank" rel="noopener">Get a {{ prov.name }} key</a></p>
+            <label>{{ prov.name }} API key{{ prov.custom ? ' (optional)' : '' }}
               <input v-model="key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key" aria-describedby="key-note">
             </label>
-            <button v-if="replacingKey" type="button" class="btn" @click="replacingKey = false; key = ''">Keep the saved key</button>
+            <button v-if="replacingKey" type="button" class="btn" @click="replacingKey = false; key = ''">{{ prov.hasKey ? 'Keep the saved key' : 'No key' }}</button>
           </template>
           <p v-else class="why">Your {{ prov.name }} key is saved on this computer.
             <button type="button" class="btn" @click="replacingKey = true">Replace key</button>

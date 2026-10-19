@@ -450,3 +450,12 @@ export function resumeOutcome(status: number, body: unknown): ResumeResult {
 /** The agents "Continue in" can hand a session to: installed, and not the one the session already runs. */
 export const otherAgents = <T extends { id: string; installed: boolean }>(agents: T[] | null, current: string): T[] =>
   (agents ?? []).filter((a) => a.installed && a.id !== current)
+
+/** Whether a server address is plain http to a host outside your own network (where anyone on the way can read it). */
+export function openHttp(address: string): boolean {
+  let u: URL
+  try { u = new URL(address.trim()) } catch { return false }
+  if (u.protocol !== 'http:') return false
+  const h = u.hostname.replace(/^\[|\]$/g, '')
+  return !(h === 'localhost' || h.endsWith('.local') || h === '::1' || /^(127|10)\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h))
+}
