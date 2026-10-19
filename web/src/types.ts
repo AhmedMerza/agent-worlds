@@ -29,6 +29,8 @@ export interface Session {
   repoName: string
   /** The CLI the session runs; absent from servers older than agent support. */
   agent?: string
+  /** Qwen's model provider and model, when one was picked in New session */
+  via?: string | null
   cwd: string
   branch: string | null
   worktree: boolean

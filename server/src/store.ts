@@ -51,6 +51,8 @@ export type Session = {
   direct: string | null;
   /** Your name for it, shown on its name tag. */
   label: string | null;
+  /** The model provider and model a Qwen session was started on ("OpenRouter · openrouter/free"). */
+  via: string | null;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];
@@ -279,17 +281,19 @@ export class Store {
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
-  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId }): Promise<string> {
+  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null }): Promise<string> {
     // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
     const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
-    if (live) { if (o.task && !live.task) { live.task = oneLine(o.task, 200); this.push(live); } return live.id; }
+    if (live) { if (o.task && !live.task) live.task = oneLine(o.task, 200); live.via ??= o.via ?? null; this.push(live); return live.id; }
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir, null, null, o.agent);
     s.state = 'starting';
     s.task = o.task ? oneLine(o.task, 200) : null;
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
+    s.via = o.via ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
+      : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask for your API key and to trust this folder in the terminal'
       : s.agent === 'kimi' && !o.task ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
       : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);
@@ -315,7 +319,7 @@ export class Store {
     if (named && starting) this.deps.labels!.set(starting.id, null);
     const s: Session = {
       id, agent, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
-      branch: info.branch, worktree: info.worktree, tmux: null, direct, label: this.deps.labels?.get(id) ?? null,
+      branch: info.branch, worktree: info.worktree, tmux: null, direct, label: this.deps.labels?.get(id) ?? null, via: null,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
@@ -325,6 +329,7 @@ export class Store {
       s.task = starting.task;
       s.startedAt = starting.startedAt;
       s.tmux = starting.tmux;
+      s.via = starting.via;
     }
     if (prior) this.remove(prior);
     this.sessions.set(id, s);
@@ -434,7 +439,8 @@ export class Store {
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         const key = inputKey(tool, input);
-        const match = s.pending.find((x) => x.key === key) ?? s.pending.find((x) => x.tool === tool);
+        // Gemini's input is the same before and after; matching its tool name alone could deny another held call of it.
+        const match = s.pending.find((x) => x.key === key) ?? (s.agent === 'gemini' ? undefined : s.pending.find((x) => x.tool === tool));
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, rest ?? 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
@@ -465,7 +471,8 @@ export class Store {
           requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
           tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
-          live: AGENTS[s.agent].decides && this.deps.clientsConnected(), resolve: null, timer: null,
+          // Gemini has no prompt of its own to fall back on (gemini.ts): its requests wait for a page to open.
+          live: AGENTS[s.agent].decides && (this.deps.clientsConnected() || s.agent === 'gemini'), resolve: null, timer: null,
         };
         s.pending.push(pend);
         s.state = 'waiting';
@@ -478,6 +485,8 @@ export class Store {
           pend.timer = setTimeout(() => {
             pend.live = false; pend.timer = null;
             resolve('{}'); pend.resolve = null;
+            // Gemini has no prompt to answer it in instead: '{}' denied it, so it is gone.
+            if (s.agent === 'gemini') { s.pending = s.pending.filter((x) => x !== pend); this.afterPending(s, 'working'); }
             if (this.sessions.has(s.id)) this.push(s);
           }, this.deps.holdMs);
           // Esc in the terminal kills the hook: the request is gone, the session sits at its prompt.

@@ -120,7 +120,7 @@ test('POST /api/sessions/:id/continue: 404/409/422, and a happy path in the same
     assert.equal(app.store.sessions.get('k1')?.agent, 'kimi');
 
     assert.equal((await cont('nope', { agent: 'claude' })).status, 404);
-    assert.equal((await cont('k1', { agent: 'gemini' })).status, 422);
+    assert.equal((await cont('k1', { agent: 'cursor' })).status, 422);
     const same = await cont('k1', { agent: 'kimi' });
     assert.equal(same.status, 409);
     assert.match((await same.json() as any).error, /already runs Kimi Code/);

@@ -30,6 +30,16 @@ test('aw-hook: silent exit 0 when disabled, unconfigured or the server is down',
   assert.equal(down.code, 0);
   assert.equal(down.out, '');
   assert.ok(down.ms < 3000, `took ${down.ms}ms`);
+  // Gemini runs in yolo mode with this hook as its only gate: a tool it cannot ask about does not run
+  const gate = await runHook({ AGENT_WORLDS_HOME: home }, '{"hook_event_name":"BeforeTool","tool_name":"write_file"}', ['gemini']);
+  assert.deepEqual([gate.code, JSON.parse(gate.out).decision], [0, 'deny']);
+  assert.equal(JSON.parse((await runHook({ AGENT_WORLDS_HOME: home, AGENT_WORLDS_DISABLE: '1' }, '{"hook_event_name":"BeforeTool"}', ['gemini'])).out).decision, 'deny');
+  assert.equal((await runHook({ AGENT_WORLDS_HOME: home }, '{"hook_event_name":"AfterAgent"}', ['gemini'])).out, '', 'other events stay silent');
+  assert.equal(JSON.parse((await runHook({ AGENT_WORLDS_HOME: tmp() }, '{"hook_event_name":"BeforeTool"}', ['gemini'])).out).decision, 'deny', 'unconfigured');
+  const broken = createServer((_q, res) => { res.writeHead(500); res.end('oops'); });
+  await new Promise<void>((r) => broken.listen(0, '127.0.0.1', r));
+  writeFileSync(join(home, 'endpoint'), `http://127.0.0.1:${(broken.address() as any).port}\n`);
+  try { assert.equal(JSON.parse((await runHook({ AGENT_WORLDS_HOME: home }, '{"hook_event_name":"BeforeTool"}', ['gemini'])).out).decision, 'deny', 'a 500'); } finally { broken.close(); }
   const off = await runHook({ AGENT_WORLDS_HOME: home, AGENT_WORLDS_DISABLE: '1' }, '{}');
   assert.equal(off.code, 0);
 });

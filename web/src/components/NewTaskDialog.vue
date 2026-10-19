@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, startRun, showToast, type AgentInfo } from '../store'
+import { state, browseFs, createSession, updateWorld, moveRepo, fetchAgents, saveDefaultAgent, startRun, showToast, fetchProviders, saveProviderKey, type AgentInfo, type ProviderInfo } from '../store'
 import { baseName, modeField, withRepo, STEP_LABEL, type ModeChoice } from '../logic'
 import type { StepKind } from '../types'
 import FolderBrowser from './FolderBrowser.vue'
@@ -29,6 +29,19 @@ onMounted(async () => {
   const other = r.data.agents.find((a) => a.installed && a.id !== r.data.default)?.id ?? r.data.default
   steps.value = steps.value.map((st, i) => ({ ...st, agent: i % 2 ? other : r.data.default }))
 })
+/** Qwen only: a model provider for this session ('' = whatever the user set up in ~/.qwen). */
+const providers = ref<ProviderInfo[]>([])
+const provider = ref('')
+const prov = computed(() => providers.value.find((p) => p.id === provider.value))
+const key = ref('')
+const replacingKey = ref(false)
+const model = ref('')
+watch(provider, () => { key.value = ''; replacingKey.value = false; model.value = '' })
+watch(agent, async (a) => {
+  if (a !== 'qwen' || providers.value.length) return
+  const r = await fetchProviders()
+  if (r.ok) providers.value = r.data.providers; else error.value = `Couldn't load the model providers: ${r.error}`
+})
 /** Run mode: the task goes through these steps, each on its own agent, in one folder. */
 const asRun = ref(props.run ?? false)
 const steps = ref<{ kind: StepKind; agent: string; checkpoint: boolean }[]>([
@@ -37,6 +50,10 @@ const steps = ref<{ kind: StepKind; agent: string; checkpoint: boolean }[]>([
 ])
 const kinds = Object.keys(STEP_LABEL) as StepKind[]
 const addStep = () => { steps.value.push({ kind: 'review-code', agent: defaultAgent.value, checkpoint: false }) }
+async function forgetKey(p: ProviderInfo) {
+  const r = await saveProviderKey(p.id, null)
+  if (r.ok) { p.hasKey = false; replacingKey.value = false } else error.value = r.error
+}
 async function makeDefault() {
   const r = await saveDefaultAgent(agent.value)
   if (r.ok) defaultAgent.value = r.data.default; else error.value = r.error
@@ -84,8 +101,15 @@ async function submit() {
     showToast(`Run started: ${STEP_LABEL[steps.value[0].kind]} first`)
     return emit('close')
   }
+  const p = agent.value === 'qwen' ? prov.value : undefined
+  if (p && !p.hasKey && !key.value.trim()) { error.value = `Paste your ${p.name} key, or pick “Your Qwen settings”.`; return }
   sending.value = true; error.value = ''
-  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...(agent.value ? { agent: agent.value } : {}), ...(chosen.value?.modes === false ? {} : modeField(mode.value)), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
+  if (p && key.value.trim()) {
+    const r = await saveProviderKey(p.id, key.value.trim())
+    if (!r.ok) { sending.value = false; error.value = r.error; return }
+    p.hasKey = true; key.value = ''; replacingKey.value = false
+  }
+  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...(agent.value ? { agent: agent.value } : {}), ...(p ? { provider: p.id, ...(model.value.trim() ? { model: model.value.trim() } : {}) } : {}), ...(chosen.value?.modes === false ? {} : modeField(mode.value)), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
   sending.value = false
   if (err) error.value = err
   else emit('close')
@@ -135,9 +159,32 @@ async function submit() {
         </label>
         <button v-if="agent && agent !== defaultAgent" type="button" class="btn" @click="makeDefault">Make default</button>
       </div>
+      <template v-if="!asRun && agent === 'qwen' && providers.length">
+        <label>Model provider
+          <select v-model="provider" aria-label="Model provider"><option value="">Your Qwen settings</option><option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.hasKey ? '' : ' (needs a key)' }}</option></select>
+        </label>
+        <template v-if="prov">
+          <p class="why">Only this session uses it. Your own Qwen settings stay as they are.</p>
+          <template v-if="!prov.hasKey || replacingKey">
+            <p id="key-note" class="why">The key is kept on this computer only (in <code>keys.json</code> in the Agent Worlds folder) until you replace or forget it, and is never shown again. <a :href="prov.keyUrl" target="_blank" rel="noopener">Get a {{ prov.name }} key</a></p>
+            <label>{{ prov.name }} API key
+              <input v-model="key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key" aria-describedby="key-note">
+            </label>
+            <button v-if="replacingKey" type="button" class="btn" @click="replacingKey = false; key = ''">Keep the saved key</button>
+          </template>
+          <p v-else class="why">Your {{ prov.name }} key is saved on this computer.
+            <button type="button" class="btn" @click="replacingKey = true">Replace key</button>
+            <button type="button" class="btn" @click="forgetKey(prov)">Forget key</button>
+          </p>
+          <label>Model (optional; empty means {{ prov.model }})
+            <input v-model="model" type="text" autocomplete="off" spellcheck="false" :placeholder="prov.model">
+          </label>
+        </template>
+      </template>
       <template v-if="!asRun">
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
       <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal, following your {{ chosen.name }} settings.</p>
+      <p v-else-if="chosen.id === 'gemini'" class="why">Free with an AI Studio API key: the first time, Gemini CLI asks for it and to trust the folder, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
       <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>
       <p v-if="chosen?.task === false" class="why">{{ chosen.name }} can't be handed a task when it starts: once it opens, type your first message in its terminal.</p>
       </template>

@@ -1,6 +1,6 @@
 # Agent Worlds
 
-**Run and watch many coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code) from one
+**Run and watch many coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) from one
 browser tab.** Sessions live in illustrated rooms, everything that needs you lands in one inbox,
 each session is the real agent CLI in a real terminal, and the agents can work together: they
 message each other and pass one task through steps.
@@ -16,7 +16,7 @@ message each other and pass one task through steps.
   one is waiting for you. Rooms, timers and a "needs you" count make that visible at a glance.
 - **Answer everything from one inbox.** Permission requests, questions, errors and finished
   turns from every session, oldest first. Allow, deny, answer or review without switching windows.
-- **A real terminal underneath.** Every session is the real agent CLI (`claude`, `codex`, `qwen`, `kimi`)
+- **A real terminal underneath.** Every session is the real agent CLI (`claude`, `codex`, `qwen`, `kimi`, `gemini`)
   in a real terminal, so skills, slash commands and your own keybindings all work. The GUI adds to the terminal, it does not replace it.
 - **Agents that work together.** One agent writes a plan, another reviews it, a third builds it.
   They message each other through the app, and you approve at checkpoints.
@@ -206,7 +206,7 @@ asks first (**Update anyway**).
 
 ## Other agent CLIs
 
-New session has an **Agent** choice: Claude Code, Codex, Qwen Code or Kimi Code (whichever is on
+New session has an **Agent** choice: Claude Code, Codex, Qwen Code, Kimi Code or Gemini CLI (whichever is on
 your PATH). They all report through the same hook as Claude, added only for the sessions
 Agent Worlds starts, so your own config is never edited. The rooms, timers, inbox and
 Allow/Deny work the same. These features are Claude-only for now:
@@ -232,6 +232,42 @@ Kimi only reads hooks from `config.toml` in its home folder, so its sessions get
 servers) and holds a copy of your `config.toml` with the hooks added. The copy is refreshed every
 time a session starts, so change settings in your own `~/.kimi-code/config.toml`. Changes made from
 inside a running Kimi session go to the copy and are lost.
+
+**Gemini CLI** works with a free [AI Studio](https://aistudio.google.com/apikey) API key, so it needs no
+paid plan: choose "Use Gemini API key" when it first asks how to sign in, or set `GEMINI_API_KEY` where you
+start Agent Worlds. (Signing in with a Google account no longer works for individuals: Google moved that to
+Antigravity.) Gemini's own tool prompt can't be answered by a hook
+(its `BeforeTool` hook fires only after you confirm), so the sessions Agent Worlds starts run with
+`--approval-mode yolo` and the hook is the gate instead. Every tool Gemini would have asked about (edits,
+shell commands, web fetches, other MCP servers) waits under **Needs you** until you allow or deny it,
+even when no page is open. Reads and searches run freely, as they do in Gemini by default. If Agent Worlds
+can't be reached, or nobody answers within the hour, the tool is denied, never let through.
+Esc in the terminal doesn't cancel a tool that is waiting; answer it under Needs you.
+Gemini only reads a system settings file from a folder owned by root, so its sessions get a home of their own
+instead (`gemini-home` in the Agent Worlds folder, passed as `GEMINI_CLI_HOME`), the way Kimi's do. It links
+to everything in your `~/.gemini` (login, history, extensions) and holds a copy of your `settings.json` with
+the hooks and the mailbox added, refreshed on every start. Your `~/.gemini` is untouched. Change settings
+in your own `~/.gemini/settings.json`; changes made from inside a running session go to the copy and are lost.
+
+Two cases keep Gemini's own prompt as the gate:
+- **A folder you haven't trusted in Gemini.** Gemini asks you to trust it the first time. Until you do, it
+  runs no hooks and won't use yolo mode, so it asks in its terminal as usual. Trusting a parent folder
+  covers the worktrees under it.
+- **A repo with its own `.gemini/settings.json`.** Those settings outrank yours and could switch hooks off,
+  so the session starts without yolo. Gemini asks in its terminal first, and the request then also waits
+  under Needs you.
+
+**Qwen Code with a provider.** When the agent is Qwen Code, New session can pick a **Model provider**:
+OpenRouter (by default `openrouter/free`, which routes to whichever models are free at the moment), Gemini API or Anthropic. Paste a key once;
+it is kept in `keys.json` in the Agent Worlds folder (mode 600), never shown again, and never put on a command
+line. The provider, model and key go into that session's Qwen system settings file, so `~/.qwen` stays
+as it is. "Your Qwen settings" uses whatever you set up yourself. (Anthropic keys go out as a Bearer
+token, the way Qwen sends them; this hasn't been tried with a live key yet.) Local models through
+Ollama aren't offered: small ones call tools too unreliably to count as a working free option.
+
+Not supported: **Antigravity CLI** (`agy`). It reads hooks only from a repo's `.agents/hooks.json` or
+the global `~/.gemini/config/hooks.json`, with no flag or environment variable to point it elsewhere,
+so adding them would mean editing your repo or your global config.
 
 ## Sessions message each other
 
@@ -263,6 +299,7 @@ who is speaking. It is set up only for the sessions Agent Worlds starts:
 - Codex: `-c mcp_servers.aw.*` overrides.
 - Qwen: the system settings file Agent Worlds already writes for it.
 - Kimi: an `mcp.json` in its own home, holding your servers plus `aw`.
+- Gemini: the system settings file Agent Worlds writes for it, with the `aw` server trusted.
 
 The mailbox tools run without asking for permission, because they only talk to Agent Worlds.
 
@@ -307,7 +344,7 @@ Runs are saved in `<home>/runs.json`, so a restart (for example **Update now**) 
 - git, curl
 - tmux (optional, recommended): keeps sessions running across restarts and lets you open them from your own terminal
 - [Claude Code](https://claude.com/claude-code) (`claude` on your PATH)
-- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) or [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`), to start sessions with those instead (see [Other agent CLIs](#other-agent-clis)). A local model through Ollama works for Qwen Code in its OpenAI-compatible mode: set `security.auth.selectedType` to `"openai"` in a workspace `.qwen/settings.json`, and `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in the environment Agent Worlds starts from. Small models (an 8B on an 8 GB GPU, say) are too weak for real agent work.
+- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) 0.29 or newer (`gemini`), to start sessions with those instead (see [Other agent CLIs](#other-agent-clis)). A local model through Ollama works for Qwen Code in its OpenAI-compatible mode: set `security.auth.selectedType` to `"openai"` in a workspace `.qwen/settings.json`, and `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in the environment Agent Worlds starts from. Small models (an 8B on an 8 GB GPU, say) are too weak for real agent work.
 - A C/C++ toolchain for `node-pty` if no prebuilt binary matches your platform
 
 ## Quick start
@@ -427,7 +464,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `extraHosts` | `[]` | extra `host:port` origins allowed to call the server, for example `"localhost:5190"` when running the web UI's Vite dev server |
 | `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
 | `claudeBin` | `"claude"` | the Claude Code binary used for new sessions and catch-up summaries |
-| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen` or `kimi`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
+| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen`, `kimi` or `gemini`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
 

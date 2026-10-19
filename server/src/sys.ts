@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';
-import { AGENTS, launchArgs, shq, type AgentId } from './agents.ts';
+import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.ts';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
 
@@ -111,7 +111,7 @@ export type SpawnDirect = (name: string, file: string, args: string[], cwd: stri
  * Start the agent CLI (`claude` unless told otherwise) in a new detached tmux session, optionally in a fresh worktree
  * (<repo>-worktrees/<branch>, new branch forked from the repo's default branch, see defaultStart). Everything goes through argv; nothing touches a shell.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; agent?: AgentId; prefix?: string; home?: string; resume?: string; permissionMode?: string; spawnDirect?: SpawnDirect }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; agent?: AgentId; prefix?: string; home?: string; resume?: string; permissionMode?: string; provider?: Provider; spawnDirect?: SpawnDirect }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
   const direct = !(await hasTmux());
   if (direct && !opts.spawnDirect) throw new Error(`this needs tmux, which is not installed (${TMUX_INSTALL}). Start sessions from the web page instead.`); // before any worktree is made
   const id = randomBytes(2).toString('hex');
@@ -132,7 +132,7 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   // user never installed the hooks globally.
   const agent = opts.agent ?? 'claude';
   const bin = agent === 'claude' ? opts.claudeBin ?? 'claude' : AGENTS[agent].bin;
-  const { args, env: agentEnv } = launchArgs(agent, { home: opts.home, resume: opts.resume, permissionMode: opts.permissionMode, task });
+  const { args, env: agentEnv } = launchArgs(agent, { home: opts.home, resume: opts.resume, permissionMode: opts.permissionMode, task, provider: opts.provider, dir });
   const vars = { ...(opts.home ? { AGENT_WORLDS_HOME: opts.home } : {}), ...agentEnv };
   const env = Object.entries(vars).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Kimi takes no starting prompt and drops keys typed before its TUI draws, so a task goes in through a

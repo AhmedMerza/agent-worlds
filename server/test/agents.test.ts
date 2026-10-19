@@ -85,7 +85,7 @@ test('claude keeps its own flags', () => {
 
 test('the default falls back to claude when unset, unknown or not installed', () => {
   assert.equal(defaultAgent(undefined, () => true), 'claude');
-  assert.equal(defaultAgent('gemini', () => true), 'claude');
+  assert.equal(defaultAgent('cursor', () => true), 'claude');
   assert.equal(defaultAgent('codex', () => false), 'claude');
   assert.equal(defaultAgent('codex', () => true), 'codex');
   assert.equal(installed('sh', '/nope:/bin'), true);

@@ -1,33 +1,41 @@
 #!/usr/bin/env bash
-# Claude Code hook -> Agent Worlds server. Codex, Qwen Code and Kimi Code run it too, with their name as $1.
+# Claude Code hook -> Agent Worlds server. Codex, Qwen Code, Kimi Code and Gemini CLI run it too, with their name as $1.
 # Reads the hook JSON on stdin and POSTs it with the token. Prints the server's reply
 # (a PermissionRequest decision) when there is one. Never fails the Claude session:
 # if the server is down, unconfigured, or AGENT_WORLDS_DISABLE=1, it exits 0 silently.
-# Early exits still read stdin, so Claude never writes into a closed pipe.
-quit() { cat >/dev/null; exit 0; }
+# Stdin is read first, so Claude never writes into a closed pipe.
+# The one exception to exiting silently: Gemini runs with --approval-mode yolo and this hook as the only gate
+# on its tools, so a BeforeTool that cannot reach the server is denied rather than let through.
+agent="claude"
+[[ "${1:-}" =~ ^[a-z]{1,20}$ ]] && agent="$1"
+payload="$(cat)"
+gate=""
+re='"hook_event_name":[[:space:]]*"BeforeTool"'
+[ "$agent" = gemini ] && [[ "$payload" =~ $re ]] && gate=1
+quit() {
+  [ -n "$gate" ] && printf '%s\n' '{"decision":"deny","reason":"Agent Worlds could not be reached to approve this tool, so it did not run."}'
+  exit 0
+}
 [ "${AGENT_WORLDS_DISABLE:-}" = "1" ] && quit
 home="${AGENT_WORLDS_HOME:-$HOME/.config/agent-worlds}"
 [ -r "$home/endpoint" ] && [ -r "$home/token" ] || quit
 command -v curl >/dev/null 2>&1 || quit
 url="$(head -n1 "$home/endpoint")"
 token="$(head -n1 "$home/token")"
-payload="$(cat)"
 max=2
-re='"hook_event_name":[[:space:]]*"(PermissionRequest|SessionEnd)"'
+re='"hook_event_name":[[:space:]]*"(PermissionRequest|BeforeTool|SessionEnd)"'
 if [[ "$payload" =~ $re ]]; then
-  # PermissionRequest is held until the GUI decides (the server gives up at 3540 s, the hook timeout is 3600 s).
-  [ "${BASH_REMATCH[1]}" = PermissionRequest ] && max=3590 || max=1
+  # PermissionRequest (and Gemini's BeforeTool) is held until the GUI decides (the server gives up at 3540 s, the hook timeout is 3600 s).
+  [ "${BASH_REMATCH[1]}" = SessionEnd ] && max=1 || max=3590
 fi
 pane=""
 [[ "${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] && pane="$TMUX_PANE"
 # A session the server runs itself (no tmux) carries its pty name instead.
-agent="claude"
-[[ "${1:-}" =~ ^[a-z]{1,20}$ ]] && agent="$1"
 pty=""
 [[ "${AGENT_WORLDS_PTY:-}" =~ ^[A-Za-z0-9_-]{1,100}$ ]] && pty="$AGENT_WORLDS_PTY"
 # Headers come from a process substitution so the token never appears in `ps`.
 out="$(printf '%s' "$payload" | curl -sS --fail --connect-timeout 1 --max-time "$max" \
   -H @<(printf 'X-AW-Token: %s\nX-AW-Pane: %s\nX-AW-Pty: %s\nX-AW-Agent: %s\nContent-Type: application/json\n' "$token" "$pane" "$pty" "$agent") \
-  --data-binary @- "$url/api/hook" 2>/dev/null)" || exit 0
+  --data-binary @- "$url/api/hook" 2>/dev/null)" || quit
 [ -n "$out" ] && printf '%s\n' "$out"
 exit 0

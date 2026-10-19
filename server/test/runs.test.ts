@@ -50,7 +50,7 @@ test('POST /api/runs validates the task and steps', async () => {
   assert.equal((await post('/api/runs', { ...RUN, task: '' , steps: [{ kind: 'plan', agent: 'claude' }] })).status, 400);
   assert.equal((await post('/api/runs', { ...RUN, steps: [] })).status, 400);
   assert.equal((await post('/api/runs', { ...RUN, steps: [{ kind: 'dance', agent: 'claude' }] })).status, 400);
-  assert.equal((await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'gemini' }] })).status, 400);
+  assert.equal((await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'cursor' }] })).status, 400);
   assert.equal(launched.length, 0);
 });
 
