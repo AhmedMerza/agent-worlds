@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { launchArgs, writeAgyHooks } from '../src/agents.ts';
-import { fromAgy, toAgy, lastStep, agyHooksDir } from '../src/agy.ts';
+import { fromAgy, toAgy, lastStep, agyHooksDir, asHelper } from '../src/agy.ts';
 
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const TOKEN = 'a'.repeat(64);
@@ -121,37 +121,63 @@ test('an agy session: tool use shows on its card, the project note goes back, th
   } finally { await app.close(); }
 });
 
-test('an agy subagent is a helper of the session that made it, not a conversation replacing it', async () => {
+test('a subagent event becomes its parent\'s helper event; its prompt and transcript are not the parent\'s', () => {
+  const kid = { session_id: 'kid', cwd: '/r', transcript_path: '/t/kid.jsonl' };
+  for (const [ev, want] of [['SessionStart', 'SubagentStart'], ['Stop', 'SubagentStop'], ['StopFailure', 'SubagentStop'], ['Interrupt', 'SubagentStop'], ['PreToolUse', 'PreToolUse']]) {
+    const h = asHelper({ ...kid, hook_event_name: ev }, 'p1');
+    assert.deepEqual([h?.hook_event_name, h?.session_id, h?.agent_id, 'transcript_path' in h!], [want, 'p1', 'kid', false], ev);
+  }
+  assert.equal(asHelper({ ...kid, hook_event_name: 'UserPromptSubmit' }, 'p1'), null);
+});
+
+test('agy subagents are helpers of the session that made them, not conversations replacing it', async () => {
   const { app, hook, sessions } = await boot();
   const parentLog = transcript([{ type: 'USER_INPUT', content: '<USER_REQUEST>\nlook around\n</USER_REQUEST>' }], 'p1');
   const kidLog = transcript([{ type: 'USER_INPUT', content: 'list the files' }], 'kid-1');
   const parent = (event: string, b: object = {}) => hook(event, { conversationId: 'p1', transcriptPath: parentLog, ...b });
-  const kid = (event: string, b: object = {}) => hook(event, { conversationId: 'kid-1', transcriptPath: kidLog, ...b });
-  const call = { name: 'invoke_subagent', args: { Subagents: [{ Role: 'Helper', Prompt: 'list the files' }] } };
+  const kid = (id: string, event: string, b: object = {}) => hook(event, { conversationId: id, transcriptPath: kidLog, ...b });
+  // One call that makes two subagents. In agy's TUI no transcript names them yet when they start: the call's count does
+  const call = { name: 'invoke_subagent', args: { Subagents: [{ Role: 'Helper', Prompt: 'list the files' }, { Role: 'Second', Prompt: 'read it' }] } };
   try {
     await parent('SessionStart');
     await parent('PreInvocation', { invocationNum: 0 });
-    await parent('PreToolUse', { toolCall: call });
-    // In agy's TUI the parent's transcript names the subagent only later: the helper its call made is what claims it
-    await parent('PostToolUse', { error: '', toolCall: call });
-    const start = await kid('SessionStart');
+    await parent('PreToolUse', { stepIdx: 3, toolCall: call });
+    await parent('PostToolUse', { stepIdx: 3, error: '', toolCall: call });
+    const start = await kid('kid-1', 'SessionStart');
     assert.match(JSON.stringify(await start.json()), /working on is/, 'the subagent gets the project note too');
-    await kid('PreInvocation', { invocationNum: 0 });
-    await kid('PreToolUse', { toolCall: { name: 'list_dir', args: { DirectoryPath: '/r' } } });
+    await kid('kid-1', 'PreInvocation', { invocationNum: 0 });
+    await kid('kid-1', 'PreToolUse', { toolCall: { name: 'list_dir', args: { DirectoryPath: '/r' } } });
+    await kid('kid-2', 'SessionStart');
     let all = await sessions();
     assert.deepEqual(all.map((s: any) => s.id), ['p1']);
     assert.deepEqual([all[0].task, all[0].helpers.map((h: any) => [h.task, h.state])], ['look around', [['Helper', 'working']]]);
-    await kid('Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true });
+    assert.equal(app.store.sessions.get('p1')!.logPath, parentLog, "a subagent's transcript is not the session's");
+    await kid('kid-1', 'Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true });
+    await kid('kid-2', 'Stop', { terminationReason: 'ERROR', error: 'quota' });
     all = await sessions();
-    assert.deepEqual([all[0].state, all[0].helpers[0].state], ['working', 'done'], "the subagent's end is not the turn's");
-    // A call that made two: the second is found in the transcript of the one that made it, once written
-    transcript([{ type: 'GENERIC', content: 'Created the following subagents:\n{\n  "conversationId": "kid-2"\n}' }], 'kid-1');
-    await hook('SessionStart', { conversationId: 'kid-2', transcriptPath: kidLog });
-    assert.deepEqual((await sessions()).map((s: any) => s.id), ['p1']);
-    await hook('Stop', { conversationId: 'p1', transcriptPath: parentLog, terminationReason: 'NO_TOOL_CALL', fullyIdle: true });
+    assert.deepEqual([all[0].state, all[0].helpers[0].state], ['working', 'done'], "the subagents' ends are not the turn's");
+    // Both are claimed: the next conversation in the pane is a new one (/new in agy), replacing the session as for other CLIs
+    await parent('Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true });
     assert.equal((await sessions())[0].state, 'done', 'the parent still ends its own turn');
-    // A conversation nobody created (/new in agy) replaces the session in that pane, as for the other CLIs
     await hook('SessionStart', { conversationId: 'new-1', transcriptPath: kidLog });
     assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
+    // A subagent of the session that is gone stays out: it does not bring that session back over the new one
+    assert.equal((await kid('kid-1', 'PreToolUse', { toolCall: { name: 'list_dir', args: {} } })).status, 204);
+    assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
+  } finally { await app.close(); }
+});
+
+test('a failed invoke_subagent owes no subagent: the next conversation is a new one, and its helper ends', async () => {
+  const { app, hook, sessions } = await boot();
+  const log = transcript([{ type: 'USER_INPUT', content: 'x' }], 'p2');
+  const call = { name: 'invoke_subagent', args: { Subagents: [{ Role: 'Helper' }] } };
+  try {
+    await hook('SessionStart', { conversationId: 'p2', transcriptPath: log });
+    await hook('PreToolUse', { conversationId: 'p2', transcriptPath: log, stepIdx: 5, toolCall: call });
+    await hook('PostToolUse', { conversationId: 'p2', transcriptPath: log, stepIdx: 5, error: 'invalid args', toolCall: call });
+    assert.equal((await sessions())[0].helpers[0].state, 'done');
+    await hook('SessionStart', { conversationId: 'new-2', transcriptPath: log });
+    assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-2']);
+    assert.equal((await hook('SessionStart', { conversationId: '', transcriptPath: log })).status, 400, 'no id: refused, not folded in');
   } finally { await app.close(); }
 });

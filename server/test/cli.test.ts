@@ -50,7 +50,7 @@ test('aw-hook: posts payload with token + pane and prints the reply', async (t) 
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      seen.push({ url: req.url, token: req.headers['x-aw-token'], pane: req.headers['x-aw-pane'], agent: req.headers['x-aw-agent'], event: req.headers['x-aw-event'], dir: req.headers['x-aw-dir'], body });
+      seen.push({ url: req.url, token: req.headers['x-aw-token'], pane: req.headers['x-aw-pane'], agent: req.headers['x-aw-agent'], event: req.headers['x-aw-event'], dir: req.headers['x-aw-dir'], evil: req.headers['x-evil'], body });
       if (body.includes('PermissionRequest')) { res.writeHead(200); res.end('{"hookSpecificOutput":{}}'); }
       else { res.writeHead(204); res.end(); }
     });
@@ -63,7 +63,7 @@ test('aw-hook: posts payload with token + pane and prints the reply', async (t) 
   const payload = '{"session_id":"s","hook_event_name":"PermissionRequest","tool_input":{"command":"echo \'$(id)\'"}}';
   const r = await runHook({ AGENT_WORLDS_HOME: home, TMUX_PANE: '%3' }, payload);
   assert.equal(r.out, '{"hookSpecificOutput":{}}\n');
-  assert.deepEqual(seen[0], { url: '/api/hook', token: 'T'.repeat(64), pane: '%3', agent: 'claude', event: undefined, dir: undefined, body: payload });
+  assert.deepEqual(seen[0], { url: '/api/hook', token: 'T'.repeat(64), pane: '%3', agent: 'claude', event: undefined, dir: undefined, evil: undefined, body: payload });
   const quiet = await runHook({ AGENT_WORLDS_HOME: home, TMUX_PANE: 'bogus; rm -rf /' }, '{"hook_event_name":"Stop"}');
   assert.equal(quiet.out, '');
   assert.equal(seen[1].pane, undefined, 'an invalid TMUX_PANE is not sent');
@@ -75,6 +75,10 @@ test('aw-hook: posts payload with token + pane and prints the reply', async (t) 
   assert.deepEqual([seen[4].agent, seen[4].event, seen[4].dir], ['agy', 'PreToolUse', '/r'], 'agy names the event as the second argument, and its project');
   await runHook({ AGENT_WORLDS_HOME: home }, '{}', ['agy', 'Pre Tool; x']);
   assert.equal(seen[5].event, undefined);
+  // The project folder goes only with an event, and only as one plain absolute path
+  for (const dir of ['rel', '/a\nX-Evil: 1', '/' + 'a'.repeat(4001)]) await runHook({ AGENT_WORLDS_HOME: home, AGENT_WORLDS_DIR: dir }, '{}', ['agy', 'PreToolUse']);
+  await runHook({ AGENT_WORLDS_HOME: home, AGENT_WORLDS_DIR: '/r' }, '{}', ['claude']);
+  assert.deepEqual(seen.slice(6).map((x) => [x.dir, x.evil]), [[undefined, undefined], [undefined, undefined], [undefined, undefined], [undefined, undefined]]);
 
 });
 

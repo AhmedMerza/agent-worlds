@@ -30,10 +30,10 @@ const TOOLS: Record<string, [string, (a: Record<string, unknown>) => Record<stri
   find_by_name: ['Glob', (a) => ({ pattern: a.Pattern, path: a.SearchDirectory })],
   search_web: ['WebSearch', (a) => ({ query: a.query })],
   read_url_content: ['WebFetch', (a) => ({ url: a.Url })],
-  // A helper, as Claude's Task tool is: the call returns at once and the subagent runs on (see asHelper)
+  // A helper, as Claude's Task tool is: the call returns at once and the subagents run on (see asHelper)
   invoke_subagent: ['Task', (a) => {
-    const first = (Array.isArray(a.Subagents) ? a.Subagents[0] : undefined) as { Role?: unknown; Prompt?: unknown } | undefined;
-    return { description: first?.Role ?? first?.Prompt };
+    const all = Array.isArray(a.Subagents) ? a.Subagents as { Role?: unknown; Prompt?: unknown }[] : [];
+    return { description: all[0]?.Role ?? all[0]?.Prompt, subagents: Math.max(all.length, 1) };
   }],
 };
 
@@ -79,10 +79,12 @@ export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: st
       const prompt = lastStep(p.transcriptPath, 'USER_INPUT');
       return { ...base, hook_event_name: 'UserPromptSubmit', prompt: prompt.match(/<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/)?.[1] ?? prompt };
     }
-    case 'PreToolUse': return { ...base, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input };
+    // The store finds a helper by its call's id: given on the call and, as it ends the helper, on a failed call only
+    // (a call that worked returns while its subagents run on, and their Stop ends it)
+    case 'PreToolUse': return { ...base, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, ...(tool === 'Task' ? { tool_use_id: `${p.conversationId}:${p.stepIdx}` } : {}) };
     case 'PostToolUse': return {
       ...base, hook_event_name: p.error ? 'PostToolUseFailure' : 'PostToolUse', tool_name: tool, tool_input: input, error: p.error || undefined,
-      ...(tool === 'Task' ? { tool_response: { isAsync: true } } : {}),
+      ...(tool === 'Task' && p.error ? { tool_use_id: `${p.conversationId}:${p.stepIdx}` } : {}),
     };
     case 'Stop':
       if (p.terminationReason === 'USER_CANCELED') return { ...base, hook_event_name: 'Interrupt' };
@@ -95,13 +97,14 @@ export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: st
 /**
  * A subagent's events, as its parent session's helper: agy runs each subagent as a conversation of its own, in the
  * same pane, which the store would otherwise take for a new conversation replacing the parent. Its prompt is the
- * parent's call, not yours, so it is dropped.
+ * parent's call, not yours, so it is dropped, and its transcript is not the parent's.
  */
 export function asHelper(body: Record<string, unknown>, parent: string): Record<string, unknown> | null {
   const ev = body.hook_event_name;
   if (ev === 'UserPromptSubmit') return null;
   const helperEv = ev === 'SessionStart' ? 'SubagentStart' : ev === 'Stop' || ev === 'StopFailure' || ev === 'Interrupt' ? 'SubagentStop' : ev;
-  return { ...body, session_id: parent, agent_id: body.session_id, hook_event_name: helperEv };
+  const { transcript_path: _, ...rest } = body;
+  return { ...rest, session_id: parent, agent_id: body.session_id, hook_event_name: helperEv };
 }
 
 /** agy's answer: the project note for SessionStart (a subagent's too), nothing for anything else (see above). */

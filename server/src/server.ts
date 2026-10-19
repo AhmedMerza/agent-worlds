@@ -179,26 +179,37 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
   const earlyMcp = new Set<string>();
   /**
-   * The agy session a conversation it has not seen is a subagent of: one in the same pane with a helper no subagent
-   * has claimed yet (its invoke_subagent hook ran before the subagent started), or whose transcript, or one of its
-   * subagents', names it (agy writes that once it created the subagent, though in its TUI only later). Anything else
-   * is a new conversation.
+   * The agy session a conversation it has not seen is a subagent of (agy runs each subagent as a conversation of its
+   * own, in the same pane). Its invoke_subagent calls count the subagents still to start (agyPending: the hook runs
+   * before they do), and the first conversation in that pane claims one. Failing that, a subagent is one a transcript
+   * there names (agy writes that once it created it, though in its TUI only later). Anything else is a new conversation.
+   * null: a subagent of a session that is gone, whose events are dropped rather than bring it back.
    */
   const agyChildren = new Map<string, { parent: string; log: unknown }>();
-  const agyParent = (id: string, log: unknown, pane: unknown, pty: unknown): string | undefined => {
-    if (agyChildren.has(id)) return agyChildren.get(id)!.parent;
+  const agyPending = new Map<string, number>();
+  const agyParent = (id: string, log: unknown, pane: unknown, pty: unknown): string | null | undefined => {
+    const known = agyChildren.get(id);
+    if (known) return store.sessions.has(known.parent) ? known.parent : null;
     if (store.sessions.has(id) || (!pane && !pty)) return undefined;
     const here = [...store.sessions.values()].filter((s) => s.agent === 'agy' && ((pane && s.tmux?.pane === pane) || (pty && s.direct === pty)));
+    const owed = here.find((s) => (agyPending.get(s.id) ?? 0) > 0);
+    if (owed) agyPending.set(owed.id, agyPending.get(owed.id)! - 1);
     const logs = [...here.map((s) => ({ parent: s.id, log: s.logPath as unknown })), ...[...agyChildren.values()].filter((c) => here.some((s) => s.id === c.parent))];
-    const parent = here.find((s) => s.helpers.some((h) => h.state === 'working' && !h.agentId))?.id ?? logs.find((c) => mentions(c.log, id))?.parent;
+    const parent = owed?.id ?? logs.find((c) => mentions(c.log, id))?.parent;
     if (parent) agyChildren.set(id, { parent, log });
     return parent;
+  };
+  /** Keeps agyPending: a call adds the subagents it asked for; a failed call, or the next prompt, clears what is owed. */
+  const agyCount = (b: Record<string, unknown>) => {
+    const id = String(b.session_id);
+    if (b.hook_event_name === 'UserPromptSubmit' || (b.hook_event_name === 'PostToolUseFailure' && b.tool_name === 'Task')) agyPending.delete(id);
+    else if (b.hook_event_name === 'PreToolUse' && b.tool_name === 'Task') agyPending.set(id, (agyPending.get(id) ?? 0) + Number((b.tool_input as { subagents?: unknown }).subagents ?? 1));
   };
   const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); }
+    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -421,8 +432,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       let body = agent === 'gemini' ? fromGemini(raw) : agent === 'agy' ? fromAgy(raw, event, agyDir, req.headers['x-aw-dir']) : raw;
       const agyCwd = body?.cwd;
       if (body && agent === 'agy') {
-        const parent = agyParent(String(body.session_id), body.transcript_path, pane, pty);
-        if (parent) body = asHelper(body, parent);
+        const id = body.session_id;
+        const parent = typeof id === 'string' && id ? agyParent(id, body.transcript_path, pane, pty) : undefined;
+        if (parent === null) body = null;
+        else if (parent) body = asHelper(body, parent);
+        if (body) agyCount(body);
       }
       if (!body) { res.writeHead(204); return res.end(); }
       const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
