@@ -265,6 +265,15 @@ as it is. "Your Qwen settings" uses whatever you set up yourself. (Anthropic key
 token, the way Qwen sends them; this hasn't been tried with a live key yet.) Local models through
 Ollama aren't offered: small ones call tools too unreliably to count as a working free option.
 
+**A server of your own.** "Add a server of your own…" in the same list takes any server that speaks
+the OpenAI API (a friend's llama.cpp, vLLM, LM Studio): a name, its address (like
+`http://192.168.1.20:8080/v1`), and optionally a key and a model. With no model given, the server is
+asked for its first one (`/models`). Servers are kept in `servers.json` in the Agent Worlds folder
+(mode 600), their keys in `keys.json`; a server that needs no key gets a placeholder Qwen sends and the
+server ignores. A plain `http` address carries your prompts and code unencrypted, and the dialog says so.
+**Make default** next to Model provider makes New session start on that provider for Qwen (kept as
+`defaultProvider` in `config.json`); removing that server forgets it.
+
 Not supported: **Antigravity CLI** (`agy`). It reads hooks only from a repo's `.agents/hooks.json` or
 the global `~/.gemini/config/hooks.json`, with no flag or environment variable to point it elsewhere,
 so adding them would mean editing your repo or your global config.

@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { GEMINI_EVENTS } from './gemini.ts';
-import { PROVIDERS, type ProviderId } from './providers.ts';
 import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT, MCP_BRIDGE } from './hooks.ts';
 
 /**
@@ -150,8 +149,8 @@ function writeSettings(home: string, name: string, data: unknown): string {
   return file;
 }
 
-/** A model provider for one Qwen session, with its key (see providers.ts). */
-export type Provider = { id: ProviderId; model: string; key: string };
+/** A model provider for one Qwen session, resolved from providers.ts, with its key. */
+export type Provider = { id: string; auth: string; baseUrl?: string; model: string; key: string };
 
 /**
  * Qwen's system settings layer wins over ~/.qwen, so a provider picked for a session goes there and the
@@ -163,13 +162,12 @@ function writeQwenSettings(home: string, provider?: Provider): string {
   // trust: Qwen calls the mailbox tools without asking
   const base = { ...hooksBlock(undefined, 'qwen', HOOK_EVENTS), mcpServers: { aw: { ...mcpEntry('qwen'), trust: true } } };
   if (!provider) return writeSettings(home, 'qwen-settings.json', base);
-  const p = PROVIDERS[provider.id];
   const name = `qwen-${provider.id}-${createHash('sha1').update(provider.model).digest('hex').slice(0, 10)}.json`;
   return writeSettings(home, name, {
     ...base,
-    security: { auth: { selectedType: p.auth } },
+    security: { auth: { selectedType: provider.auth } },
     model: { name: provider.model },
-    modelProviders: { [p.auth]: [{ id: provider.model, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), envKey: 'AGENT_WORLDS_PROVIDER_KEY' }] },
+    modelProviders: { [provider.auth]: [{ id: provider.model, ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}), envKey: 'AGENT_WORLDS_PROVIDER_KEY' }] },
     env: { AGENT_WORLDS_PROVIDER_KEY: provider.key },
   });
 }

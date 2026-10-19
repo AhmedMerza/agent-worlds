@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, readlinkSync, lstatSync, statSync, writeFileSync, chmodSync, realpathSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { launchArgs, writeGeminiHome } from '../src/agents.ts';
 import { fromGemini, toGemini } from '../src/gemini.ts';
-import { readKeys, saveKey } from '../src/providers.ts';
+import { readKeys, saveKey, readServers, saveServer, serverUrl } from '../src/providers.ts';
 
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const TOKEN = 'g'.repeat(64);
@@ -92,7 +93,7 @@ test('Gemini: no yolo in a repo with its own .gemini/settings.json; the user\'s 
 test('a Qwen provider goes into its own 0600 settings file, the key never in argv or env', () => {
   const home = tmp();
   const key = 'sk-or-v1-' + 'a'.repeat(40);
-  const { args, env } = launchArgs('qwen', { home, task: 'go', provider: { id: 'openrouter', model: 'qwen/qwen3-coder:free', key } });
+  const { args, env } = launchArgs('qwen', { home, task: 'go', provider: { id: 'openrouter', auth: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-coder:free', key } });
   assert.deepEqual(args, ['-i', 'go']);
   assert.deepEqual(Object.keys(env), ['QWEN_CODE_SYSTEM_SETTINGS_PATH']);
   assert.ok(!JSON.stringify({ args, env }).includes(key));
@@ -107,9 +108,12 @@ test('a Qwen provider goes into its own 0600 settings file, the key never in arg
   assert.ok(s.hooks.PermissionRequest && s.mcpServers.aw, 'still reports and has the mailbox');
   const plain = launchArgs('qwen', { home, task: '' }).env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
   assert.ok(plain.endsWith('/qwen-settings.json') && !('modelProviders' in JSON.parse(readFileSync(plain, 'utf8'))));
-  // A new key drops the files that carry the old one
+  // A new key drops the files that carry the old one, not those of a server whose id starts the same
+  const other = join(home, 'qwen-openrouter-box-0123456789.json');
+  writeFileSync(other, '{}');
   saveKey(home, 'openrouter', 'sk-new-key-123');
   assert.ok(!existsSync(file));
+  assert.ok(existsSync(other), 'another provider\'s settings stay');
   assert.deepEqual(readKeys(home), { openrouter: 'sk-new-key-123' });
   assert.equal(statSync(join(home, 'keys.json')).mode & 0o777, 0o600);
 });
@@ -181,7 +185,7 @@ test('providers: a key is saved but never read back; a Qwen session starts with 
     assert.equal((await start({ agent: 'claude', provider: 'openrouter' })).status, 400, 'Qwen only');
     assert.equal((await start({ agent: 'qwen', provider: 'openrouter', model: 'bad model; rm' })).status, 400);
     assert.equal((await start({ agent: 'qwen', provider: 'openrouter', model: 'qwen/qwen3-coder:free' })).status, 201);
-    assert.deepEqual(calls.at(-1).provider, { id: 'openrouter', model: 'qwen/qwen3-coder:free', key });
+    assert.deepEqual(calls.at(-1).provider, { id: 'openrouter', auth: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-coder:free', key });
     const st = await (await fetch(`${base}/api/state`, { headers: H })).json() as any;
     assert.equal(st.sessions.find((x: any) => x.agent === 'qwen')?.via, 'OpenRouter · qwen/qwen3-coder:free', 'the session says what it runs on');
     assert.ok(!JSON.stringify(st).includes(key), 'the key is not in the state');
@@ -191,6 +195,90 @@ test('providers: a key is saved but never read back; a Qwen session starts with 
     assert.deepEqual(readKeys(home), {});
     assert.ok(!readdirSync(home).some((f) => f.startsWith('qwen-openrouter-')));
   } finally { process.env.PATH = path; await app.close(); }
+});
+
+test('a server of your own: added by address, its model asked for, no key needed, removable', async () => {
+  const { app, base, repo, home, calls } = await boot();
+  const llm = createServer((req, res) => {
+    res.writeHead(req.url === '/v1/models' ? 200 : 404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ object: 'list', data: [{ id: 'qwen3.8-flash-next-iq3_s' }] }));
+  });
+  await new Promise<void>((r) => llm.listen(0, '127.0.0.1', r));
+  const llmUrl = `http://127.0.0.1:${(llm.address() as { port: number }).port}/v1/`;
+  const bin = tmp();
+  writeFileSync(join(bin, 'qwen'), '#!/bin/sh\n'); chmodSync(join(bin, 'qwen'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  const H = { 'x-aw-token': TOKEN, 'content-type': 'application/json' };
+  const add = (b: object) => fetch(`${base}/api/providers`, { method: 'POST', headers: H, body: JSON.stringify(b) });
+  const start = (b: object) => fetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ worldId: 'web', repo, agent: 'qwen', ...b }) });
+  try {
+    assert.equal((await add({ name: 'x', baseUrl: 'file:///etc/passwd' })).status, 400);
+    assert.equal((await add({ name: 'x', baseUrl: 'http://u:p@host/v1' })).status, 400, 'no credentials in the address');
+    assert.equal((await add({ name: 'OpenRouter', baseUrl: llmUrl })).status, 400, 'a built-in name');
+    assert.equal((await add({ name: 'x', baseUrl: 'http://127.0.0.1:1/v1' })).status, 422, 'unreachable, no model typed');
+    const r = await add({ name: "Sam's Qwen", baseUrl: llmUrl });
+    assert.equal(r.status, 201);
+    assert.deepEqual((await r.json() as any).provider, { id: 'sam-s-qwen', name: "Sam's Qwen", model: 'qwen3.8-flash-next-iq3_s', hasKey: false, custom: true, baseUrl: llmUrl.slice(0, -1) });
+    const list = (await (await fetch(`${base}/api/providers`, { headers: H })).json() as any).providers;
+    assert.ok(list.some((p: any) => p.id === 'openrouter') && list.some((p: any) => p.id === 'sam-s-qwen' && p.custom));
+    assert.equal((await start({ provider: 'sam-s-qwen' })).status, 201, 'no key needed');
+    assert.deepEqual(calls.at(-1).provider, { id: 'sam-s-qwen', auth: 'openai', baseUrl: llmUrl.slice(0, -1), model: 'qwen3.8-flash-next-iq3_s', key: 'no-key' });
+    const st = await (await fetch(`${base}/api/state`, { headers: H })).json() as any;
+    assert.ok(st.sessions.some((x: any) => x.via === "Sam's Qwen · qwen3.8-flash-next-iq3_s"));
+    assert.equal((await start({ provider: 'constructor' })).status, 400, 'an inherited property is not a provider');
+    // A key saved for the server is the one sessions send
+    assert.equal((await fetch(`${base}/api/providers/sam-s-qwen/key`, { method: 'PUT', headers: H, body: JSON.stringify({ key: 'sk-sam-123456' }) })).status, 200);
+    assert.equal((await start({ provider: 'sam-s-qwen' })).status, 201);
+    assert.equal(calls.at(-1).provider.key, 'sk-sam-123456');
+    // A key, and a typed model, skip nothing else
+    assert.equal((await add({ name: 'Box', baseUrl: 'http://127.0.0.1:1/v1', model: 'llama-3', key: 'sk-local-123' })).status, 201);
+    assert.equal(readKeys(home).box, 'sk-local-123');
+    // A default provider: kept in config.json, offered first, forgotten with its server
+    const setDefault = (provider: string) => fetch(`${base}/api/providers/default`, { method: 'POST', headers: H, body: JSON.stringify({ provider }) });
+    const listed = async () => (await (await fetch(`${base}/api/providers`, { headers: H })).json() as any).default;
+    assert.equal(await listed(), null);
+    assert.equal((await setDefault('nope')).status, 400);
+    assert.equal((await setDefault('constructor')).status, 400);
+    assert.equal((await setDefault('box')).status, 200);
+    assert.equal(await listed(), 'box');
+    assert.equal(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).defaultProvider, 'box');
+    // Added again under its name, at another address and with no key: the old key does not follow it there
+    const again = await add({ name: 'Box', baseUrl: 'http://127.0.0.2:1/v1', model: 'llama-3' });
+    assert.equal((await again.json() as any).provider.hasKey, false);
+    assert.equal(readKeys(home).box, undefined);
+    assert.equal(readServers(home).box.baseUrl, 'http://127.0.0.2:1/v1');
+    assert.equal((await fetch(`${base}/api/providers/openrouter`, { method: 'DELETE', headers: H })).status, 404, 'built-ins stay');
+    assert.equal((await fetch(`${base}/api/providers/box`, { method: 'DELETE', headers: H })).status, 200);
+    assert.equal(await listed(), null, 'a removed default is forgotten');
+    assert.ok(!('defaultProvider' in JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))));
+    assert.equal((await setDefault('sam-s-qwen')).status, 200);
+    assert.equal((await setDefault('')).status, 200);
+    assert.equal(await listed(), null, "'' goes back to your Qwen settings");
+    assert.deepEqual(Object.keys(readServers(home)), ['sam-s-qwen']);
+    assert.equal(readKeys(home).box, undefined, 'its key goes with it');
+    assert.equal((await start({ provider: 'box' })).status, 400);
+  } finally { process.env.PATH = path; llm.close(); await app.close(); }
+});
+
+test('servers of your own: addresses, ids, and the Qwen settings they produce', () => {
+  assert.equal(serverUrl(' http://h:8080/v1// '), 'http://h:8080/v1');
+  for (const bad of ['ftp://h/v1', 'http://h/v1?x=1', 'http://h/v1#a', 'http://u@h/v1', 'h:8080/v1', 42, `http://h/${'a'.repeat(500)}`]) assert.equal(serverUrl(bad), null, String(bad));
+  const home = tmp();
+  writeFileSync(join(home, 'servers.json'), JSON.stringify({ openrouter: { name: 'x', baseUrl: 'http://h', model: 'm' }, 'Bad Id': { name: 'x', baseUrl: 'http://h', model: 'm' }, half: { name: 'x' }, ok: { name: 'Ok', baseUrl: 'http://h/v1', model: 'm' } }));
+  assert.deepEqual(Object.keys(readServers(home)), ['ok'], 'built-in ids, bad ids and half entries are dropped');
+  writeFileSync(join(home, 'servers.json'), '[]');
+  assert.deepEqual(readServers(home), {});
+  assert.equal(saveServer(home, { name: '!!!', baseUrl: 'http://h/v1', model: 'm' }), null);
+  assert.equal(saveServer(home, { name: 'Gemini', baseUrl: 'http://h/v1', model: 'm' }), null, 'a built-in id');
+  assert.equal(saveServer(home, { name: 'Sam', baseUrl: 'http://h/v1', model: 'm' }), 'sam');
+  const { env } = launchArgs('qwen', { home, task: '', provider: { id: 'sam', auth: 'openai', baseUrl: 'http://h/v1', model: 'm', key: 'no-key' } });
+  const file = env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+  const s = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual([s.security.auth.selectedType, s.modelProviders.openai, s.env.AGENT_WORLDS_PROVIDER_KEY], ['openai', [{ id: 'm', baseUrl: 'http://h/v1', envKey: 'AGENT_WORLDS_PROVIDER_KEY' }], 'no-key']);
+  saveServer(home, { name: 'Sam', baseUrl: 'http://other/v1', model: 'm' });
+  assert.ok(!existsSync(file), 'a new address drops the settings files that point at the old one');
+  assert.equal(readServers(home).sam.baseUrl, 'http://other/v1');
 });
 
 test('a held Gemini tool is denied when nobody answers in time, or the session ends', async () => {

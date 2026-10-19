@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents, openHttp } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -416,5 +416,16 @@ describe('stepTags', () => {
   it('tags a step still starting (before its first hook names it) by its terminal', () => {
     expect(stepTags([run('running', [{ ...step('plan', null), pane: '%7' }, step('build', null)])], [ses('starting-1', '%7'), ses('other', '%8')]))
       .toEqual({ 'starting-1': 'step 1/2 · Plan' })
+  })
+})
+
+describe('openHttp', () => {
+  it('warns for plain http beyond your own network only', () => {
+    expect(openHttp('http://45.138.52.110:8888/v1')).toBe(true)
+    expect(openHttp('HTTP://example.com/v1')).toBe(true)
+    for (const a of ['https://example.com/v1', 'http://192.168.1.20:8080/v1', 'http://10.0.0.5/v1', 'http://172.20.1.1/v1', 'http://localhost:1234/v1', 'http://box.local/v1', 'http://100.101.1.2/v1', 'http://[::1]:8080/v1', 'not a url', ''])
+      expect(openHttp(a)).toBe(false)
+    for (const a of ['http://172.32.0.1/v1', 'http://172.15.0.1/v1', 'http://100.63.0.1/v1', 'http://100.128.0.1/v1']) expect(openHttp(a)).toBe(true)
+    for (const a of ['http://172.16.0.1/v1', 'http://172.31.0.1/v1', 'http://100.64.0.1/v1', 'http://100.127.0.1/v1']) expect(openHttp(a)).toBe(false)
   })
 })
