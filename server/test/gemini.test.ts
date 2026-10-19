@@ -44,6 +44,7 @@ test('Gemini starts in yolo mode only with our hooks in place, from a home of it
   try { launched = launchArgs('gemini', { home, task: 'fix it', dir: tmp() }); } finally { if (saved === undefined) delete process.env.GEMINI_CLI_HOME; else process.env.GEMINI_CLI_HOME = saved; }
   assert.deepEqual(launched.args, ['--approval-mode', 'yolo', '-i', 'fix it']);
   const dir = join(launched.env.GEMINI_CLI_HOME, '.gemini');
+  assert.equal(launched.env.GEMINI_CLI_TRUSTED_FOLDERS_PATH, join(real, 'trustedFolders.json'), 'trust is saved to the user\'s own file');
   assert.equal(readlinkSync(join(dir, 'oauth_creds.json')), join(real, 'oauth_creds.json'), 'the login is the user\'s');
   assert.equal(statSync(join(dir, 'settings.json')).mode & 0o777, 0o600);
   const s = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
@@ -72,16 +73,20 @@ test('Gemini: no yolo in a repo with its own .gemini/settings.json; the user\'s 
     assert.deepEqual(launchArgs('gemini', { home, task: 'x', dir: repo }).args, ['-i', 'x'], 'the repo\'s settings outrank ours: Gemini asks itself');
     assert.deepEqual(launchArgs('gemini', { home, task: 'x' }).args, ['-i', 'x'], 'unknown folder: no yolo');
   } finally { if (saved === undefined) delete process.env.GEMINI_CLI_HOME; else process.env.GEMINI_CLI_HOME = saved; }
-  const dir = join(writeGeminiHome(home, real), '.gemini');
+  const dir = join(writeGeminiHome(home, real).root, '.gemini');
   assert.deepEqual(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).hooksConfig, { enabled: true, disabled: [] });
   // Gemini saves the sign-in choice into our copy; the next start keeps it
   const f = join(dir, 'settings.json');
   writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), security: { auth: { selectedType: 'oauth-personal' } } }));
   writeGeminiHome(home, real);
   assert.equal(JSON.parse(readFileSync(f, 'utf8')).security.auth.selectedType, 'oauth-personal');
-  // Started from inside a session (GEMINI_CLI_HOME is ours): never linked onto itself
-  writeGeminiHome(home, dir);
-  assert.ok(!readdirSync(dir).some((n) => lstatSync(join(dir, n)).isSymbolicLink() && readlinkSync(join(dir, n)) === join(dir, n)));
+  // Started from inside a session (GEMINI_CLI_HOME is ours): falls back to ~/.gemini, never links onto itself
+  const fake = tmp(), savedHome = process.env.HOME;
+  mkdirSync(join(fake, '.gemini'));
+  writeFileSync(join(fake, '.gemini', 'oauth_creds.json'), '{}');
+  process.env.HOME = fake;
+  try { assert.equal(writeGeminiHome(home, dir).real, join(fake, '.gemini')); } finally { process.env.HOME = savedHome; }
+  assert.equal(readlinkSync(join(dir, 'oauth_creds.json')), join(fake, '.gemini', 'oauth_creds.json'));
 });
 
 test('a Qwen provider goes into its own 0600 settings file, the key never in argv or env', () => {

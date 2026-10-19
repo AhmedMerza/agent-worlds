@@ -80,7 +80,9 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     const task = o.task ? ['-i', o.task] : [];
     if (!o.home) return { args: task, env: {} };
     const yolo = o.dir !== undefined && !existsSync(join(o.dir, '.gemini', 'settings.json'));
-    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...task], env: { GEMINI_CLI_HOME: writeGeminiHome(o.home) } };
+    const g = writeGeminiHome(o.home);
+    // Gemini saves trust by rename, which would replace our link with a copy: it writes the user's file itself.
+    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...task], env: { GEMINI_CLI_HOME: g.root, GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(g.real, 'trustedFolders.json') } };
   }
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];
@@ -178,7 +180,7 @@ function writeQwenSettings(home: string, provider?: Provider): string {
  * ~/.gemini (login, history, extensions, trusted folders) next to a settings.json that is theirs plus our hooks
  * and mailbox, with hooks forced on. Rewritten on every start. Hook timeouts are in milliseconds.
  */
-export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI_HOME || homedir(), '.gemini')): string {
+export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI_HOME || homedir(), '.gemini')): { root: string; real: string } {
   const root = join(home, 'gemini-home'), dir = join(root, '.gemini');
   // Started from inside one of these sessions, GEMINI_CLI_HOME is ours: linking it onto itself would lose the login.
   if (resolve(real) === resolve(dir)) real = join(homedir(), '.gemini');
@@ -204,5 +206,5 @@ export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI
     ...(auth ? { security: { ...mine.security, auth: { ...mine.security?.auth, selectedType: auth } } } : {}),
     mcpServers: { ...mine.mcpServers, aw: { ...mcpEntry('gemini'), trust: true } },
   });
-  return root;
+  return { root, real };
 }
