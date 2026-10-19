@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, readlinkSync, lstatSync, statSync, writeFileSync, chmodSync, realpathSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { launchArgs, writeGeminiHome } from '../src/agents.ts';
 import { fromGemini, toGemini } from '../src/gemini.ts';
-import { readKeys, saveKey } from '../src/providers.ts';
+import { readKeys, saveKey, readServers } from '../src/providers.ts';
 
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const TOKEN = 'g'.repeat(64);
@@ -92,7 +93,7 @@ test('Gemini: no yolo in a repo with its own .gemini/settings.json; the user\'s 
 test('a Qwen provider goes into its own 0600 settings file, the key never in argv or env', () => {
   const home = tmp();
   const key = 'sk-or-v1-' + 'a'.repeat(40);
-  const { args, env } = launchArgs('qwen', { home, task: 'go', provider: { id: 'openrouter', model: 'qwen/qwen3-coder:free', key } });
+  const { args, env } = launchArgs('qwen', { home, task: 'go', provider: { id: 'openrouter', auth: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-coder:free', key } });
   assert.deepEqual(args, ['-i', 'go']);
   assert.deepEqual(Object.keys(env), ['QWEN_CODE_SYSTEM_SETTINGS_PATH']);
   assert.ok(!JSON.stringify({ args, env }).includes(key));
@@ -181,7 +182,7 @@ test('providers: a key is saved but never read back; a Qwen session starts with 
     assert.equal((await start({ agent: 'claude', provider: 'openrouter' })).status, 400, 'Qwen only');
     assert.equal((await start({ agent: 'qwen', provider: 'openrouter', model: 'bad model; rm' })).status, 400);
     assert.equal((await start({ agent: 'qwen', provider: 'openrouter', model: 'qwen/qwen3-coder:free' })).status, 201);
-    assert.deepEqual(calls.at(-1).provider, { id: 'openrouter', model: 'qwen/qwen3-coder:free', key });
+    assert.deepEqual(calls.at(-1).provider, { id: 'openrouter', auth: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-coder:free', key });
     const st = await (await fetch(`${base}/api/state`, { headers: H })).json() as any;
     assert.equal(st.sessions.find((x: any) => x.agent === 'qwen')?.via, 'OpenRouter · qwen/qwen3-coder:free', 'the session says what it runs on');
     assert.ok(!JSON.stringify(st).includes(key), 'the key is not in the state');
@@ -191,6 +192,46 @@ test('providers: a key is saved but never read back; a Qwen session starts with 
     assert.deepEqual(readKeys(home), {});
     assert.ok(!readdirSync(home).some((f) => f.startsWith('qwen-openrouter-')));
   } finally { process.env.PATH = path; await app.close(); }
+});
+
+test('a server of your own: added by address, its model asked for, no key needed, removable', async () => {
+  const { app, base, repo, home, calls } = await boot();
+  const llm = createServer((req, res) => {
+    res.writeHead(req.url === '/v1/models' ? 200 : 404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ object: 'list', data: [{ id: 'qwen3.8-flash-next-iq3_s' }] }));
+  });
+  await new Promise<void>((r) => llm.listen(0, '127.0.0.1', r));
+  const llmUrl = `http://127.0.0.1:${(llm.address() as { port: number }).port}/v1/`;
+  const bin = tmp();
+  writeFileSync(join(bin, 'qwen'), '#!/bin/sh\n'); chmodSync(join(bin, 'qwen'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  const H = { 'x-aw-token': TOKEN, 'content-type': 'application/json' };
+  const add = (b: object) => fetch(`${base}/api/providers`, { method: 'POST', headers: H, body: JSON.stringify(b) });
+  const start = (b: object) => fetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ worldId: 'web', repo, agent: 'qwen', ...b }) });
+  try {
+    assert.equal((await add({ name: 'x', baseUrl: 'file:///etc/passwd' })).status, 400);
+    assert.equal((await add({ name: 'x', baseUrl: 'http://u:p@host/v1' })).status, 400, 'no credentials in the address');
+    assert.equal((await add({ name: 'OpenRouter', baseUrl: llmUrl })).status, 400, 'a built-in name');
+    assert.equal((await add({ name: 'x', baseUrl: 'http://127.0.0.1:1/v1' })).status, 422, 'unreachable, no model typed');
+    const r = await add({ name: "Sam's Qwen", baseUrl: llmUrl });
+    assert.equal(r.status, 201);
+    assert.deepEqual((await r.json() as any).provider, { id: 'sam-s-qwen', name: "Sam's Qwen", model: 'qwen3.8-flash-next-iq3_s', hasKey: false, custom: true, baseUrl: llmUrl.slice(0, -1) });
+    const list = (await (await fetch(`${base}/api/providers`, { headers: H })).json() as any).providers;
+    assert.ok(list.some((p: any) => p.id === 'openrouter') && list.some((p: any) => p.id === 'sam-s-qwen' && p.custom));
+    assert.equal((await start({ provider: 'sam-s-qwen' })).status, 201, 'no key needed');
+    assert.deepEqual(calls.at(-1).provider, { id: 'sam-s-qwen', auth: 'openai', baseUrl: llmUrl.slice(0, -1), model: 'qwen3.8-flash-next-iq3_s', key: 'no-key' });
+    const st = await (await fetch(`${base}/api/state`, { headers: H })).json() as any;
+    assert.ok(st.sessions.some((x: any) => x.via === "Sam's Qwen · qwen3.8-flash-next-iq3_s"));
+    // A key, and a typed model, skip nothing else
+    assert.equal((await add({ name: 'Box', baseUrl: 'http://127.0.0.1:1/v1', model: 'llama-3', key: 'sk-local-123' })).status, 201);
+    assert.equal(readKeys(home).box, 'sk-local-123');
+    assert.equal((await fetch(`${base}/api/providers/openrouter`, { method: 'DELETE', headers: H })).status, 404, 'built-ins stay');
+    assert.equal((await fetch(`${base}/api/providers/box`, { method: 'DELETE', headers: H })).status, 200);
+    assert.deepEqual(Object.keys(readServers(home)), ['sam-s-qwen']);
+    assert.equal(readKeys(home).box, undefined, 'its key goes with it');
+    assert.equal((await start({ provider: 'box' })).status, 400);
+  } finally { process.env.PATH = path; llm.close(); await app.close(); }
 });
 
 test('a held Gemini tool is denied when nobody answers in time, or the session ends', async () => {
