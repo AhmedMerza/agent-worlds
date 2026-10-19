@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Claude Code hook -> Agent Worlds server. Codex, Qwen Code, Kimi Code and Gemini CLI run it too, with their name as $1.
+# Claude Code hook -> Agent Worlds server. Codex, Qwen Code, Kimi Code, Gemini CLI and agy run it too, with their name as $1
+# (agy, whose payloads do not name their event, adds the event as $2).
 # Reads the hook JSON on stdin and POSTs it with the token. Prints the server's reply
 # (a PermissionRequest decision) when there is one. Never fails the Claude session:
 # if the server is down, unconfigured, or AGENT_WORLDS_DISABLE=1, it exits 0 silently.
@@ -8,6 +9,10 @@
 # on its tools, so a BeforeTool that cannot reach the server is denied rather than let through.
 agent="claude"
 [[ "${1:-}" =~ ^[a-z]{1,20}$ ]] && agent="$1"
+event=""
+[[ "${2:-}" =~ ^[A-Za-z]{1,30}$ ]] && event="$2"
+dir=""
+[ -n "$event" ] && [[ "${AGENT_WORLDS_DIR:-}" =~ ^/[^[:cntrl:]]{0,4000}$ ]] && dir="$AGENT_WORLDS_DIR"
 payload="$(cat)"
 gate=""
 re='"hook_event_name":[[:space:]]*"BeforeTool"'
@@ -35,7 +40,7 @@ pty=""
 [[ "${AGENT_WORLDS_PTY:-}" =~ ^[A-Za-z0-9_-]{1,100}$ ]] && pty="$AGENT_WORLDS_PTY"
 # Headers come from a process substitution so the token never appears in `ps`.
 out="$(printf '%s' "$payload" | curl -sS --fail --connect-timeout 1 --max-time "$max" \
-  -H @<(printf 'X-AW-Token: %s\nX-AW-Pane: %s\nX-AW-Pty: %s\nX-AW-Agent: %s\nContent-Type: application/json\n' "$token" "$pane" "$pty" "$agent") \
+  -H @<(printf 'X-AW-Token: %s\nX-AW-Pane: %s\nX-AW-Pty: %s\nX-AW-Agent: %s\nX-AW-Event: %s\nX-AW-Dir: %s\nContent-Type: application/json\n' "$token" "$pane" "$pty" "$agent" "$event" "$dir") \
   --data-binary @- "$url/api/hook" 2>/dev/null)" || quit
 [ -n "$out" ] && printf '%s\n' "$out"
 exit 0

@@ -8,6 +8,7 @@ import { homeDir, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
 import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
+import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
@@ -177,11 +178,44 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   };
   /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
   const earlyMcp = new Set<string>();
+  /**
+   * The agy session a conversation it has not seen is a subagent of (agy runs each subagent as a conversation of its
+   * own, in the same pane). Its invoke_subagent calls count the subagents still to start (agyPending: the hook runs
+   * before they do), and the first conversation in that pane claims one. Failing that, a subagent is one a transcript
+   * there names (agy writes that once it created it, though in its TUI only later). Anything else is a new conversation.
+   * null: a subagent of a session that is gone, whose events are dropped rather than bring it back.
+   */
+  const agyChildren = new Map<string, { parent: string; log: unknown }>();
+  const agyPending = new Map<string, number>();
+  const agyParent = (id: string, log: unknown, pane: unknown, pty: unknown): string | null | undefined => {
+    const known = agyChildren.get(id);
+    if (known) return store.sessions.has(known.parent) ? known.parent : null;
+    if (store.sessions.has(id) || (!pane && !pty)) return undefined;
+    const here = [...store.sessions.values()].filter((s) => s.agent === 'agy' && ((pane && s.tmux?.pane === pane) || (pty && s.direct === pty)));
+    const owed = here.find((s) => (agyPending.get(s.id) ?? 0) > 0);
+    if (owed) agyPending.set(owed.id, agyPending.get(owed.id)! - 1);
+    const logs = [...here.map((s) => ({ parent: s.id, log: s.logPath as unknown })), ...[...agyChildren.values()].filter((c) => here.some((s) => s.id === c.parent))];
+    const parent = owed?.id ?? logs.find((c) => mentions(c.log, id))?.parent;
+    if (parent) agyChildren.set(id, { parent, log });
+    return parent;
+  };
+  /**
+   * Keeps agyPending: a call adds the subagents it asked for. A failed call, the end of the turn (agy has started
+   * them by then) or the next prompt clears what is owed, so a later conversation is never taken for one of them.
+   */
+  const agyCount = (b: Record<string, unknown>) => {
+    const id = String(b.session_id), ev = b.hook_event_name;
+    if (ev === 'UserPromptSubmit' || ev === 'Stop' || ev === 'StopFailure' || ev === 'Interrupt' || (ev === 'PostToolUseFailure' && b.tool_name === 'Task')) agyPending.delete(id);
+    else if (ev === 'PreToolUse' && b.tool_name === 'Task') {
+      const n = Number((b.tool_input as { subagents?: unknown }).subagents);
+      agyPending.set(id, (agyPending.get(id) ?? 0) + (Number.isInteger(n) && n > 0 ? Math.min(n, 16) : 1));
+    }
+  };
   const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); }
+    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -399,7 +433,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const pane = req.headers['x-aw-pane'];
       const pty = req.headers['x-aw-pty'];
       const agent = req.headers['x-aw-agent'];
-      const body = agent === 'gemini' ? fromGemini(raw) : raw;
+      const agyDir = agyHooksDir(opts.home ?? homeDir());
+      const event = req.headers['x-aw-event'];
+      let body = agent === 'gemini' ? fromGemini(raw) : agent === 'agy' ? fromAgy(raw, event, agyDir, req.headers['x-aw-dir']) : raw;
+      const agyCwd = body?.cwd;
+      if (body && agent === 'agy') {
+        const id = body.session_id;
+        const parent = typeof id === 'string' && id ? agyParent(id, body.transcript_path, pane, pty) : undefined;
+        if (parent === null) body = null;
+        else if (parent) body = asHelper(body, parent);
+      }
       if (!body) { res.writeHead(204); return res.end(); }
       const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
       const ac = new AbortController();
@@ -409,6 +452,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const key = createHash('sha1').update(String(pane)).update('\0').update(String(pty)).update('\0').update(JSON.stringify(body)).digest('hex');
       let reply = recent.get(key)?.reply;
       if (!reply) {
+        if (agent === 'agy') agyCount(body); // once per event, not again for a repeat of it
         reply = store.handle(body, typeof pane === 'string' && sys.PANE_RE.test(pane) ? pane : null, ac.signal, typeof pty === 'string' && direct.has(pty) ? pty : null, isAgent(agent) ? agent : 'claude');
         const entry = { at: 0, reply };
         recent.set(key, entry);
@@ -418,6 +462,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
       if (held) out = toGemini(out);
+      if (agent === 'agy') out = toAgy(event, agyCwd, agyDir);
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
