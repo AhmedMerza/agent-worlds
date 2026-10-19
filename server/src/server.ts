@@ -7,6 +7,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
 import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
+import { fromGemini, toGemini } from './gemini.ts';
+import { PROVIDERS, isProvider, readKeys, saveKey, KEY_RE, MODEL_RE } from './providers.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
@@ -393,10 +395,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (dev) access.touch(dev);
 
     if (method === 'POST' && url.pathname === '/api/hook') {
-      const body = await readBody(req);
+      const raw = await readBody(req);
       const pane = req.headers['x-aw-pane'];
       const pty = req.headers['x-aw-pty'];
       const agent = req.headers['x-aw-agent'];
+      const body = agent === 'gemini' ? fromGemini(raw) : raw;
+      if (!body) { res.writeHead(204); return res.end(); }
+      const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       const now = Date.now();
@@ -412,6 +417,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       let out: string;
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
+      if (held) out = toGemini(out);
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);
@@ -439,6 +445,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (err) return send(res, 500, { error: err });
       cfg.defaultAgent = b.agent;
       return send(res, 200, { default: defaultAgent(cfg.defaultAgent) });
+    }
+    // Model providers for Qwen sessions. A key goes in and never comes back out: clients only learn whether one is saved.
+    if (method === 'GET' && url.pathname === '/api/providers') {
+      const keys = readKeys(opts.home ?? homeDir());
+      return send(res, 200, { providers: Object.entries(PROVIDERS).map(([id, p]) => ({ id, name: p.name, model: p.model, keyUrl: p.keyUrl, hasKey: Object.hasOwn(keys, id) })) });
+    }
+    const provKey = url.pathname.match(/^\/api\/providers\/([a-z]+)\/key$/);
+    if (method === 'PUT' && provKey) {
+      if (!isProvider(provKey[1])) return send(res, 404, { error: 'unknown provider' });
+      const b = await readBody(req);
+      if (b.key !== null && (typeof b.key !== 'string' || !KEY_RE.test(b.key.trim()))) return send(res, 400, { error: 'key must be 8-500 printable characters with no spaces' });
+      try { saveKey(opts.home ?? homeDir(), provKey[1], b.key === null ? null : (b.key as string).trim()); } catch (e) { return send(res, 500, { error: (e as Error).message }); }
+      return send(res, 200, { hasKey: b.key !== null });
     }
     if (method === 'GET' && url.pathname === '/api/claude-defaults') {
       let permissionMode: string | null = null;
@@ -590,8 +609,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.agent !== undefined && !isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
       const agent = isAgent(b.agent) ? b.agent : defaultAgent(cfg.defaultAgent);
       if (agent !== 'claude' && !onPath(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
+      let provider;
+      if (b.provider !== undefined) {
+        if (agent !== 'qwen') return send(res, 400, { error: 'provider is only for Qwen Code sessions' });
+        if (!isProvider(b.provider)) return send(res, 400, { error: `provider must be one of ${Object.keys(PROVIDERS).join(', ')}` });
+        if (b.model !== undefined && (typeof b.model !== 'string' || !MODEL_RE.test(b.model))) return send(res, 400, { error: 'model must be a model id like qwen/qwen3-coder:free' });
+        const key = readKeys(opts.home ?? homeDir())[b.provider];
+        if (!key) return send(res, 400, { error: `add your ${PROVIDERS[b.provider].name} key first` });
+        provider = { id: b.provider, model: (b.model as string | undefined) ?? PROVIDERS[b.provider].model, key };
+      }
       try {
-        const r = await createSession({ agent, repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+        const r = await createSession({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null, agent });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }

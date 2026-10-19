@@ -465,7 +465,8 @@ export class Store {
           requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
           tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
-          live: AGENTS[s.agent].decides && this.deps.clientsConnected(), resolve: null, timer: null,
+          // Gemini has no prompt of its own to fall back on (gemini.ts): its requests wait for a page to open.
+          live: AGENTS[s.agent].decides && (this.deps.clientsConnected() || s.agent === 'gemini'), resolve: null, timer: null,
         };
         s.pending.push(pend);
         s.state = 'waiting';

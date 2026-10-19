@@ -376,7 +376,7 @@ test('kimi: recent sessions list Kimi sessions with their last prompt; resume st
   try {
     const items = ((await (await fetch(`${base}/api/history?repo=${encodeURIComponent(repo)}`, { headers: H })).json()) as any).sessions;
     assert.deepEqual(items.map((h: any) => [h.sessionId, h.agent, h.lastPrompt, h.worldId]), [[id, 'kimi', 'walk the personas', 'web']], 'archived sessions are left out');
-    assert.equal((await resume({ sessionId: id, agent: 'gemini' })).status, 400);
+    assert.equal((await resume({ sessionId: id, agent: 'cursor' })).status, 400);
     assert.equal((await resume({ sessionId: id, agent: 'kimi', permissionMode: 'plan' })).status, 400, 'modes are Claude-only');
     assert.equal((await resume({ sessionId: 'session_nope0000', agent: 'kimi' })).status, 404);
     assert.equal((await resume({ sessionId: id, agent: 'kimi' })).status, 201);

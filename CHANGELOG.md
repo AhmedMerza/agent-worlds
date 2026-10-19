@@ -2,6 +2,11 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-19
+- **Gemini CLI** as an agent, usable with a free Google login or AI Studio key. Gemini can't let a hook answer its own tool prompt, so its sessions run with `--approval-mode yolo` and every edit, shell command or web fetch is held under Needs you until you allow or deny it (denied if Agent Worlds can't be reached or nobody answers). The end of a turn moves it to the Help desk. Its sessions get a home of their own (`<home>/gemini-home`, linked to your `~/.gemini`) holding your settings plus the hooks and the mailbox; `~/.gemini` is untouched. Works with Gemini CLI 0.29 and 0.64.
+- **Qwen Code with a model provider**: New session can run a Qwen session on OpenRouter, the Gemini API or Anthropic with a key and model of your choice, without touching `~/.qwen`. Keys are stored in `<home>/keys.json` (0600) and never sent back to a page (`GET /api/providers`, `PUT /api/providers/:id/key`, `provider` and `model` on `POST /api/sessions`).
+- Antigravity CLI (`agy`) is listed as not supported: its hooks can only live in the repo or your global config.
+
 ## 2026-10-18
 - Runs: a **New run** button at the top opens New session with steps already on. When Review code's `code-review.md` starts with CHANGES, the run goes back to the Build step before it (a new Build session gets the round and the review), up to 2 rounds; after that it waits for you. Review code no longer changes code itself. Each step's character and room chip show "step 2/4 · Review plan". Stopping a run and ending its sessions ends the earlier rounds' sessions too.
 - Messages between sessions that have not been read are kept in `<home>/mailbox.json` and delivered after a server restart, once the recipient is back (for up to a day).

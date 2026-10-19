@@ -1,12 +1,15 @@
 import { existsSync, writeFileSync, mkdirSync, renameSync, readFileSync, readdirSync, symlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { GEMINI_EVENTS } from './gemini.ts';
+import { PROVIDERS, type ProviderId } from './providers.ts';
 import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT, MCP_BRIDGE } from './hooks.ts';
 
 /**
  * The agent CLIs a session can run. All of them report through the same aw-hook script with
  * Claude-shaped hook payloads (session_id, hook_event_name, tool_name, tool_input, ...), so the
- * store handles them alike; what differs is how the hooks get into each CLI and which features it has.
+ * store handles them alike (Gemini's are translated first, see gemini.ts); what differs is how the hooks get into each CLI and which features it has.
  * `decides`: the CLI waits on its PermissionRequest hook, so Allow/Deny can be answered from here.
  * `task`: the CLI can be started with the task as its first prompt.
  */
@@ -19,6 +22,8 @@ export const AGENTS = {
   qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, task: true },
   // Kimi Code fires PermissionRequest without waiting for the hook, so its prompts are answered in the terminal.
   kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, task: true },
+  // Gemini CLI runs without prompts of its own: every tool it would ask about is held for you here (gemini.ts).
+  gemini: { name: 'Gemini CLI', bin: 'gemini', alwaysAllow: false, modes: false, decides: true, task: true },
 } as const;
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);
@@ -37,7 +42,7 @@ export function defaultAgent(configured: string | undefined, has = (a: AgentId) 
   return isAgent(configured) && has(configured) ? configured : 'claude';
 }
 
-/** The `aw` MCP server entry (bin/aw-mcp) in the mcpServers shape Claude, Qwen and Kimi read. */
+/** The `aw` MCP server entry (bin/aw-mcp) in the mcpServers shape Claude, Qwen, Kimi and Gemini read. */
 const mcpEntry = (agent: AgentId, bridge = MCP_BRIDGE) => ({ command: bridge, args: [agent] });
 
 const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd'];
@@ -45,10 +50,10 @@ const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Permiss
 /**
  * Argv and env (beyond AGENT_WORLDS_HOME) that start `agent` reporting to the server at `home`.
  * Codex takes its hooks as `-c` overrides and asks once, in the terminal, to trust them;
- * the command never changes, so it does not ask again. Qwen reads them from a system
- * settings file we point it at.
+ * the command never changes, so it does not ask again. Qwen and Gemini read them from a system
+ * settings file we point them at.
  */
-export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string }): { args: string[]; env: Record<string, string> } {
+export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider }): { args: string[]; env: Record<string, string> } {
   const task = o.task ? ['--', o.task] : [];
   if (agent === 'codex') {
     const cmd = JSON.stringify(hookCommand('codex'));
@@ -65,7 +70,12 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   }
   if (agent === 'qwen') {
     // `-i` runs the task and stays interactive (a bare prompt would run once and exit).
-    return { args: o.task ? ['-i', o.task] : [], env: o.home ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: writeQwenSettings(o.home) } : {} };
+    return { args: o.task ? ['-i', o.task] : [], env: o.home ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: writeQwenSettings(o.home, o.provider) } : {} };
+  }
+  if (agent === 'gemini') {
+    // yolo only with our hooks in place: they are then the one gate on its tools.
+    if (!o.home) return { args: o.task ? ['-i', o.task] : [], env: {} };
+    return { args: ['--approval-mode', 'yolo', ...(o.task ? ['-i', o.task] : [])], env: { GEMINI_CLI_HOME: writeGeminiHome(o.home) } };
   }
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];
@@ -77,6 +87,26 @@ const KIMI_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostTool
   'Stop', 'StopFailure', 'Interrupt', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd'];
 
 /**
+ * Fills `dir` with links to everything in the CLI's real home folder but `except` (the files we write ourselves),
+ * and returns the names found there. Some files get saved by rename (Kimi's workspaces.json), which turns our
+ * link into a private copy: it is linked again on the next start.
+ */
+function linkHome(real: string, dir: string, except: string[]): string[] {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const names = existsSync(real) ? readdirSync(real) : [];
+  for (const n of names) {
+    if (except.includes(n)) continue;
+    const link = join(dir, n), target = join(real, n);
+    const st = lstatSync(link, { throwIfNoEntry: false });
+    if (st?.isSymbolicLink() && readlinkSync(link) === target) continue;
+    if (st && !st.isFile() && !st.isSymbolicLink()) continue; // a folder the CLI made here: never deleted
+    if (st) rmSync(link);
+    symlinkSync(target, link);
+  }
+  return names;
+}
+
+/**
  * Kimi reads hooks only from <KIMI_CODE_HOME>/config.toml, so its sessions get a home of their own:
  * links to everything in the user's (login, sessions, MCP, trust) next to a copy of their config.toml
  * with our [[hooks]] appended. Rewritten on every start, so config changes reach the next session.
@@ -84,18 +114,7 @@ const KIMI_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostTool
  */
 export function writeKimiHome(home: string, real = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code')): string {
   const dir = join(home, 'kimi-home');
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const names = existsSync(real) ? readdirSync(real) : [];
-  for (const n of names) {
-    if (n === 'config.toml' || n === 'mcp.json') continue;
-    const link = join(dir, n), target = join(real, n);
-    // Kimi saves some files (workspaces.json) by rename, which turns our link into a private copy: link it again
-    const st = lstatSync(link, { throwIfNoEntry: false });
-    if (st?.isSymbolicLink() && readlinkSync(link) === target) continue;
-    if (st && !st.isFile() && !st.isSymbolicLink()) continue; // a folder Kimi made here: never deleted
-    if (st) rmSync(link);
-    symlinkSync(target, link);
-  }
+  const names = linkHome(real, dir, ['config.toml', 'mcp.json']);
   const mine = names.includes('config.toml') ? readFileSync(join(real, 'config.toml'), 'utf8') : '';
   const command = JSON.stringify(hookCommand('kimi')); // a JSON string is a valid TOML basic string
   const hooks = KIMI_EVENTS.map((ev) => `[[hooks]]\nevent = "${ev}"\ncommand = ${command}\ntimeout = ${FAST_TIMEOUT}\n`).join('\n');
@@ -109,19 +128,70 @@ export function writeKimiHome(home: string, real = process.env.KIMI_CODE_HOME ||
     const v = JSON.parse(readFileSync(join(real, 'mcp.json'), 'utf8')).mcpServers;
     if (v && typeof v === 'object' && !Array.isArray(v)) servers = v;
   } catch { /* none, or unreadable */ }
-  const mcpFile = join(dir, 'mcp.json');
-  rmSync(mcpFile, { force: true }); // a link to theirs, from before Agent Worlds wrote its own
-  writeFileSync(`${mcpFile}.${process.pid}.tmp`, JSON.stringify({ mcpServers: { ...servers, aw: mcpEntry('kimi') } }, null, 2) + '\n', { mode: 0o600 });
-  renameSync(`${mcpFile}.${process.pid}.tmp`, mcpFile);
+  rmSync(join(dir, 'mcp.json'), { force: true }); // a link to theirs, from before Agent Worlds wrote its own
+  writeSettings(dir, 'mcp.json', { mcpServers: { ...servers, aw: mcpEntry('kimi') } });
   return dir;
 }
 
-function writeQwenSettings(home: string): string {
-  const file = join(home, 'qwen-settings.json');
+/** Writes `data` to <home>/<name> (0600, by rename so a starting CLI never reads half a file). */
+function writeSettings(home: string, name: string, data: unknown): string {
+  const file = join(home, name);
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
-  // trust: Qwen calls the mailbox tools without asking
-  writeFileSync(tmp, JSON.stringify({ ...hooksBlock(undefined, 'qwen', HOOK_EVENTS), mcpServers: { aw: { ...mcpEntry('qwen'), trust: true } } }, null, 2) + '\n', { mode: 0o600 });
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
   renameSync(tmp, file);
   return file;
+}
+
+/** A model provider for one Qwen session, with its key (see providers.ts). */
+export type Provider = { id: ProviderId; model: string; key: string };
+
+/**
+ * Qwen's system settings layer wins over ~/.qwen, so a provider picked for a session goes there and the
+ * user's own settings are never touched. The key reaches Qwen through the file's env block under a name of
+ * our own, so an OPENAI_API_KEY in the user's shell or a .env file cannot shadow it, and it never shows in argv.
+ * One file per provider and model: sessions starting at once with the same choice write the same bytes.
+ */
+function writeQwenSettings(home: string, provider?: Provider): string {
+  // trust: Qwen calls the mailbox tools without asking
+  const base = { ...hooksBlock(undefined, 'qwen', HOOK_EVENTS), mcpServers: { aw: { ...mcpEntry('qwen'), trust: true } } };
+  if (!provider) return writeSettings(home, 'qwen-settings.json', base);
+  const p = PROVIDERS[provider.id];
+  const name = `qwen-${provider.id}-${createHash('sha1').update(provider.model).digest('hex').slice(0, 10)}.json`;
+  return writeSettings(home, name, {
+    ...base,
+    security: { auth: { selectedType: p.auth } },
+    model: { name: provider.model },
+    modelProviders: { [p.auth]: [{ id: provider.model, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), envKey: 'AGENT_WORLDS_PROVIDER_KEY' }] },
+    env: { AGENT_WORLDS_PROVIDER_KEY: provider.key },
+  });
+}
+
+/**
+ * Gemini reads settings from <GEMINI_CLI_HOME>/.gemini (a system settings file only counts when root owns its
+ * folder, since 0.64). So its sessions get a home of their own, like Kimi's: links to everything in the user's
+ * ~/.gemini (login, history, extensions) next to a settings.json that is theirs plus our hooks and mailbox.
+ * Rewritten on every start. Hook timeouts are in milliseconds. Folder trust is off there: Gemini drops every
+ * hook in a folder it does not trust, and refuses yolo there.
+ */
+export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI_HOME || homedir(), '.gemini')): string {
+  const root = join(home, 'gemini-home'), dir = join(root, '.gemini');
+  linkHome(real, dir, ['settings.json']);
+  let mine: Record<string, any> = {};
+  try {
+    const v = JSON.parse(readFileSync(join(real, 'settings.json'), 'utf8'));
+    if (v && typeof v === 'object' && !Array.isArray(v)) mine = v;
+  } catch { /* none, or unreadable */ }
+  const command = hookCommand('gemini');
+  const hooks: Record<string, unknown[]> = { ...mine.hooks };
+  for (const ev of GEMINI_EVENTS) {
+    const theirs = Array.isArray(hooks[ev]) ? hooks[ev] : [];
+    hooks[ev] = [...theirs, { hooks: [{ type: 'command', command, timeout: (ev === 'BeforeTool' ? HOLD_TIMEOUT : FAST_TIMEOUT) * 1000 }] }];
+  }
+  writeSettings(dir, 'settings.json', {
+    ...mine, hooks,
+    security: { ...mine.security, folderTrust: { ...mine.security?.folderTrust, enabled: false } },
+    mcpServers: { ...mine.mcpServers, aw: { ...mcpEntry('gemini'), trust: true } },
+  });
+  return root;
 }

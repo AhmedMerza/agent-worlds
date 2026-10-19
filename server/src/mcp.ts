@@ -19,7 +19,7 @@ export type McpContext = {
 const TOOLS = [
   {
     name: 'aw_agents',
-    description: 'List the other coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code) running under Agent Worlds that you can message: id, agent, repo, branch, task and state.',
+    description: 'List the other coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, repo, branch, task and state.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

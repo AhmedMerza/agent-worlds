@@ -28,7 +28,7 @@ export function stepTags(runs: Run[], sessions: Session[]): Record<string, strin
 }
 /** What a session is called: the name you gave it, else its repo. */
 export const nameOf = (s: { label?: string | null; repoName: string }): string => s.label || s.repoName
-export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
+export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi', gemini: 'Gemini' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
 
 /** The state label, with the busy-but-not-you variants of 'working'. */
 export function stateLabel(s: Session, now: number): string {

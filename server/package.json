@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start": "node src/cli.ts",
-    "test": "AGENT_WORLDS_HOME=$(mktemp -d) KIMI_CODE_HOME=$(mktemp -d) TMUX_TMPDIR=$(mktemp -d) TMUX= node --test",
+    "test": "AGENT_WORLDS_HOME=$(mktemp -d) KIMI_CODE_HOME=$(mktemp -d) GEMINI_CLI_HOME=$(mktemp -d) TMUX_TMPDIR=$(mktemp -d) TMUX= node --test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
