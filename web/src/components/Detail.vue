@@ -34,7 +34,7 @@ async function copyAttach() {
       <p v-else class="why">Which conversation this is could not be told, so it cannot be moved automatically. Use Recent sessions (R) to pick it.</p>
     </div>
     <div v-else class="detail">
-      <p v-if="s.state === 'starting'" class="why">{{ s.agent === 'gemini' ? 'Gemini may be asking you to sign in with Google (first time only).' : `${agentName(s)} may be asking to trust this folder.` }} Answer below in the terminal.</p>
+      <p v-if="s.state === 'starting'" class="why">{{ s.agent === 'gemini' ? 'Gemini may be asking you to sign in with Google or to trust this folder.' : `${agentName(s)} may be asking to trust this folder.` }} Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ nameOf(s) }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
       <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p v-if="(s.agent && s.agent !== 'claude') || s.via" class="path">Runs on {{ agentName(s) }}<template v-if="s.via"> · {{ s.via }}</template></p>

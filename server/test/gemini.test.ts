@@ -38,11 +38,12 @@ test('Gemini starts in yolo mode only with our hooks in place, from a home of it
   mkdirSync(real);
   writeFileSync(join(real, 'oauth_creds.json'), '{}');
   writeFileSync(join(real, 'settings.json'), JSON.stringify({ general: { vimMode: true }, hooks: { BeforeTool: [{ hooks: [{ type: 'command', command: 'mine' }] }] }, mcpServers: { theirs: { command: 'x' } } }));
-  const { args, env } = launchArgs('gemini', { home, task: 'fix it' });
-  assert.deepEqual(args, ['--approval-mode', 'yolo', '-i', 'fix it']);
-  // launchArgs reads the real home from GEMINI_CLI_HOME (a temp dir under npm test); check the same with ours
-  const dir = join(writeGeminiHome(home, real), '.gemini');
-  assert.equal(join(env.GEMINI_CLI_HOME, '.gemini'), dir);
+  const saved = process.env.GEMINI_CLI_HOME;
+  process.env.GEMINI_CLI_HOME = join(real, '..'); // never the developer's own ~/.gemini
+  let launched;
+  try { launched = launchArgs('gemini', { home, task: 'fix it', dir: tmp() }); } finally { if (saved === undefined) delete process.env.GEMINI_CLI_HOME; else process.env.GEMINI_CLI_HOME = saved; }
+  assert.deepEqual(launched.args, ['--approval-mode', 'yolo', '-i', 'fix it']);
+  const dir = join(launched.env.GEMINI_CLI_HOME, '.gemini');
   assert.equal(readlinkSync(join(dir, 'oauth_creds.json')), join(real, 'oauth_creds.json'), 'the login is the user\'s');
   assert.equal(statSync(join(dir, 'settings.json')).mode & 0o777, 0o600);
   const s = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
@@ -52,10 +53,35 @@ test('Gemini starts in yolo mode only with our hooks in place, from a home of it
   assert.match(s.hooks.BeforeTool[1].hooks[0].command, /bin\/aw-hook gemini$/);
   assert.equal(s.hooks.BeforeTool[1].hooks[0].timeout, 3_600_000, 'milliseconds, held for an hour');
   assert.equal(s.hooks.AfterAgent[0].hooks[0].timeout, 10_000);
-  assert.equal(s.security.folderTrust.enabled, false);
+  assert.deepEqual(s.hooksConfig, { enabled: true, disabled: [] }, 'hooks forced on');
+  assert.equal(s.security, undefined, 'folder trust left to Gemini');
   assert.deepEqual([s.mcpServers.aw.args, s.mcpServers.aw.trust, s.mcpServers.theirs.command], [['gemini'], true, 'x']);
   assert.ok(!lstatSync(join(real, 'settings.json')).isSymbolicLink() && !readFileSync(join(real, 'settings.json'), 'utf8').includes('aw-hook'), 'theirs is untouched');
   assert.deepEqual(launchArgs('gemini', { task: '' }), { args: [], env: {} }, 'no hooks, no yolo');
+});
+
+test('Gemini: no yolo in a repo with its own .gemini/settings.json; the user\'s hook switches are overridden; sign-in kept', () => {
+  const home = tmp(), real = join(tmp(), '.gemini'), repo = tmp();
+  mkdirSync(real);
+  writeFileSync(join(real, 'settings.json'), JSON.stringify({ hooksConfig: { enabled: false, disabled: ['aw'] } }));
+  mkdirSync(join(repo, '.gemini'));
+  writeFileSync(join(repo, '.gemini', 'settings.json'), JSON.stringify({ hooksConfig: { enabled: false } }));
+  const saved = process.env.GEMINI_CLI_HOME;
+  process.env.GEMINI_CLI_HOME = join(real, '..');
+  try {
+    assert.deepEqual(launchArgs('gemini', { home, task: 'x', dir: repo }).args, ['-i', 'x'], 'the repo\'s settings outrank ours: Gemini asks itself');
+    assert.deepEqual(launchArgs('gemini', { home, task: 'x' }).args, ['-i', 'x'], 'unknown folder: no yolo');
+  } finally { if (saved === undefined) delete process.env.GEMINI_CLI_HOME; else process.env.GEMINI_CLI_HOME = saved; }
+  const dir = join(writeGeminiHome(home, real), '.gemini');
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).hooksConfig, { enabled: true, disabled: [] });
+  // Gemini saves the sign-in choice into our copy; the next start keeps it
+  const f = join(dir, 'settings.json');
+  writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), security: { auth: { selectedType: 'oauth-personal' } } }));
+  writeGeminiHome(home, real);
+  assert.equal(JSON.parse(readFileSync(f, 'utf8')).security.auth.selectedType, 'oauth-personal');
+  // Started from inside a session (GEMINI_CLI_HOME is ours): never linked onto itself
+  writeGeminiHome(home, dir);
+  assert.ok(!readdirSync(dir).some((n) => lstatSync(join(dir, n)).isSymbolicLink() && readlinkSync(join(dir, n)) === join(dir, n)));
 });
 
 test('a Qwen provider goes into its own 0600 settings file, the key never in argv or env', () => {
@@ -83,12 +109,12 @@ test('a Qwen provider goes into its own 0600 settings file, the key never in arg
   assert.equal(statSync(join(home, 'keys.json')).mode & 0o777, 0o600);
 });
 
-async function boot() {
+async function boot(holdMs?: number) {
   const repo = tmp(), home = tmp();
   const calls: any[] = [];
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }] }), port: 0 };
   const app = startServer(cfg, TOKEN, {
-    home, procRoot: join(tmp(), 'none'),
+    home, procRoot: join(tmp(), 'none'), ...(holdMs ? { holdMs } : {}),
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
     createSession: async (o: any) => { calls.push(o); return { tmuxSession: 'aw-x-1', dir: o.repo, branch: null }; },
   } as any);
@@ -160,4 +186,22 @@ test('providers: a key is saved but never read back; a Qwen session starts with 
     assert.deepEqual(readKeys(home), {});
     assert.ok(!readdirSync(home).some((f) => f.startsWith('qwen-openrouter-')));
   } finally { process.env.PATH = path; await app.close(); }
+});
+
+test('a held Gemini tool is denied when nobody answers in time, or the session ends', async () => {
+  const { app, base, repo } = await boot(150);
+  const H = { 'x-aw-token': TOKEN, 'content-type': 'application/json', 'x-aw-agent': 'gemini', 'x-aw-pane': '%8' };
+  const hook = (b: object) => fetch(`${base}/api/hook`, { method: 'POST', headers: H, body: JSON.stringify({ session_id: 'gem-2', cwd: repo, transcript_path: '', ...b }) });
+  const write = { hook_event_name: 'BeforeTool', tool_name: 'write_file', tool_input: { file_path: `${repo}/a`, content: 'x' } };
+  try {
+    await hook({ hook_event_name: 'BeforeAgent', prompt: 'go' });
+    const timedOut = await hook(write);
+    assert.deepEqual([timedOut.status, (await timedOut.json()).decision], [200, 'deny']);
+    const s = ((await (await fetch(`${base}/api/state`, { headers: H })).json()) as any).sessions.find((x: any) => x.id === 'gem-2');
+    assert.notEqual(s.card?.kind, 'permission', 'a timed-out request is gone, not left to answer');
+    const held = hook({ ...write, tool_input: { file_path: `${repo}/b`, content: 'y' } });
+    await new Promise((r) => setTimeout(r, 30));
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
+    assert.equal((await (await held).json()).decision, 'deny');
+  } finally { await app.close(); }
 });

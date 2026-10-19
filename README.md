@@ -244,10 +244,16 @@ Esc in the terminal doesn't cancel a tool that is waiting; answer it under Needs
 Gemini only reads a system settings file from a folder owned by root, so its sessions get a home of their own
 instead (`gemini-home` in the Agent Worlds folder, passed as `GEMINI_CLI_HOME`), the way Kimi's do. It links
 to everything in your `~/.gemini` (login, history, extensions) and holds a copy of your `settings.json` with
-the hooks and the mailbox added, refreshed on every start. Your `~/.gemini` is untouched. The copy turns
-Gemini's folder trust off, because Gemini drops every hook in a folder it doesn't trust. As a result, a repo's
-own `.gemini/settings.json` applies too. Change settings in your own `~/.gemini/settings.json`; changes made
-from inside a running session go to the copy and are lost.
+the hooks and the mailbox added, refreshed on every start. Your `~/.gemini` is untouched. Change settings
+in your own `~/.gemini/settings.json`; changes made from inside a running session go to the copy and are lost.
+
+Two cases keep Gemini's own prompt as the gate:
+- **A folder you haven't trusted in Gemini.** Gemini asks you to trust it the first time. Until you do, it
+  runs no hooks and won't use yolo mode, so it asks in its terminal as usual. Trusting a parent folder
+  covers the worktrees under it.
+- **A repo with its own `.gemini/settings.json`.** Those settings outrank yours and could switch hooks off,
+  so the session starts without yolo. Gemini asks in its terminal first, and the request then also waits
+  under Needs you.
 
 **Qwen Code with a provider.** When the agent is Qwen Code, New session can pick a **Model provider**:
 OpenRouter (free models such as `qwen/qwen3-coder:free`), Gemini API or Anthropic. Paste a key once;

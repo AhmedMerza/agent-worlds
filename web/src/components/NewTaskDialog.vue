@@ -184,7 +184,7 @@ async function submit() {
       <template v-if="!asRun">
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
       <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal, following your {{ chosen.name }} settings.</p>
-      <p v-else-if="chosen.id === 'gemini'" class="why">Free with your Google account: the first time, Gemini CLI asks you to sign in, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
+      <p v-else-if="chosen.id === 'gemini'" class="why">Free with your Google account: the first time, Gemini CLI asks you to sign in and to trust the folder, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
       <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>
       <p v-if="chosen?.task === false" class="why">{{ chosen.name }} can't be handed a task when it starts: once it opens, type your first message in its terminal.</p>
       </template>

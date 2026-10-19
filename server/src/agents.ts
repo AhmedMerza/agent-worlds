@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync, mkdirSync, renameSync, readFileSync, readdirSync, symlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { GEMINI_EVENTS } from './gemini.ts';
 import { PROVIDERS, type ProviderId } from './providers.ts';
@@ -53,7 +53,7 @@ const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Permiss
  * the command never changes, so it does not ask again. Qwen and Gemini read them from a system
  * settings file we point them at.
  */
-export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider }): { args: string[]; env: Record<string, string> } {
+export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider; dir?: string }): { args: string[]; env: Record<string, string> } {
   const task = o.task ? ['--', o.task] : [];
   if (agent === 'codex') {
     const cmd = JSON.stringify(hookCommand('codex'));
@@ -73,9 +73,14 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     return { args: o.task ? ['-i', o.task] : [], env: o.home ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: writeQwenSettings(o.home, o.provider) } : {} };
   }
   if (agent === 'gemini') {
-    // yolo only with our hooks in place: they are then the one gate on its tools.
-    if (!o.home) return { args: o.task ? ['-i', o.task] : [], env: {} };
-    return { args: ['--approval-mode', 'yolo', ...(o.task ? ['-i', o.task] : [])], env: { GEMINI_CLI_HOME: writeGeminiHome(o.home) } };
+    // yolo only where our hooks are then the one gate on its tools: with them installed, and in a folder with no
+    // .gemini/settings.json of its own, which outranks ours and could switch hooks off. Elsewhere Gemini asks
+    // first in its terminal, then the hook holds as well. Gemini also refuses yolo (and skips all hooks) in a
+    // folder you haven't trusted, so there its own prompt is the gate.
+    const task = o.task ? ['-i', o.task] : [];
+    if (!o.home) return { args: task, env: {} };
+    const yolo = o.dir !== undefined && !existsSync(join(o.dir, '.gemini', 'settings.json'));
+    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...task], env: { GEMINI_CLI_HOME: writeGeminiHome(o.home) } };
   }
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];
@@ -170,18 +175,23 @@ function writeQwenSettings(home: string, provider?: Provider): string {
 /**
  * Gemini reads settings from <GEMINI_CLI_HOME>/.gemini (a system settings file only counts when root owns its
  * folder, since 0.64). So its sessions get a home of their own, like Kimi's: links to everything in the user's
- * ~/.gemini (login, history, extensions) next to a settings.json that is theirs plus our hooks and mailbox.
- * Rewritten on every start. Hook timeouts are in milliseconds. Folder trust is off there: Gemini drops every
- * hook in a folder it does not trust, and refuses yolo there.
+ * ~/.gemini (login, history, extensions, trusted folders) next to a settings.json that is theirs plus our hooks
+ * and mailbox, with hooks forced on. Rewritten on every start. Hook timeouts are in milliseconds.
  */
 export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI_HOME || homedir(), '.gemini')): string {
   const root = join(home, 'gemini-home'), dir = join(root, '.gemini');
+  // Started from inside one of these sessions, GEMINI_CLI_HOME is ours: linking it onto itself would lose the login.
+  if (resolve(real) === resolve(dir)) real = join(homedir(), '.gemini');
   linkHome(real, dir, ['settings.json']);
-  let mine: Record<string, any> = {};
-  try {
-    const v = JSON.parse(readFileSync(join(real, 'settings.json'), 'utf8'));
-    if (v && typeof v === 'object' && !Array.isArray(v)) mine = v;
-  } catch { /* none, or unreadable */ }
+  const read = (f: string): Record<string, any> => {
+    try {
+      const v = JSON.parse(readFileSync(f, 'utf8'));
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    } catch { return {}; } // none, or unreadable
+  };
+  const mine = read(join(real, 'settings.json'));
+  // Gemini saves the sign-in choice into this copy: keep it, or it asks again every session.
+  const auth = mine.security?.auth?.selectedType ?? read(join(dir, 'settings.json')).security?.auth?.selectedType;
   const command = hookCommand('gemini');
   const hooks: Record<string, unknown[]> = { ...mine.hooks };
   for (const ev of GEMINI_EVENTS) {
@@ -190,7 +200,8 @@ export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI
   }
   writeSettings(dir, 'settings.json', {
     ...mine, hooks,
-    security: { ...mine.security, folderTrust: { ...mine.security?.folderTrust, enabled: false } },
+    hooksConfig: { ...mine.hooksConfig, enabled: true, disabled: [] },
+    ...(auth ? { security: { ...mine.security, auth: { ...mine.security?.auth, selectedType: auth } } } : {}),
     mcpServers: { ...mine.mcpServers, aw: { ...mcpEntry('gemini'), trust: true } },
   });
   return root;

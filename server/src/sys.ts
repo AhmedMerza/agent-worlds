@@ -132,7 +132,7 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   // user never installed the hooks globally.
   const agent = opts.agent ?? 'claude';
   const bin = agent === 'claude' ? opts.claudeBin ?? 'claude' : AGENTS[agent].bin;
-  const { args, env: agentEnv } = launchArgs(agent, { home: opts.home, resume: opts.resume, permissionMode: opts.permissionMode, task, provider: opts.provider });
+  const { args, env: agentEnv } = launchArgs(agent, { home: opts.home, resume: opts.resume, permissionMode: opts.permissionMode, task, provider: opts.provider, dir });
   const vars = { ...(opts.home ? { AGENT_WORLDS_HOME: opts.home } : {}), ...agentEnv };
   const env = Object.entries(vars).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Kimi takes no starting prompt and drops keys typed before its TUI draws, so a task goes in through a

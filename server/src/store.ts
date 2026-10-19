@@ -284,7 +284,7 @@ export class Store {
   async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null }): Promise<string> {
     // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
     const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
-    if (live) { if (o.task && !live.task) { live.task = oneLine(o.task, 200); this.push(live); } return live.id; }
+    if (live) { if (o.task && !live.task) live.task = oneLine(o.task, 200); live.via ??= o.via ?? null; this.push(live); return live.id; }
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir, null, null, o.agent);
     s.state = 'starting';
@@ -293,7 +293,7 @@ export class Store {
     s.direct = o.direct ?? null;
     s.via = o.via ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
-      : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask you to sign in with Google in the terminal (first time only)'
+      : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask you to sign in with Google and to trust this folder in the terminal'
       : s.agent === 'kimi' && !o.task ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
       : `Starting… ${AGENTS[s.agent].name} may ask you to trust this folder in the terminal`;
     this.push(s);
@@ -439,7 +439,8 @@ export class Store {
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         const key = inputKey(tool, input);
-        const match = s.pending.find((x) => x.key === key) ?? s.pending.find((x) => x.tool === tool);
+        // Gemini's input is the same before and after; matching its tool name alone could deny another held call of it.
+        const match = s.pending.find((x) => x.key === key) ?? (s.agent === 'gemini' ? undefined : s.pending.find((x) => x.tool === tool));
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, rest ?? 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
@@ -484,6 +485,8 @@ export class Store {
           pend.timer = setTimeout(() => {
             pend.live = false; pend.timer = null;
             resolve('{}'); pend.resolve = null;
+            // Gemini has no prompt to answer it in instead: '{}' denied it, so it is gone.
+            if (s.agent === 'gemini') { s.pending = s.pending.filter((x) => x !== pend); this.afterPending(s, 'working'); }
             if (this.sessions.has(s.id)) this.push(s);
           }, this.deps.holdMs);
           // Esc in the terminal kills the hook: the request is gone, the session sits at its prompt.
