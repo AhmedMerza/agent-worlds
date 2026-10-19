@@ -3,13 +3,14 @@ import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { GEMINI_EVENTS } from './gemini.ts';
+import { AGY_EVENTS, agyHooksDir } from './agy.ts';
 import { PROVIDERS, type ProviderId } from './providers.ts';
 import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT, MCP_BRIDGE } from './hooks.ts';
 
 /**
  * The agent CLIs a session can run. All of them report through the same aw-hook script with
  * Claude-shaped hook payloads (session_id, hook_event_name, tool_name, tool_input, ...), so the
- * store handles them alike (Gemini's are translated first, see gemini.ts); what differs is how the hooks get into each CLI and which features it has.
+ * store handles them alike (Gemini's and agy's are translated first, see gemini.ts and agy.ts); what differs is how the hooks get into each CLI and which features it has.
  * `decides`: the CLI waits on its PermissionRequest hook, so Allow/Deny can be answered from here.
  * `task`: the CLI can be started with the task as its first prompt.
  */
@@ -24,6 +25,8 @@ export const AGENTS = {
   kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, task: true },
   // Gemini CLI runs without prompts of its own: every tool it would ask about is held for you here (gemini.ts).
   gemini: { name: 'Gemini CLI', bin: 'gemini', alwaysAllow: false, modes: false, decides: true, task: true },
+  // Antigravity CLI shows its own prompt whatever its PreToolUse hook answers, so they are answered in the terminal (agy.ts).
+  agy: { name: 'Antigravity CLI', bin: 'agy', alwaysAllow: false, modes: false, decides: false, task: true },
 } as const;
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);
@@ -83,6 +86,13 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     const g = writeGeminiHome(o.home);
     // Gemini saves trust by rename, which would replace our link with a copy: it writes the user's file itself.
     return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...task], env: { GEMINI_CLI_HOME: g.root, GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(g.real, 'trustedFolders.json') } };
+  }
+  if (agent === 'agy') {
+    // `-i` runs the task and stays interactive, like Qwen's. AGENT_WORLDS_DIR names the project to its hooks:
+    // agy leaves a folder it has not been told to trust out of its workspace until it asks.
+    const task = o.task ? ['-i', o.task] : [];
+    if (!o.home) return { args: task, env: {} };
+    return { args: ['--add-dir', writeAgyHooks(o.home), ...task], env: o.dir ? { AGENT_WORLDS_DIR: o.dir } : {} };
   }
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];
@@ -207,4 +217,18 @@ export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI
     mcpServers: { ...mine.mcpServers, aw: { ...mcpEntry('gemini'), trust: true } },
   });
   return { root, real };
+}
+
+/**
+ * agy reads hooks from `.agents/hooks.json` in a workspace folder (or the user's ~/.gemini/config), so its
+ * sessions get <home>/agy-hooks added as one, with our hooks in it. The hook payloads do not name their
+ * event, so each hook command passes it on to aw-hook. Its timeouts are in seconds.
+ */
+export function writeAgyHooks(home: string): string {
+  const dir = agyHooksDir(home);
+  const command = (ev: string) => ({ type: 'command', command: `${hookCommand('agy')} ${ev}`, timeout: FAST_TIMEOUT });
+  // Tool events take a group with a matcher, the others a plain list of handlers
+  const aw = Object.fromEntries(AGY_EVENTS.map((ev) => [ev, ev.endsWith('ToolUse') ? [{ matcher: '*', hooks: [command(ev)] }] : [command(ev)]]));
+  writeSettings(join(dir, '.agents'), 'hooks.json', { aw });
+  return dir;
 }

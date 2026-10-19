@@ -8,6 +8,7 @@ import { homeDir, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
 import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
+import { agyHooksDir, fromAgy, toAgy } from './agy.ts';
 import { PROVIDERS, isProvider, readKeys, saveKey, KEY_RE, MODEL_RE } from './providers.ts';
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
@@ -399,7 +400,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const pane = req.headers['x-aw-pane'];
       const pty = req.headers['x-aw-pty'];
       const agent = req.headers['x-aw-agent'];
-      const body = agent === 'gemini' ? fromGemini(raw) : raw;
+      const agyDir = agyHooksDir(opts.home ?? homeDir());
+      const body = agent === 'gemini' ? fromGemini(raw) : agent === 'agy' ? fromAgy(raw, req.headers['x-aw-event'], agyDir, req.headers['x-aw-dir']) : raw;
       if (!body) { res.writeHead(204); return res.end(); }
       const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
       const ac = new AbortController();
@@ -418,6 +420,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
       if (held) out = toGemini(out);
+      if (agent === 'agy') out = toAgy(body, agyDir);
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);

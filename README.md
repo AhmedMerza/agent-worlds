@@ -1,6 +1,6 @@
 # Agent Worlds
 
-**Run and watch many coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) from one
+**Run and watch many coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI, Antigravity CLI) from one
 browser tab.** Sessions live in illustrated rooms, everything that needs you lands in one inbox,
 each session is the real agent CLI in a real terminal, and the agents can work together: they
 message each other and pass one task through steps.
@@ -206,7 +206,7 @@ asks first (**Update anyway**).
 
 ## Other agent CLIs
 
-New session has an **Agent** choice: Claude Code, Codex, Qwen Code, Kimi Code or Gemini CLI (whichever is on
+New session has an **Agent** choice: Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI or Antigravity CLI (whichever is on
 your PATH). They all report through the same hook as Claude, added only for the sessions
 Agent Worlds starts, so your own config is never edited. The rooms, timers, inbox and
 Allow/Deny work the same. These features are Claude-only for now:
@@ -265,9 +265,15 @@ as it is. "Your Qwen settings" uses whatever you set up yourself. (Anthropic key
 token, the way Qwen sends them; this hasn't been tried with a live key yet.) Local models through
 Ollama aren't offered: small ones call tools too unreliably to count as a working free option.
 
-Not supported: **Antigravity CLI** (`agy`). It reads hooks only from a repo's `.agents/hooks.json` or
-the global `~/.gemini/config/hooks.json`, with no flag or environment variable to point it elsewhere,
-so adding them would mean editing your repo or your global config.
+**Antigravity CLI** (`agy`) is the free route with a Google account: sign in when it first asks, in its
+terminal. Its sessions report what agy is doing, and the end of a turn moves it to the Help desk, but
+**its permission prompts are answered in its terminal**, as Kimi's are: agy shows its own prompt whatever
+its hook answers, so Allow/Deny from Needs you could not reach it. agy reads hooks from a `.agents/hooks.json`
+in any workspace folder, so its sessions get `agy-hooks` in the Agent Worlds folder added as one
+(`--add-dir`); neither the repo nor `~/.gemini/config` is changed. Two side effects:
+- agy lists that folder in its workspace and could read it. A note at the start of each session tells it
+  which folder is the project and to leave ours alone, but nothing stops it looking.
+- No mailbox: agy only takes MCP servers from `~/.gemini/config`, so its sessions can't message others.
 
 ## Sessions message each other
 
@@ -300,6 +306,7 @@ who is speaking. It is set up only for the sessions Agent Worlds starts:
 - Qwen: the system settings file Agent Worlds already writes for it.
 - Kimi: an `mcp.json` in its own home, holding your servers plus `aw`.
 - Gemini: the system settings file Agent Worlds writes for it, with the `aw` server trusted.
+- Antigravity CLI: not set up (see [Other agent CLIs](#other-agent-clis)).
 
 The mailbox tools run without asking for permission, because they only talk to Agent Worlds.
 
@@ -344,7 +351,7 @@ Runs are saved in `<home>/runs.json`, so a restart (for example **Update now**) 
 - git, curl
 - tmux (optional, recommended): keeps sessions running across restarts and lets you open them from your own terminal
 - [Claude Code](https://claude.com/claude-code) (`claude` on your PATH)
-- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) 0.29 or newer (`gemini`), to start sessions with those instead (see [Other agent CLIs](#other-agent-clis)). A local model through Ollama works for Qwen Code in its OpenAI-compatible mode: set `security.auth.selectedType` to `"openai"` in a workspace `.qwen/settings.json`, and `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in the environment Agent Worlds starts from. Small models (an 8B on an 8 GB GPU, say) are too weak for real agent work.
+- Optional: [Codex](https://github.com/openai/codex) (`codex`), [Qwen Code](https://github.com/QwenLM/qwen-code) 0.13 or newer (`qwen`) [Kimi Code](https://www.kimi.com/code) 2.1 or newer (`kimi`) [Gemini CLI](https://github.com/google-gemini/gemini-cli) 0.29 or newer (`gemini`) or [Antigravity CLI](https://antigravity.google) 1.4 or newer (`agy`), to start sessions with those instead (see [Other agent CLIs](#other-agent-clis)). A local model through Ollama works for Qwen Code in its OpenAI-compatible mode: set `security.auth.selectedType` to `"openai"` in a workspace `.qwen/settings.json`, and `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` in the environment Agent Worlds starts from. Small models (an 8B on an 8 GB GPU, say) are too weak for real agent work.
 - A C/C++ toolchain for `node-pty` if no prebuilt binary matches your platform
 
 ## Quick start
@@ -464,7 +471,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `extraHosts` | `[]` | extra `host:port` origins allowed to call the server, for example `"localhost:5190"` when running the web UI's Vite dev server |
 | `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
 | `claudeBin` | `"claude"` | the Claude Code binary used for new sessions and catch-up summaries |
-| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen`, `kimi` or `gemini`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
+| `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen`, `kimi`, `gemini` or `agy`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
 
