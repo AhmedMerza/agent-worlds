@@ -84,7 +84,7 @@ details p{margin:6px 0 0;max-width:62ch}
 .btn.opt{text-align:left;font-weight:400;width:100%}
 .btn.opt b{color:var(--wait);margin-right:8px}
 .linkbtn{font:inherit;font-size:12.5px;background:none;border:0;padding:0;color:var(--muted);text-decoration:underline;cursor:pointer;align-self:flex-start}
-button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .empty{padding:20px 14px;color:var(--muted);font-size:14px;margin:0}
 .detail{padding:14px;display:flex;flex-direction:column;gap:12px}
 .d-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -151,7 +151,7 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--ink);outline-
 .form{display:flex;flex-direction:column;gap:10px}
 .form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 .form label.row{flex-direction:row;align-items:center;gap:8px}
-.form select,.form textarea,.form input[type=text]{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 9px;width:100%}
+.form select,.form textarea,.form input[type=text],.form input[type=password]{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 9px;width:100%}
 .form textarea{min-height:80px;resize:vertical}
 .err{color:var(--err);font-size:13.5px;margin:0}
 .catch-wait{padding:10px 14px;margin:0;border-bottom:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--muted);font-style:italic}

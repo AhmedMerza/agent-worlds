@@ -151,6 +151,9 @@ test('providers: a key is saved but never read back; a Qwen session starts with 
     assert.equal((await start({ agent: 'qwen', provider: 'openrouter', model: 'bad model; rm' })).status, 400);
     assert.equal((await start({ agent: 'qwen', provider: 'openrouter', model: 'qwen/qwen3-coder:free' })).status, 201);
     assert.deepEqual(calls.at(-1).provider, { id: 'openrouter', model: 'qwen/qwen3-coder:free', key });
+    const st = await (await fetch(`${base}/api/state`, { headers: H })).json() as any;
+    assert.equal(st.sessions.find((x: any) => x.agent === 'qwen')?.via, 'OpenRouter · qwen/qwen3-coder:free', 'the session says what it runs on');
+    assert.ok(!JSON.stringify(st).includes(key), 'the key is not in the state');
     assert.equal((await start({ agent: 'qwen' })).status, 201);
     assert.equal(calls.at(-1).provider, undefined, 'no provider: the user\'s own Qwen setup');
     assert.equal((await put('openrouter', null)).status, 200);

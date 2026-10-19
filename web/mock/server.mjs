@@ -161,7 +161,7 @@ const server = http.createServer(async (req, res) => {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
   if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
-  if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false }, { id: 'qwen', name: 'Qwen Code', installed: false, modes: false }, { id: 'kimi', name: 'Kimi Code', installed: true, modes: false, decides: false, task: true }, { id: 'gemini', name: 'Gemini CLI', installed: true, modes: false, decides: true, task: true }], default: 'claude' })
+  if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false }, { id: 'qwen', name: 'Qwen Code', installed: true, modes: false, decides: true, task: true }, { id: 'kimi', name: 'Kimi Code', installed: true, modes: false, decides: false, task: true }, { id: 'gemini', name: 'Gemini CLI', installed: true, modes: false, decides: true, task: true }], default: 'claude' })
   if (req.method === 'GET' && url.pathname === '/api/providers') return json(200, { providers: [{ id: 'openrouter', name: 'OpenRouter', model: 'qwen/qwen3-coder:free', keyUrl: 'https://openrouter.ai/keys', hasKey: false }, { id: 'gemini', name: 'Gemini API', model: 'gemini-2.5-flash', keyUrl: 'https://aistudio.google.com/apikey', hasKey: true }, { id: 'anthropic', name: 'Anthropic', model: 'claude-sonnet-5-5', keyUrl: 'https://console.anthropic.com/settings/keys', hasKey: false }] })
   if (req.method === 'PUT' && /^\/api\/providers\/[a-z]+\/key$/.test(url.pathname)) return json(200, { hasKey: (await readBody(req)).key !== null })
   if (req.method === 'POST' && url.pathname === '/api/agents/default') return json(200, { default: 'codex' })
@@ -190,7 +190,7 @@ const server = http.createServer(async (req, res) => {
     if (!b.repo) return json(400, { message: 'Task and repo are required.' })
     if (/bad/.test(b.task)) return json(500, { message: 'Could not start tmux: no server running.' })
     const id = `repo-new-${sessions.size}`
-    const s = mkSession(id, b.worldId, { state: 'starting', now: 'Starting', repoName: path.basename(b.repo), repo: b.repo, task: b.task, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
+    const s = mkSession(id, b.worldId, { state: 'starting', now: 'Starting', repoName: path.basename(b.repo), repo: b.repo, task: b.task, agent: b.agent, via: b.provider ? `${b.provider} · ${b.model || 'default model'}` : null, worktree: !!b.worktree, branch: b.branch || (b.worktree ? 'feat/new' : 'main') })
     const sid = `starting:${s.tmux.session}`
     sessions.set(sid, { ...s, id: sid }); upsert(sessions.get(sid))
     setTimeout(() => { sessions.delete(sid); broadcast({ type: 'session-removed', id: sid }); sessions.set(id, { ...s, state: 'working', now: 'Working' }); upsert(sessions.get(id)) }, 2500)

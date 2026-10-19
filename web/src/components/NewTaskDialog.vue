@@ -40,7 +40,7 @@ watch(provider, () => { key.value = ''; replacingKey.value = false; model.value 
 watch(agent, async (a) => {
   if (a !== 'qwen' || providers.value.length) return
   const r = await fetchProviders()
-  if (r.ok) providers.value = r.data.providers
+  if (r.ok) providers.value = r.data.providers; else error.value = `Couldn't load the model providers: ${r.error}`
 })
 /** Run mode: the task goes through these steps, each on its own agent, in one folder. */
 const asRun = ref(props.run ?? false)
@@ -50,6 +50,10 @@ const steps = ref<{ kind: StepKind; agent: string; checkpoint: boolean }[]>([
 ])
 const kinds = Object.keys(STEP_LABEL) as StepKind[]
 const addStep = () => { steps.value.push({ kind: 'review-code', agent: defaultAgent.value, checkpoint: false }) }
+async function forgetKey(p: ProviderInfo) {
+  const r = await saveProviderKey(p.id, null)
+  if (r.ok) { p.hasKey = false; replacingKey.value = false } else error.value = r.error
+}
 async function makeDefault() {
   const r = await saveDefaultAgent(agent.value)
   if (r.ok) defaultAgent.value = r.data.default; else error.value = r.error
@@ -160,21 +164,27 @@ async function submit() {
           <select v-model="provider" aria-label="Model provider"><option value="">Your Qwen settings</option><option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.hasKey ? '' : ' (needs a key)' }}</option></select>
         </label>
         <template v-if="prov">
-          <label v-if="!prov.hasKey || replacingKey">{{ prov.name }} API key
-            <input v-model="key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key">
-          </label>
-          <p v-else class="why">Your {{ prov.name }} key is saved on this computer. <button type="button" class="btn" @click="replacingKey = true">Replace key</button></p>
-          <p v-if="!prov.hasKey || replacingKey" class="why"><a :href="prov.keyUrl" target="_blank" rel="noopener">Get a {{ prov.name }} key</a>. It is stored on this computer only and never shown again.</p>
-          <label>Model (optional)
+          <p class="why">Only this session uses it. Your own Qwen settings stay as they are.</p>
+          <template v-if="!prov.hasKey || replacingKey">
+            <p id="key-note" class="why">The key is kept on this computer only (in <code>keys.json</code> in the Agent Worlds folder) until you replace or forget it, and is never shown again. <a :href="prov.keyUrl" target="_blank" rel="noopener">Get a {{ prov.name }} key</a></p>
+            <label>{{ prov.name }} API key
+              <input v-model="key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key" aria-describedby="key-note">
+            </label>
+            <button v-if="replacingKey" type="button" class="btn" @click="replacingKey = false; key = ''">Keep the saved key</button>
+          </template>
+          <p v-else class="why">Your {{ prov.name }} key is saved on this computer.
+            <button type="button" class="btn" @click="replacingKey = true">Replace key</button>
+            <button type="button" class="btn" @click="forgetKey(prov)">Forget key</button>
+          </p>
+          <label>Model (optional; empty means {{ prov.model }})
             <input v-model="model" type="text" autocomplete="off" spellcheck="false" :placeholder="prov.model">
           </label>
-          <p class="why">Only this session uses it. Your own Qwen settings stay as they are.</p>
         </template>
       </template>
       <template v-if="!asRun">
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
       <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal, following your {{ chosen.name }} settings.</p>
-      <p v-else-if="chosen.id === 'gemini'" class="why">Gemini CLI won't ask in its terminal. Every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
+      <p v-else-if="chosen.id === 'gemini'" class="why">Free with your Google account: the first time, Gemini CLI asks you to sign in, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
       <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>
       <p v-if="chosen?.task === false" class="why">{{ chosen.name }} can't be handed a task when it starts: once it opens, type your first message in its terminal.</p>
       </template>

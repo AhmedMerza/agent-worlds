@@ -620,7 +620,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
       try {
         const r = await createSession({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null, agent });
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null, agent, via: provider ? `${PROVIDERS[provider.id].name} · ${provider.model}` : null });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
