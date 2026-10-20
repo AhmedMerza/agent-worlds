@@ -444,7 +444,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         else if (parent) body = asHelper(body, parent);
       }
       if (!body) { res.writeHead(204); return res.end(); }
-      const held = agent === 'gemini' && body.hook_event_name === 'PermissionRequest';
+      const held = isAgent(agent) && AGENTS[agent].holds && body.hook_event_name === 'PermissionRequest';
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       const now = Date.now();
@@ -461,8 +461,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       let out: string;
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
+      // agy takes Gemini's reply to a held tool
       if (held) out = toGemini(out);
-      if (agent === 'agy') out = toAgy(event, agyCwd, agyDir);
+      else if (agent === 'agy') out = toAgy(event, agyCwd, agyDir);
       if (!out) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(out);

@@ -440,8 +440,8 @@ export class Store {
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         const key = inputKey(tool, input);
-        // Gemini's input is the same before and after; matching its tool name alone could deny another held call of it.
-        const match = s.pending.find((x) => x.key === key) ?? (s.agent === 'gemini' ? undefined : s.pending.find((x) => x.tool === tool));
+        // A held call's input is the same before and after; matching its tool name alone could deny another held call of it.
+        const match = s.pending.find((x) => x.key === key) ?? (AGENTS[s.agent].holds ? undefined : s.pending.find((x) => x.tool === tool));
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, rest ?? 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
@@ -472,8 +472,8 @@ export class Store {
           requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
           tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
-          // Gemini has no prompt of its own to fall back on (gemini.ts): its requests wait for a page to open.
-          live: AGENTS[s.agent].decides && (this.deps.clientsConnected() || s.agent === 'gemini'), resolve: null, timer: null,
+          // A held CLI has no prompt of its own to fall back on (gemini.ts, agy.ts): its requests wait for a page to open.
+          live: AGENTS[s.agent].decides && (this.deps.clientsConnected() || AGENTS[s.agent].holds), resolve: null, timer: null,
         };
         s.pending.push(pend);
         s.state = 'waiting';
@@ -486,8 +486,8 @@ export class Store {
           pend.timer = setTimeout(() => {
             pend.live = false; pend.timer = null;
             resolve('{}'); pend.resolve = null;
-            // Gemini has no prompt to answer it in instead: '{}' denied it, so it is gone.
-            if (s.agent === 'gemini') { s.pending = s.pending.filter((x) => x !== pend); this.afterPending(s, 'working'); }
+            // A held CLI has no prompt to answer it in instead: '{}' denied it, so it is gone.
+            if (AGENTS[s.agent].holds) { s.pending = s.pending.filter((x) => x !== pend); this.afterPending(s, 'working'); }
             if (this.sessions.has(s.id)) this.push(s);
           }, this.deps.holdMs);
           // Esc in the terminal kills the hook: the request is gone, the session sits at its prompt.
