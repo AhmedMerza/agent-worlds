@@ -180,7 +180,7 @@ function agentOf(argv: string[]): AgentId | null {
 }
 
 /** The first line of a file, parsed (for a Codex rollout's session_meta), reading only `bytes`. */
-function firstEntry(path: string, bytes = 8192): Record<string, any> | null {
+function firstEntry(path: string, bytes = 256 * 1024): Record<string, any> | null {
   try {
     const fh = openSync(path, 'r');
     try {
