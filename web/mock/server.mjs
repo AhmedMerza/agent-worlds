@@ -172,6 +172,23 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'PUT' && /^\/api\/providers\/[a-z0-9-]+\/key$/.test(url.pathname)) return json(200, { hasKey: (await readBody(req)).key !== null })
   if (req.method === 'POST' && url.pathname === '/api/agents/default') return json(200, { default: 'codex' })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
+  const hm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/)
+  if (hm && req.method === 'GET') {
+    const s = sessions.get(decodeURIComponent(hm[1]))
+    if (!s) return json(404, { error: 'no such session' })
+    if (s.state === 'starting' || (s.agent && s.agent !== 'claude')) return json(409, { error: 'no transcript yet for this session' })
+    return json(200, { turns: [
+      { who: 'you', text: s.task || 'Fix the failing checkout test' },
+      { who: 'step', text: 'Read: src/checkout.ts' },
+      { who: 'step', text: 'Grep: applyCoupon' },
+      { who: 'step', text: 'Bash: npm test -- checkout' },
+      { who: 'claude', text: 'Found it. `applyCoupon` rounds **before** adding tax, so totals drift by a cent:\n\n```ts\nconst total = round(subtotal - coupon) + tax\n```\n\nI will move the rounding to the end. See https://example.com/rounding for the rule.\n\n<script>alert(1)</script>' },
+      { who: 'you', text: 'ok go ahead' },
+      { who: 'step', text: 'Edit: src/checkout.ts' },
+      { who: 'step', text: 'Bash: npm test -- checkout' },
+      { who: 'claude', text: 'Done. All 14 checkout tests pass.\n\n- moved `round()` after tax\n- added a test for a 3-item cart with a coupon' },
+    ] })
+  }
   // Phone: one made-up LAN address, no Tailscale; the QR link points nowhere real.
   if (req.method === 'GET' && url.pathname === '/api/phone') return json(200, { port: PORT, addresses: [{ address: '192.168.1.20', kind: 'lan', iface: 'wlan0', allowed: phoneAllowed }] })
   if (req.method === 'POST' && url.pathname === '/api/phone/allow') { phoneAllowed = (await readBody(req)).allow === true; return json(200, { ok: true }) }

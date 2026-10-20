@@ -1,4 +1,4 @@
-import { reactive, computed, ref } from 'vue'
+import { reactive, computed, ref, watch } from 'vue'
 import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
@@ -266,7 +266,7 @@ function followNew(name: unknown): void {
   if (typeof name !== 'string') return
   state.pending = { tmux: name, until: Date.now() + 60000 }
   const known = Object.values(state.sessions).find((x) => (x.tmux?.session ?? x.direct) === name)
-  if (known) { state.pending = null; select(known.id); focusTerminal() } // upsert beat the HTTP response
+  if (known) { state.pending = null; showFollowed(known.id) } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */
 export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: 'kimi'): Promise<ResumeResult> {
@@ -322,7 +322,7 @@ export function connect(): void {
     try { m = JSON.parse(String(e.data)) as ServerMessage } catch { return /* ignore a malformed frame */ }
     const waiting = state.pending
     const a = applyMessage(state, m)
-    if (waiting && !state.pending && state.selectedId) { select(state.selectedId); focusTerminal() }
+    if (waiting && !state.pending && state.selectedId) showFollowed(state.selectedId)
     // the selected terminal's next session never came: select another once the wait is over
     if (m.type === 'session-removed' && state.pending) setTimeout(() => keepSelection(state), state.pending.until - Date.now() + 50)
     if (a) alertNeedsYou(a, groups.value.findIndex((g) => g.sessions.some((x) => x.id === a.id)), groups.value.find((g) => g.sessions.some((x) => x.id === a.id))?.world.name ?? '')
@@ -338,10 +338,28 @@ export function startClock(): void { setInterval(() => { state.now = Date.now() 
 
 /** Bumped to ask the terminal panel to scroll into view and take focus. */
 export const termFocusTick = ref(0)
-export const focusTerminal = (): void => { termFocusTick.value++ }
+export const focusTerminal = (): void => { ui.pane = 'term'; termFocusTick.value++ }
+/** Bumped to ask the page to show the selected session's chat (on a phone: open it in the Chats tab). */
+export const chatTick = ref(0)
+/** True while you work through requests with Next/Skip: answering one then opens the next. A chat opened from the list is for reading, so it stays. */
+export const chatRun = ref(false)
+export const openChat = (id: string, run = false): void => { chatRun.value = run; select(id); ui.pane = 'chat'; chatTick.value++ }
+/** Cards you skipped with "Skip" in a chat: Next stops offering them (a new card from that session is offered again). */
+export const skipped = reactive(new Set<string>())
+/** A session you just started or resumed: shown where you were looking, its chat or its terminal. */
+const showFollowed = (id: string): void => { if (ui.pane === 'chat') openChat(id); else { select(id); focusTerminal() } }
+
+type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat' }
+function savedViews(): Views {
+  try {
+    const v = JSON.parse(localStorage.getItem('aw-views') ?? '{}') as Partial<Views>
+    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term' }
+  } catch { return { left: 'world', pane: 'term' } }
+}
 
 /** Dialog state shared by the header, rooms and detail panel. */
 /** recentRepo: Recent sessions shows only that repo's (its folder and worktrees); null shows all. */
-export const ui = reactive({ worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
+export const ui = reactive({ ...savedViews(), worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
   /** A character being dragged to another room: where the pointer is, and the world under it. */
   drag: null as { id: string; x: number; y: number; over: string | null } | null })
+watch(() => [ui.left, ui.pane], () => { try { localStorage.setItem('aw-views', JSON.stringify({ left: ui.left, pane: ui.pane })) } catch { /* private window: not remembered */ } })

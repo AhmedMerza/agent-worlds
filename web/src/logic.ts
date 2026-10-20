@@ -1,4 +1,4 @@
-import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep } from './types'
+import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep, Turn } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
@@ -458,4 +458,73 @@ export function openHttp(address: string): boolean {
   if (u.protocol !== 'http:') return false
   const h = u.hostname.replace(/^\[|\]$/g, '')
   return !(h === 'localhost' || h.endsWith('.local') || h === '::1' || /^(127|10)\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h))
+}
+
+/** The one line a card asks of you: what it wants to run, its question, or what it said when it stopped. */
+export function cardAsk(c: Card): string {
+  if (c.kind === 'permission') return permissionAsk(c)
+  if (c.kind === 'question') return c.questions.length === 1 ? c.questions[0].question : `${c.questions.length} questions`
+  if (c.kind === 'done') return c.summary ?? 'Finished'
+  return c.summary
+}
+
+/** A row's preview of its card: what a permission would actually run or touch, so `npm test` and `rm -rf` differ at a glance. */
+export function chatPreview(c: Card): string {
+  if (c.kind !== 'permission') return cardAsk(c)
+  const verb = ({ command: 'Run', file: 'Edit', url: 'Open' } as Record<string, string>)[c.target?.type ?? (c.command ? 'command' : '')] ?? `Allow ${c.tool}`
+  return `${verb}: ${permissionDetail(c).split('\n')[0]}`
+}
+/** One card's identity: a new request from the same session is a new card. */
+export const cardKey = (s: Session): string => s.id + ':' + (s.card?.kind === 'permission' || s.card?.kind === 'question' ? s.card.requestId : s.card?.kind ?? '')
+
+export interface ChatRow { s: Session; preview: string; at: number; needs: boolean }
+/** The chats list: sessions needing you first (inbox order), then the rest, latest activity first. */
+export function chatRows(sessions: Session[]): ChatRow[] {
+  const needs = queue(sessions)
+  const rest = sessions.filter((s) => !needs.includes(s)).sort((a, b) => b.updatedAt - a.updatedAt)
+  return [...needs, ...rest].map((s) => ({
+    s, needs: needs.includes(s), at: s.waitingSince ?? s.updatedAt,
+    preview: (s.card ? chatPreview(s.card) : '') || s.now || s.lastPrompt || s.task || '',
+  }))
+}
+/** The chat view reads Claude's transcript; other agents' conversations only show in their terminal. */
+export const hasChat = (s: Pick<Session, 'agent' | 'ghost'>): boolean => (s.agent ?? 'claude') === 'claude' && !s.ghost
+
+export type ChatItem = { who: 'you' | 'claude'; text: string } | { who: 'steps'; lines: string[] }
+/** Folds each run of tool steps into one item, so a chat reads as messages with "6 steps" between them. */
+export function chatItems(turns: Turn[]): ChatItem[] {
+  const out: ChatItem[] = []
+  for (const t of turns) {
+    const last = out[out.length - 1]
+    if (t.who !== 'step') out.push({ who: t.who, text: t.text })
+    else if (last?.who === 'steps') last.lines.push(t.text)
+    else out.push({ who: 'steps', lines: [t.text] })
+  }
+  return out
+}
+/** "14:05" today, "Mon" this week, else "12 Oct". */
+export function chatTime(at: number, now: number): string {
+  const d = new Date(at), n = new Date(now)
+  if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (now - at < 6 * 86400000) return d.toLocaleDateString([], { weekday: 'short' })
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+}
+/** The pill on a chat row: blocked on you, failed, or finished and waiting for a look. */
+export function chatBadge(c: Card): { label: string; tone: 'wait' | 'err' | 'ok' } {
+  if (c.kind === 'error') return { label: 'Problem', tone: 'err' }
+  if (c.kind === 'done') return { label: 'To review', tone: 'ok' }
+  return { label: 'Needs you', tone: 'wait' }
+}
+/** What you just did on a card, as a line for the chat ("You allowed: npm test"). */
+export function actedLine(c: Card, did: 'allow' | 'deny' | 'ack' | { scope: string } | { answers: Record<string, string> }): string {
+  if (did === 'ack') return c.kind === 'error' ? 'You dismissed the problem' : 'You marked it reviewed'
+  const what = c.kind === 'permission' ? permissionDetail(c) : ''
+  if (did === 'deny') return `You denied: ${what}`
+  if (did === 'allow') return `You allowed once: ${what}`
+  if ('answers' in did) return `You answered: ${Object.values(did.answers).join(', ')}`
+  return `You always allow (${did.scope}): ${what}`
+}
+/** The chat to go to next: the first one needing you that is not this one and not a card you skipped. */
+export function nextChat(queue: Session[], currentId: string | null, skipped: Set<string>): Session | null {
+  return queue.find((s) => s.id !== currentId && !skipped.has(cardKey(s))) ?? null
 }

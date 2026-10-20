@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Room from './components/Room.vue'
 import Inbox from './components/Inbox.vue'
+import ChatList from './components/ChatList.vue'
+import ChatView from './components/ChatView.vue'
 import Detail from './components/Detail.vue'
 import TerminalPanel from './components/TerminalPanel.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
@@ -12,21 +14,36 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, requestCatchup, ui, updateNow, focusTerminal } from './store'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, requestCatchup, ui, updateNow, focusTerminal } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
 const worldsPanel = ref<InstanceType<typeof WorldsPanel> | null>(null)
 const newTaskWorld = ref<string | null>(null)
 const newTaskRun = ref(false)
-type Tab = 'inbox' | 'rooms' | 'term'
-const tab = ref<Tab>('inbox')
+type Tab = 'chats' | 'rooms' | 'term'
+const tab = ref<Tab>('chats')
 const mq = matchMedia('(max-width: 699px)')
 const phone = ref(mq.matches)
 const onMq = () => { phone.value = mq.matches }
 const showTab = (t: Tab) => !phone.value || tab.value === t
 watch(termFocusTick, () => { if (phone.value) tab.value = 'term' })
-const tabs = computed<[Tab, string][]>(() => [['inbox', 'Inbox'], ['rooms', 'Rooms'], ['term', 'Terminal']])
+const tabs = computed<[Tab, string][]>(() => [['chats', 'Chats'], ['rooms', 'Rooms'], ['term', 'Terminal']])
+// On a phone a chat opens over the list, like a messaging app; it gets a history entry so Back closes it, not the app.
+const chatOpen = ref(false)
+watch(chatTick, async () => {
+  // One column (tablet, narrow window): the chat sits below the list, so bring it into view.
+  if (!phone.value) { await nextTick(); document.querySelector('.chat')?.scrollIntoView({ block: 'nearest' }); return }
+  tab.value = 'chats'
+  if (!chatOpen.value) { chatOpen.value = true; history.pushState({ awChat: true }, '') }
+})
+function closeChat() { if (history.state?.awChat) history.back(); else chatOpen.value = false }
+const onPop = () => { chatOpen.value = false }
+watch(tab, (t) => { if (t !== 'chats' && chatOpen.value) closeChat() })
+// Phone: the Chats tab is the list or one chat. Wide: World or Chats on the left, a chat or the terminal beside it.
+const listShown = computed(() => (phone.value ? tab.value === 'chats' && !chatOpen.value : ui.left === 'chats'))
+const chatShown = computed(() => (phone.value ? tab.value === 'chats' && chatOpen.value : ui.pane === 'chat'))
+const termShown = computed(() => (phone.value ? tab.value === 'term' : ui.pane === 'term'))
 
 function openNewTask(worldId?: string, run = false) {
   newTaskRun.value = run
@@ -90,8 +107,8 @@ watch(() => state.toast?.n, () => {
 // If the filtered world disappears, show everything again.
 watch(groups, (g) => { if (state.filter !== 'all' && !g.some((x) => x.world.id === state.filter)) state.filter = 'all' })
 
-onMounted(() => { connect(); startClock(); window.addEventListener('keydown', onKey); mq.addEventListener('change', onMq) })
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeEventListener('change', onMq) })
+onMounted(() => { connect(); startClock(); window.addEventListener('keydown', onKey); window.addEventListener('popstate', onPop); mq.addEventListener('change', onMq) })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('popstate', onPop); mq.removeEventListener('change', onMq) })
 </script>
 
 <template>
@@ -131,11 +148,19 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
     <div v-else-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
     <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
-      <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'inbox' && needsYou.length" class="count">{{ needsYou.length }}</span></button>
+      <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'chats' && needsYou.length" class="count">{{ needsYou.length }}</span></button>
+    </nav>
+    <nav v-if="!phone && state.loaded" class="views" aria-label="Show">
+      <button :aria-pressed="ui.left === 'world'" @click="ui.left = 'world'">World</button>
+      <button :aria-pressed="ui.left === 'chats'" @click="ui.left = 'chats'">Chats<span v-if="needsYou.length" class="count">{{ needsYou.length }}</span></button>
+      <span class="views-gap" />
+      <button :aria-pressed="ui.pane === 'chat'" @click="ui.pane = 'chat'">Conversation</button>
+      <button :aria-pressed="ui.pane === 'term'" @click="ui.pane = 'term'">Terminal</button>
     </nav>
     <div v-if="state.loaded" class="layout">
-      <div class="main-col">
-        <section v-show="showTab('rooms')" :class="['worlds', { single: state.filter !== 'all' || shown.length === 1 }]" aria-label="Worlds">
+      <div :class="['main-col', { 'chats-mode': !phone && ui.left === 'chats' }]">
+        <ChatList v-if="listShown" @new-task="ui.pane = 'chat'; openNewTask()" />
+        <section v-show="phone ? tab === 'rooms' : ui.left === 'world'" :class="['worlds', { single: state.filter !== 'all' || shown.length === 1 }]" aria-label="Worlds">
           <div v-if="!state.worlds.length" class="empty-world">
             <h2>Create your first world</h2>
             <p class="why">A world is a named group of repos. Its sessions get their own room.</p>
@@ -143,10 +168,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); mq.removeE
           </div>
           <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
         </section>
-        <TerminalPanel v-show="showTab('term')" />
+        <ChatView v-if="chatShown" :back="phone" @back="closeChat" />
+        <TerminalPanel v-show="termShown" />
       </div>
       <aside>
-        <Inbox v-show="showTab('inbox')" />
+        <Inbox v-show="!phone" />
         <Detail v-show="showTab('term')" />
       </aside>
     </div>
