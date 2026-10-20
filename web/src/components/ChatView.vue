@@ -31,7 +31,8 @@ const sent = ref<string | null>(null)
 /** What you did on its cards while this chat was open, placed after the message it followed (the transcript does not record it). */
 const acted = ref<{ at: number; text: string }[]>([])
 const actedAt = (n: number) => acted.value.filter((a) => a.at === n)
-function onActed(text: string) {
+function onActed(text: string, id: string) {
+  if (id !== s.value?.id) return // answered there, but you have moved on since: it is not this chat's line
   acted.value.push({ at: items.value.length, text }); follow = true; soon()
   moveOn(text)
 }
@@ -72,14 +73,16 @@ function goNext() {
 }
 
 let lastLoad = 0
+let loadSeq = 0
 let follow = true
 let timer: ReturnType<typeof setTimeout> | undefined
 async function load() {
   const cur = s.value
   if (!cur || !hasChat(cur)) return
   lastLoad = Date.now()
+  const mine = ++loadSeq
   const r = await sessionConversation(cur.id)
-  if (s.value?.id !== cur.id) return // switched sessions while it loaded
+  if (mine !== loadSeq || s.value?.id !== cur.id) return // a newer load started, or you switched sessions
   if (!r.ok) {
     noTranscript.value = /no transcript/.test(r.error)
     err.value = noTranscript.value ? '' : r.error
@@ -162,7 +165,7 @@ function onKey(e: KeyboardEvent) {
         <div v-if="sent" class="bubble you sending">{{ sent }}</div>
       </div>
       <p v-if="moved" class="chat-moved" role="status">✓ {{ moved }}</p>
-      <div v-if="card" :class="['card', 'chat-card', { settling, risky: card.kind === 'permission' && card.risky }]" :aria-busy="settling"><CardActions :key="s.id + card.kind + ('requestId' in card ? card.requestId : '')" :s="s" :c="card" :no-reply="true" :on-acted="onActed" fold-scopes /></div>
+      <div v-if="card" :class="['card', 'chat-card', { settling, risky: card.kind === 'permission' && card.risky }]" :aria-busy="settling"><CardActions :key="cardKey(s)" :s="s" :c="card" :no-reply="true" :on-acted="onActed" fold-scopes /></div>
       <button v-if="next" class="chat-next" @click="goNext"><span class="lbl">{{ card ? 'Skip to' : 'Next' }}</span><b>{{ nameOf(next) }}</b><span class="chat-prev">{{ next.card ? chatPreview(next.card) : '' }}</span><span aria-hidden="true">→</span></button>
       <form class="chat-input" @submit.prevent="send">
         <textarea v-model="text" rows="1" enterkeyhint="send" :aria-label="`Message ${nameOf(s)}`" :placeholder="inputHint" :disabled="holdsInput" @keydown="onKey" />

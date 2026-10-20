@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatRows, chatItems, hasChat, cardAsk, chatBadge, actedLine, chatPreview, nextChat, cardKey, typingWaits } from '../src/logic'
+import { chatRows, chatItems, hasChat, cardAsk, chatBadge, actedLine, chatPreview, nextChat, cardKey, typingWaits, chatTime } from '../src/logic'
 import { mk, perm } from './helpers'
 import { renderMarkdown } from '../src/markdown'
 
@@ -115,5 +115,16 @@ describe('typingWaits', () => {
     expect(typingWaits({ kind: 'asking', summary: 'yes?' })).toBe(false)
     expect(typingWaits({ kind: 'done', summary: null })).toBe(false)
     expect(typingWaits(null)).toBe(false)
+  })
+})
+
+describe('chatTime', () => {
+  const at = (y: number, mo: number, d: number, h = 12, mi = 0) => new Date(y, mo, d, h, mi).getTime()
+  const now = at(2026, 9, 20, 0, 1) // Tue 20 Oct, 00:01
+  it('shows the time today, the weekday this week, the date before that', () => {
+    expect(chatTime(at(2026, 9, 20, 0, 0), now)).toBe(new Date(at(2026, 9, 20, 0, 0)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    // two minutes ago but yesterday: a weekday, not a time
+    expect(chatTime(at(2026, 9, 19, 23, 59), now)).toBe(new Date(at(2026, 9, 19, 23, 59)).toLocaleDateString([], { weekday: 'short' }))
+    expect(chatTime(at(2026, 9, 10), now)).toBe(new Date(at(2026, 9, 10)).toLocaleDateString([], { day: 'numeric', month: 'short' }))
   })
 })

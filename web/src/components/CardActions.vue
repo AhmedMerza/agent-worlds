@@ -15,7 +15,7 @@ import ContinueIn from './ContinueIn.vue'
 /** What a session's card asks of you and the buttons that answer it: shared by the inbox and the chat. */
 /** `onActed`: told what you did once the server took it (the chat writes it into the conversation). A callback, not an
  *  event: the server's update can remove this card before the request returns, and an unmounted component's events go nowhere. */
-const props = defineProps<{ s: Session; c: Card; noReply?: boolean; onActed?: (line: string) => void; foldScopes?: boolean }>()
+const props = defineProps<{ s: Session; c: Card; noReply?: boolean; onActed?: (line: string, sessionId: string) => void; foldScopes?: boolean }>()
 const busy = reactive<Record<string, boolean>>({})
 const picked = reactive<Record<string, string[]>>({})
 
@@ -30,8 +30,8 @@ async function run(key: string, fn: () => Promise<boolean>) {
   try { await fn() } finally { busy[key] = false }
 }
 function act(key: string, did: Parameters<typeof actedLine>[1], fn: () => Promise<boolean>) {
-  const c = props.c, tell = props.onActed
-  return run(key, async () => { const ok = await fn(); if (ok) tell?.(actedLine(c, did)); return ok })
+  const c = props.c, id = props.s.id, tell = props.onActed
+  return run(key, async () => { const ok = await fn(); if (ok) tell?.(actedLine(c, did), id); return ok })
 }
 const isOn = (q: Question, label: string) => !!picked[q.question]?.includes(label)
 function choose(requestId: string, q: Question, label: string) {
