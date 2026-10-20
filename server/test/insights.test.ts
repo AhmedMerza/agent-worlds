@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { riskOf, ruleFor, ruleText, addAllowRule, Stats } from '../src/rules.ts';
@@ -13,10 +13,9 @@ import { Insights, runClaude } from '../src/insights.ts';
 import { parseConfig } from '../src/config.ts';
 import { createSession } from '../src/sys.ts';
 import { startServer } from '../src/server.ts';
-import { ev, stubClaude } from './fixtures.ts';
+import { ev, stubClaude, tmp } from './fixtures.ts';
 import { createServer as createNetServer } from 'node:net';
 
-const tmp = (p = 'awtest-') => realpathSync(mkdtempSync(join(tmpdir(), p)));
 const tick = () => new Promise((r) => setImmediate(r));
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString();
 function gitRepo(): string {

@@ -1,14 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { request } from 'node:http';
 import { parseConfig } from '../src/config.ts';
 import { startServer } from '../src/server.ts';
 import { phoneAddresses, Pairing } from '../src/phone.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
+import { tmp } from './fixtures.ts';
 const TOKEN = 'p'.repeat(64);
 
 test('phoneAddresses: Tailscale and private IPv4 only', () => {

@@ -1,17 +1,15 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, realpathSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { PALETTE } from '../src/worlds.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
 const TOKEN = 'w'.repeat(64);
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const home = tmp();
 const code = tmp(); // a folder of repos
 function repo(name: string) {

@@ -2,17 +2,15 @@ import { test } from 'node:test';
 import { TOOL_NAMES } from '../src/mcp.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, statSync, chmodSync, existsSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync, statSync, chmodSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { hooksBlock, writeHooksFile } from '../src/hooks.ts';
 import { createSession } from '../src/sys.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const waitFor = async (f: () => boolean, ms = 3000) => { for (let t = 0; t < ms && !f(); t += 25) await new Promise((r) => setTimeout(r, 25)); };
 
 test('writeHooksFile writes the same block as `hooks --print` plus the mailbox, private', () => {

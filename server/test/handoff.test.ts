@@ -1,15 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, chmodSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeHandoff } from '../src/handoff.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import type { Session } from '../src/store.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
+import { tmp } from './fixtures.ts';
 
 function fakeSession(over: Partial<Session>): Session {
   return {

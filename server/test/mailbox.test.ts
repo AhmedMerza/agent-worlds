@@ -2,21 +2,20 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { Mailbox, PING_PONG } from '../src/mailbox.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
 const TOKEN = 'b'.repeat(64);
 const typed: [string, string][] = [];
 let typeOk = true;
 let app: ReturnType<typeof startServer>;
 let base = '';
-const home = mkdtempSync(join(tmpdir(), 'aw-mail-home-'));
+const home = tmp('aw-mail-home-');
 
 before(async () => {
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
@@ -118,7 +117,7 @@ test('aw-mcp: forwards each line with token, pane and agent; prints replies; err
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
   t.after(() => srv.close());
-  const home = mkdtempSync(join(tmpdir(), 'aw-mcp-'));
+  const home = tmp('aw-mcp-');
   writeFileSync(join(home, 'token'), 'T'.repeat(64) + '\n');
   writeFileSync(join(home, 'endpoint'), `http://127.0.0.1:${(srv.address() as any).port}\n`);
   const out = await bridge({ AGENT_WORLDS_HOME: home, TMUX_PANE: '%4' }, '{"jsonrpc":"2.0","id":1,"method":"ping"}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
@@ -171,7 +170,7 @@ test('mailboxed.json brings the mailbox back after a server restart', async () =
 });
 
 test('Mailbox with a file: unread messages come back after a restart, read and forgotten ones do not', () => {
-  const file = join(mkdtempSync(join(tmpdir(), 'aw-mailfile-')), 'mailbox.json');
+  const file = join(tmp('aw-mailfile-'), 'mailbox.json');
   const box = new Mailbox(Date.now, file);
   box.send('a', 'b', 'read it'); box.take('b');
   const told = box.send('a', 'b', 'told') as any; box.markNotified([told]);
@@ -187,7 +186,7 @@ test('Mailbox with a file: unread messages come back after a restart, read and f
 });
 
 test('mail not yet delivered when the server restarts is delivered once its recipient is back', async () => {
-  const h2 = mkdtempSync(join(tmpdir(), 'aw-mail-restart-'));
+  const h2 = tmp('aw-mail-restart-');
   const got: [string, string][] = [];
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
   const boot = async () => {

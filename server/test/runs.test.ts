@@ -1,22 +1,21 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { saveRuns, loadRuns, excludeRunFiles, newRun } from '../src/runs.ts';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
 const TOKEN = 'c'.repeat(64);
 const launched: any[] = [];
 const ended: string[] = [];
 let failNext = false, slow = 0;
-const dir = mkdtempSync(join(tmpdir(), 'aw-run-'));
+const dir = tmp('aw-run-');
 let app: ReturnType<typeof startServer>;
 let base = '';
-const home = mkdtempSync(join(tmpdir(), 'aw-run-home-'));
+const home = tmp('aw-run-home-');
 
 before(async () => {
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
@@ -239,7 +238,7 @@ test('a step whose session ends waits; moving on gives no borrowed handoff; a pa
 });
 
 test('runs.json: finished runs are pruned, live ones never; a corrupt file is ignored', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'aw-runs-'));
+  const dir = tmp('aw-runs-');
   const file = join(dir, 'runs.json');
   const map = new Map();
   const mk = (status: string, startedAt: number) => { const r = { ...newRun({ task: 't', worldId: 'w', repo: '/r', worktree: false, now: startedAt, steps: [{ kind: 'plan', agent: 'claude', checkpoint: false }] }), status }; map.set(r.id, r); return r; };
@@ -259,13 +258,13 @@ test('runs.json: finished runs are pruned, live ones never; a corrupt file is ig
 });
 
 test('excludeRunFiles adds .aw/ to the repo\'s exclude once, and leaves a non-git folder alone', async () => {
-  const repo = mkdtempSync(join(tmpdir(), 'aw-ex-'));
+  const repo = tmp('aw-ex-');
   execFileSync('git', ['init', '-q', repo]);
   await excludeRunFiles(repo);
   await excludeRunFiles(repo);
   const ex = readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8');
   assert.equal(ex.split('\n').filter((l) => l === '.aw/').length, 1);
-  const plain = mkdtempSync(join(tmpdir(), 'aw-ex-'));
+  const plain = tmp('aw-ex-');
   mkdirSync(join(plain, 'x'));
   await excludeRunFiles(plain); // no throw, nothing written
 });
