@@ -7,9 +7,10 @@ import { join, resolve } from 'node:path';
  * <home>/agy-hooks as an extra one (--add-dir). Its payloads are camelCase and do not say which event they are
  * (aw-hook passes that on from the hook command), so they are turned into the Claude-shaped ones the store reads.
  *
- * Report only, like Kimi: a PreToolUse answering allow does not skip agy's own prompt, so its prompts are
- * answered in its terminal. agy takes any other non-empty reply to PreToolUse as a deny, even `{}`, so
- * nothing is ever answered to a tool event.
+ * agy shows its own prompt whatever its PreToolUse hook answers, so, like Gemini, sessions run with
+ * --dangerously-skip-permissions (no prompt of its own; plans still ask) and a PreToolUse for any tool that could
+ * change something is held here as a PermissionRequest until you allow or deny it. agy runs a tool on an empty reply
+ * and takes any other as a deny, even `{}`: an allow is answered with nothing, a deny as toGemini does.
  *
  * agy sorts its workspace folders and treats the first as the project, which can be ours: SessionStart
  * answers with a system message naming the real one. That is the folder the session was started in (aw-hook
@@ -58,6 +59,10 @@ export function lastStep(path: unknown, type: string): string {
   return '';
 }
 
+/** What runs without being held: reading, and agy's own bookkeeping. A subagent's tools are held in turn. */
+const FREE = new Set(['view_file', 'list_dir', 'grep_search', 'find_by_name', 'search_web',
+  'invoke_subagent', 'manage_subagents', 'send_message', 'manage_task', 'schedule']);
+
 /** The Claude-shaped payload for an agy hook payload; null for one the store has no use for. */
 export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: string, dir?: unknown): Record<string, unknown> | null {
   const ws = Array.isArray(p.workspacePaths) ? p.workspacePaths.filter((w): w is string => typeof w === 'string') : [];
@@ -81,7 +86,7 @@ export function fromAgy(p: Record<string, unknown>, event: unknown, hooksDir: st
     }
     // The store finds a helper by its call's id: given on the call and, as it ends the helper, on a failed call only
     // (a call that worked returns while its subagents run on, and their Stop ends it)
-    case 'PreToolUse': return { ...base, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, ...(tool === 'Task' ? { tool_use_id: `${p.conversationId}:${p.stepIdx}` } : {}) };
+    case 'PreToolUse': return { ...base, hook_event_name: FREE.has(name) ? 'PreToolUse' : 'PermissionRequest', tool_name: tool, tool_input: input, ...(tool === 'Task' ? { tool_use_id: `${p.conversationId}:${p.stepIdx}` } : {}) };
     case 'PostToolUse': return {
       ...base, hook_event_name: p.error ? 'PostToolUseFailure' : 'PostToolUse', tool_name: tool, tool_input: input, error: p.error || undefined,
       ...(tool === 'Task' && p.error ? { tool_use_id: `${p.conversationId}:${p.stepIdx}` } : {}),
@@ -107,7 +112,7 @@ export function asHelper(body: Record<string, unknown>, parent: string): Record<
   return { ...rest, session_id: parent, agent_id: body.session_id, hook_event_name: helperEv };
 }
 
-/** agy's answer: the project note for SessionStart (a subagent's too), nothing for anything else (see above). */
+/** agy's answer to anything but a held tool: the project note for SessionStart (a subagent's too), nothing else (see above). */
 export function toAgy(event: unknown, cwd: unknown, hooksDir: string): string {
   if (event !== 'SessionStart' || typeof cwd !== 'string') return '';
   const systemMessage = `The project you are working on is ${cwd}: run commands and edit files there. The workspace folder ${hooksDir} belongs to Agent Worlds, which watches this session: never read, edit or run commands in it.`;

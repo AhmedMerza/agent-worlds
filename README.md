@@ -275,11 +275,19 @@ server ignores. A plain `http` address carries your prompts and code unencrypted
 `defaultProvider` in `config.json`); removing that server forgets it.
 
 **Antigravity CLI** (`agy`) is the free route with a Google account: sign in when it first asks, in its
-terminal. Its sessions report what agy is doing, and the end of a turn moves it to the Help desk, but
-**its permission prompts are answered in its terminal**, as Kimi's are: agy shows its own prompt whatever
-its hook answers, so Allow/Deny from Needs you could not reach it. agy reads hooks from a `.agents/hooks.json`
-in any workspace folder, so its sessions get `agy-hooks` in the Agent Worlds folder added as one
-(`--add-dir`); neither the repo nor `~/.gemini/config` is changed. Two side effects:
+terminal. Its sessions report what agy is doing, and the end of a turn moves it to the Help desk. agy shows
+its own tool prompt whatever its hook answers, so, as with Gemini, the sessions Agent Worlds starts run with
+`--dangerously-skip-permissions` and the hook is the gate instead: every edit, shell command, web fetch or
+browser action waits under **Needs you** until you allow or deny it, even when no page is open. Reads,
+searches and agy's own subagent bookkeeping run freely (a subagent's tools wait in turn). If Agent Worlds
+can't be reached, or nobody answers within the hour, the tool is denied. Plans still ask in agy's terminal.
+agy runs the task while it is still asking whether to trust a new folder; the hook holds its tools all the same.
+
+agy reads hooks from a `.agents/hooks.json` in any workspace folder, so its sessions get `agy-hooks` in the
+Agent Worlds folder added as one (`--add-dir`); neither the repo nor `~/.gemini/config` is changed.
+**A repo with its own `.agents/hooks.json`**, in its folder or any folder above it, could switch ours off by
+name, so there the session starts without `--dangerously-skip-permissions`: a tool waits under Needs you
+first, and once you allow it there agy asks in its terminal as well. Two side effects:
 - agy lists that folder in its workspace and could read it. A note at the start of each session tells it
   which folder is the project and to leave ours alone, but nothing stops it looking.
 - No mailbox: agy only takes MCP servers from `~/.gemini/config`, so its sessions can't message others.

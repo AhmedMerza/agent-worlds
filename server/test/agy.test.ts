@@ -27,7 +27,9 @@ test('agy payloads become Claude-shaped events, in the project rather than our h
   const base = { conversationId: 'c1', workspacePaths: [hooks, '/r'], transcriptPath: '', modelName: 'gemini-3.8-flash-high' };
   assert.deepEqual(fromAgy(base, 'SessionStart', hooks), { session_id: 'c1', cwd: '/r', transcript_path: '', model: 'gemini-3.8-flash-high', hook_event_name: 'SessionStart' });
   const run = fromAgy({ ...base, toolCall: { name: 'run_command', args: { CommandLine: 'npm test', Cwd: '/r' } } }, 'PreToolUse', hooks);
-  assert.deepEqual([run?.hook_event_name, run?.tool_name, run?.tool_input], ['PreToolUse', 'Bash', { command: 'npm test', cwd: '/r' }]);
+  assert.deepEqual([run?.hook_event_name, run?.tool_name, run?.tool_input], ['PermissionRequest', 'Bash', { command: 'npm test', cwd: '/r' }], 'held');
+  assert.equal(fromAgy({ ...base, toolCall: { name: 'view_file', args: { AbsolutePath: '/r/a' } } }, 'PreToolUse', hooks)?.hook_event_name, 'PreToolUse', 'a read is not held');
+  assert.equal(fromAgy({ ...base, toolCall: { name: 'browser_click', args: {} } }, 'PreToolUse', hooks)?.hook_event_name, 'PermissionRequest', 'nor is a tool we do not know let through');
   const edit = fromAgy({ ...base, toolCall: { name: 'replace_file_content', args: { TargetFile: '/r/a' } } }, 'PreToolUse', hooks);
   assert.deepEqual([edit?.tool_name, edit?.tool_input], ['Edit', { file_path: '/r/a' }]);
   assert.equal(fromAgy({ ...base, toolCall: { name: 'manage_task', args: { Action: 'list' } } }, 'PreToolUse', hooks)?.tool_name, 'manage_task', 'an unknown tool keeps its name');
@@ -48,7 +50,7 @@ test('agy payloads become Claude-shaped events, in the project rather than our h
   const note = JSON.parse(toAgy('SessionStart', '/r', hooks)).injectSteps[0].systemMessage.systemMessage;
   assert.match(note, /project you are working on is \/r/);
   assert.match(note, /\/h\/agy-hooks belongs to Agent Worlds/);
-  // agy takes anything but an empty reply to a tool event as a deny
+  // agy takes anything but an empty reply to a tool event as a deny (a held one is answered as Gemini's)
   for (const ev of ['PreToolUse', 'PostToolUse', 'Stop']) assert.equal(toAgy(ev, '/r', hooks), '');
 });
 
@@ -68,24 +70,38 @@ test('the prompt and the last answer come from agy\'s transcript, and only from 
   assert.equal(lastStep(join(process.env.HOME!, '.gemini', 'antigravity-cli', '..', 'x'), 'PLANNER_RESPONSE'), '');
 });
 
-test('agy sessions get our hooks folder added to the workspace, one hook per event naming it', () => {
-  const home = tmp();
-  const { args, env } = launchArgs('agy', { home, task: 'fix it', dir: '/r' });
-  assert.deepEqual([args, env], [['--add-dir', agyHooksDir(home), '-i', 'fix it'], { AGENT_WORLDS_DIR: '/r' }]);
+test('agy sessions get our hooks folder added to the workspace, one hook per event naming it, and no prompts of their own', () => {
+  const home = tmp(), repo = tmp();
+  const { args, env } = launchArgs('agy', { home, task: 'fix it', dir: repo });
+  assert.deepEqual([args, env], [['--dangerously-skip-permissions', '--add-dir', agyHooksDir(home), '-i', 'fix it'], { AGENT_WORLDS_DIR: repo }]);
   assert.deepEqual(launchArgs('agy', { task: '' }).args, [], 'no home, no hooks');
+  assert.deepEqual(launchArgs('agy', { home, task: 'x' }).args, ['--add-dir', agyHooksDir(home), '-i', 'x'], 'unknown folder: agy asks itself');
+  // A hooks.json of the repo's, or of a folder above it, can switch ours off by name: agy asks itself there
+  mkdirSync(join(repo, 'sub', '.agents'), { recursive: true });
+  writeFileSync(join(repo, 'sub', '.agents', 'hooks.json'), '{"aw":{"enabled":false}}');
+  assert.deepEqual(launchArgs('agy', { home, task: 'x', dir: join(repo, 'sub') }).args[0], '--add-dir');
+  mkdirSync(join(repo, '.agents'));
+  writeFileSync(join(repo, '.agents', 'hooks.json'), '{}');
+  assert.deepEqual(launchArgs('agy', { home, task: 'x', dir: join(repo, 'sub', 'deeper') }).args[0], '--add-dir', 'a parent\'s too');
+  // and one above the Agent Worlds folder, which agy reads for ours
+  const above = tmp(), inner = join(above, 'aw');
+  mkdirSync(join(above, '.agents'), { recursive: true });
+  writeFileSync(join(above, '.agents', 'hooks.json'), '{}');
+  assert.equal(launchArgs('agy', { home: inner, task: 'x', dir: tmp() }).args[0], '--add-dir');
   const { aw } = JSON.parse(readFileSync(join(writeAgyHooks(home), '.agents', 'hooks.json'), 'utf8'));
   assert.deepEqual(Object.keys(aw), ['SessionStart', 'PreInvocation', 'PreToolUse', 'PostToolUse', 'Stop']);
   assert.match(aw.SessionStart[0].command, /bin\/aw-hook agy SessionStart$/);
   assert.equal(aw.PreToolUse[0].matcher, '*');
   assert.match(aw.PreToolUse[0].hooks[0].command, /aw-hook agy PreToolUse$/);
+  assert.equal(aw.PreToolUse[0].hooks[0].timeout, 3600, 'held for an hour');
   assert.equal(aw.Stop[0].timeout, 10, 'seconds');
 });
 
-async function boot() {
+async function boot(holdMs?: number) {
   const repo = tmp(), home = tmp();
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }] }), port: 0 };
   const app = startServer(cfg, TOKEN, {
-    home, procRoot: join(tmp(), 'none'),
+    home, procRoot: join(tmp(), 'none'), holdMs,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
   } as any);
   await app.listen();
@@ -111,13 +127,48 @@ test('an agy session: tool use shows on its card, the project note goes back, th
     assert.deepEqual([(await session()).agent, (await session()).cwd], ['agy', repo]);
     assert.equal((await hook('PreInvocation', { invocationNum: 0 })).status, 204);
     assert.equal((await session()).task, 'list files');
-    const pre = await hook('PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'ls', Cwd: repo } } });
-    assert.deepEqual([pre.status, await pre.text()], [204, ''], 'no answer: agy decides');
-    assert.deepEqual([(await session()).state, (await session()).now], ['working', 'Bash: ls']);
-    await hook('PostToolUse', { error: '', toolCall: { name: 'run_command', args: { CommandLine: 'ls', Cwd: repo } } });
+    const read = await hook('PreToolUse', { toolCall: { name: 'view_file', args: { AbsolutePath: `${repo}/a` } } });
+    assert.deepEqual([read.status, await read.text()], [204, ''], 'a read is not held');
+    assert.equal((await session()).state, 'working');
+    await hook('PostToolUse', { error: '', toolCall: { name: 'view_file', args: { AbsolutePath: `${repo}/a` } } });
+
+    // A command waits for Allow or Deny, even with no page open
+    const decide = async (decision: string) => {
+      for (let i = 0; i < 50 && (await session())?.card?.kind !== 'permission'; i++) await new Promise((r) => setTimeout(r, 10));
+      return app.store.decide('agy-1', { requestId: (await session()).card.requestId, decision });
+    };
+    const ls = { toolCall: { name: 'run_command', args: { CommandLine: 'ls', Cwd: repo } } };
+    const held = hook('PreToolUse', ls);
+    await decide('allow');
+    const allowed = await held;
+    assert.deepEqual([allowed.status, await allowed.text()], [204, ''], 'allow = an empty reply');
+    await hook('PostToolUse', { error: '', ...ls });
+    const held2 = hook('PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'rm -rf build', Cwd: repo } } });
+    // Another command finishing does not answer it, and a second write to the same file gets a card of its own
+    await hook('PostToolUse', { error: '', toolCall: { name: 'run_command', args: { CommandLine: 'pwd', Cwd: repo } } });
+    const w = (stepIdx: number) => hook('PreToolUse', { stepIdx, toolCall: { name: 'write_to_file', args: { TargetFile: `${repo}/a` } } });
+    const writes = [w(7), w(8)];
+    for (let i = 0; i < 50 && app.store.sessions.get('agy-1')!.pending.length < 3; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(app.store.sessions.get('agy-1')!.pending.map((p) => p.tool), ['Bash', 'Write', 'Write']);
+    await decide('deny');
+    assert.equal((await (await held2).json()).decision, 'deny');
+    await decide('allow');
+    await decide('deny');
+    assert.deepEqual(await Promise.all(writes.map(async (r) => (await r).status)), [204, 200], 'each write its own answer');
     assert.equal((await hook('Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true })).status, 204);
     const s = await session();
     assert.deepEqual([s.state, s.card.kind, s.card.summary], ['done', 'done', 'MARKER_PROJ']);
+  } finally { await app.close(); }
+});
+
+test('an agy tool nobody answers is denied when the hold runs out, and leaves Needs you', async () => {
+  const { app, repo, hook, sessions } = await boot(50);
+  try {
+    await hook('SessionStart');
+    const r = await hook('PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'make', Cwd: repo } } });
+    assert.equal((await r.json()).decision, 'deny');
+    const s = (await sessions()).find((x: any) => x.id === 'agy-1');
+    assert.deepEqual([app.store.sessions.get('agy-1')!.pending.length, s.state], [0, 'working']);
   } finally { await app.close(); }
 });
 
@@ -163,6 +214,9 @@ test('agy subagents are helpers of the session that made them, not conversations
     assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
     // A subagent of the session that is gone stays out: it does not bring that session back over the new one
     assert.equal((await kid('kid-1', 'PreToolUse', { toolCall: { name: 'list_dir', args: {} } })).status, 204);
+    // and nobody can approve its tools, so they are denied rather than let through
+    const orphan = await kid('kid-1', 'PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'rm -rf build' } } });
+    assert.deepEqual([orphan.status, (await orphan.json()).decision], [200, 'deny']);
     assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
   } finally { await app.close(); }
 });

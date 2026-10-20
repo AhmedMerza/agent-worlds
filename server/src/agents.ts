@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync, mkdirSync, renameSync, readFileSync, readdirSync, symlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { GEMINI_EVENTS } from './gemini.ts';
 import { AGY_EVENTS, agyHooksDir } from './agy.ts';
@@ -11,21 +11,22 @@ import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT, MCP_B
  * Claude-shaped hook payloads (session_id, hook_event_name, tool_name, tool_input, ...), so the
  * store handles them alike (Gemini's and agy's are translated first, see gemini.ts and agy.ts); what differs is how the hooks get into each CLI and which features it has.
  * `decides`: the CLI waits on its PermissionRequest hook, so Allow/Deny can be answered from here.
+ * `holds`: the CLI runs without prompts of its own, its tool hook held here instead: anything but an allow denies.
  * `task`: the CLI can be started with the task as its first prompt.
  */
 export const AGENTS = {
-  claude: { name: 'Claude Code', bin: 'claude', alwaysAllow: true, modes: true, decides: true, task: true },
+  claude: { name: 'Claude Code', bin: 'claude', alwaysAllow: true, modes: true, decides: true, holds: false, task: true },
   // Codex has no Notification, PostToolUseFailure or StopFailure, and its PermissionRequest takes
   // allow/deny only (no updatedPermissions), so "always allow" stays with Claude.
-  codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: true, task: true },
+  codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: true, holds: false, task: true },
   // Qwen Code >= 0.13 copies Claude's hooks, reply format included.
-  qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, task: true },
+  qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, holds: false, task: true },
   // Kimi Code fires PermissionRequest without waiting for the hook, so its prompts are answered in the terminal.
-  kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, task: true },
+  kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, holds: false, task: true },
   // Gemini CLI runs without prompts of its own: every tool it would ask about is held for you here (gemini.ts).
-  gemini: { name: 'Gemini CLI', bin: 'gemini', alwaysAllow: false, modes: false, decides: true, task: true },
-  // Antigravity CLI shows its own prompt whatever its PreToolUse hook answers, so they are answered in the terminal (agy.ts).
-  agy: { name: 'Antigravity CLI', bin: 'agy', alwaysAllow: false, modes: false, decides: false, task: true },
+  gemini: { name: 'Gemini CLI', bin: 'gemini', alwaysAllow: false, modes: false, decides: true, holds: true, task: true },
+  // Antigravity CLI too, held at its PreToolUse (agy.ts).
+  agy: { name: 'Antigravity CLI', bin: 'agy', alwaysAllow: false, modes: false, decides: true, holds: true, task: true },
 } as const;
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);
@@ -89,9 +90,14 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   if (agent === 'agy') {
     // `-i` runs the task and stays interactive, like Qwen's. AGENT_WORLDS_DIR names the project to its hooks:
     // agy leaves a folder it has not been told to trust out of its workspace until it asks.
+    // No prompts of its own only where our hooks are then the one gate on its tools: any .agents/hooks.json in the
+    // project or a folder above it (ours too) is read alongside ours and can switch them off by name. Elsewhere agy's
+    // own prompt gates its tools as well as the hook.
     const task = o.task ? ['-i', o.task] : [];
     if (!o.home) return { args: task, env: {} };
-    return { args: ['--add-dir', writeAgyHooks(o.home), ...task], env: o.dir ? { AGENT_WORLDS_DIR: o.dir } : {} };
+    const dir = writeAgyHooks(o.home);
+    const yolo = o.dir !== undefined && !agyHooksAbove(o.dir) && !agyHooksAbove(dirname(dir));
+    return { args: [...(yolo ? ['--dangerously-skip-permissions'] : []), '--add-dir', dir, ...task], env: o.dir ? { AGENT_WORLDS_DIR: o.dir } : {} };
   }
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];
@@ -224,9 +230,17 @@ export function writeGeminiHome(home: string, real = join(process.env.GEMINI_CLI
  */
 export function writeAgyHooks(home: string): string {
   const dir = agyHooksDir(home);
-  const command = (ev: string) => ({ type: 'command', command: `${hookCommand('agy')} ${ev}`, timeout: FAST_TIMEOUT });
+  const command = (ev: string) => ({ type: 'command', command: `${hookCommand('agy')} ${ev}`, timeout: ev === 'PreToolUse' ? HOLD_TIMEOUT : FAST_TIMEOUT });
   // Tool events take a group with a matcher, the others a plain list of handlers
   const aw = Object.fromEntries(AGY_EVENTS.map((ev) => [ev, ev.endsWith('ToolUse') ? [{ matcher: '*', hooks: [command(ev)] }] : [command(ev)]]));
   writeSettings(join(dir, '.agents'), 'hooks.json', { aw });
   return dir;
+}
+
+/** Whether `dir` or a folder above it has an `.agents/hooks.json`, which agy reads too. */
+export function agyHooksAbove(dir: string): boolean {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    if (existsSync(join(d, '.agents', 'hooks.json'))) return true;
+    if (d === dirname(d)) return false;
+  }
 }

@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-20
+- **Antigravity CLI: Allow/Deny from Needs you.** agy sessions now run with `--dangerously-skip-permissions`, and every tool agy would ask about is held at its PreToolUse hook (timeout raised to an hour) until you allow or deny it, as Gemini's are; reads, searches and subagent bookkeeping run freely. When Agent Worlds can't be reached, `aw-hook` denies every agy tool, reads included. Where the project or a folder above it has its own `.agents/hooks.json` (which can switch our hook off by name), agy's own prompt stays the gate. Checked on agy 1.4.2.
+
 ## 2026-10-19
 - **Antigravity CLI** (`agy`) as an agent, free with a Google account. Its sessions report tool use, and the end of a turn moves them to the Help desk; its permission prompts are answered in its terminal, since agy prompts whatever its hook answers. Its hooks live in `<home>/agy-hooks/.agents/hooks.json`, added to its workspace with `--add-dir`, and a note at session start names the project (agy otherwise works in whichever workspace folder sorts first). agy runs each subagent as a conversation of its own in the same terminal; they show as helpers of the session that started them. No mailbox: agy only reads MCP servers from `~/.gemini/config`. Works with agy 1.4.
 - **Qwen Code on a server of your own**: the Model provider list can add any OpenAI-compatible server by name and address (key and model optional; the model is asked from the server's `/models` when left empty). Saved in `<home>/servers.json` (0600) and removable (`POST /api/providers`, `DELETE /api/providers/:id`). **Make default** next to Model provider makes New session start on it (`defaultProvider` in config.json, `POST /api/providers/default`).

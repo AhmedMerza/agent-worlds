@@ -5,8 +5,9 @@
 # (a PermissionRequest decision) when there is one. Never fails the Claude session:
 # if the server is down, unconfigured, or AGENT_WORLDS_DISABLE=1, it exits 0 silently.
 # Stdin is read first, so Claude never writes into a closed pipe.
-# The one exception to exiting silently: Gemini runs with --approval-mode yolo and this hook as the only gate
-# on its tools, so a BeforeTool that cannot reach the server is denied rather than let through.
+# The one exception to exiting silently: Gemini (--approval-mode yolo) and agy (--dangerously-skip-permissions)
+# run with this hook as the only gate on their tools, so a BeforeTool or PreToolUse that cannot reach the server
+# is denied rather than let through.
 agent="claude"
 [[ "${1:-}" =~ ^[a-z]{1,20}$ ]] && agent="$1"
 event=""
@@ -17,6 +18,7 @@ payload="$(cat)"
 gate=""
 re='"hook_event_name":[[:space:]]*"BeforeTool"'
 [ "$agent" = gemini ] && [[ "$payload" =~ $re ]] && gate=1
+[ "$agent" = agy ] && [ "$event" = PreToolUse ] && gate=1
 quit() {
   [ -n "$gate" ] && printf '%s\n' '{"decision":"deny","reason":"Agent Worlds could not be reached to approve this tool, so it did not run."}'
   exit 0
@@ -30,9 +32,10 @@ token="$(head -n1 "$home/token")"
 max=2
 re='"hook_event_name":[[:space:]]*"(PermissionRequest|BeforeTool|SessionEnd)"'
 if [[ "$payload" =~ $re ]]; then
-  # PermissionRequest (and Gemini's BeforeTool) is held until the GUI decides (the server gives up at 3540 s, the hook timeout is 3600 s).
+  # PermissionRequest (and Gemini's BeforeTool, agy's PreToolUse below) is held until the GUI decides (the server gives up at 3540 s, the hook timeout is 3600 s).
   [ "${BASH_REMATCH[1]}" = SessionEnd ] && max=1 || max=3590
 fi
+[ -n "$gate" ] && max=3590
 pane=""
 [[ "${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] && pane="$TMUX_PANE"
 # A session the server runs itself (no tmux) carries its pty name instead.

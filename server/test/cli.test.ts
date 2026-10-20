@@ -35,6 +35,9 @@ test('aw-hook: silent exit 0 when disabled, unconfigured or the server is down',
   assert.deepEqual([gate.code, JSON.parse(gate.out).decision], [0, 'deny']);
   assert.equal(JSON.parse((await runHook({ AGENT_WORLDS_HOME: home, AGENT_WORLDS_DISABLE: '1' }, '{"hook_event_name":"BeforeTool"}', ['gemini'])).out).decision, 'deny');
   assert.equal((await runHook({ AGENT_WORLDS_HOME: home }, '{"hook_event_name":"AfterAgent"}', ['gemini'])).out, '', 'other events stay silent');
+  // agy too, at its PreToolUse (named by the second argument)
+  assert.equal(JSON.parse((await runHook({ AGENT_WORLDS_HOME: home }, '{"toolCall":{"name":"run_command"}}', ['agy', 'PreToolUse'])).out).decision, 'deny');
+  assert.equal((await runHook({ AGENT_WORLDS_HOME: home }, '{}', ['agy', 'PostToolUse'])).out, '');
   assert.equal(JSON.parse((await runHook({ AGENT_WORLDS_HOME: tmp() }, '{"hook_event_name":"BeforeTool"}', ['gemini'])).out).decision, 'deny', 'unconfigured');
   const broken = createServer((_q, res) => { res.writeHead(500); res.end('oops'); });
   await new Promise<void>((r) => broken.listen(0, '127.0.0.1', r));
