@@ -6,8 +6,9 @@ import type { StepKind } from '../types'
 import FolderBrowser from './FolderBrowser.vue'
 import PermissionSelect from './PermissionSelect.vue'
 
-/** worldId is '' when the dialog has to ask which world; run opens it with steps already on. */
-const props = defineProps<{ worldId: string; run?: boolean }>()
+/** worldId: the world to start in ('' when there is no good guess). fixedWorld: opened from that world's own room, so it is
+ *  not asked; from anywhere else (New chat, New run) the guess stays changeable. run opens it with steps already on. */
+const props = defineProps<{ worldId: string; run?: boolean; fixedWorld?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const wid = ref(props.worldId)
 const world = computed(() => state.worlds.find((w) => w.id === wid.value))
@@ -159,7 +160,7 @@ async function submit() {
     </div>
     <form v-else ref="box" class="dialog form" role="dialog" aria-modal="true" aria-label="New session" @submit.prevent="submit">
       <h2>{{ asRun ? 'New run' : 'New session' }}{{ world ? ` in ${world.name}` : '' }}</h2>
-      <label v-if="!worldId">World
+      <label v-if="!fixedWorld && (!worldId || state.worlds.length > 1)">World
         <select v-model="wid" aria-label="World"><option value="" disabled>Choose a world</option><option v-for="w in state.worlds" :key="w.id" :value="w.id">{{ w.name }}</option></select>
       </label>
       <div v-if="wid && !world?.repos.length" class="empty-folders">

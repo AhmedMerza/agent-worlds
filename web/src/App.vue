@@ -21,6 +21,8 @@ const help = ref(false)
 const worldsPanel = ref<InstanceType<typeof WorldsPanel> | null>(null)
 const newTaskWorld = ref<string | null>(null)
 const newTaskRun = ref(false)
+/** Opened from a room's own button: its world is the answer, not a guess. */
+const newTaskFixed = ref(false)
 type Tab = 'chats' | 'rooms' | 'term'
 const tab = ref<Tab>('chats')
 const mq = matchMedia('(max-width: 699px)')
@@ -47,6 +49,7 @@ const termShown = computed(() => (phone.value ? tab.value === 'term' : ui.pane =
 
 function openNewTask(worldId?: string, run = false) {
   newTaskRun.value = run
+  newTaskFixed.value = !!worldId
   const g = selected.value ? groups.value.find((x) => x.sessions.includes(selected.value!)) : undefined
   const c = defaultWorld(state.worlds, { explicit: worldId, selectedWorldId: g?.world.id, filter: state.filter })
   if (c.kind === 'world') newTaskWorld.value = c.id
@@ -185,7 +188,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       {{ state.sessions[ui.drag.id]?.repoName }}<template v-if="ui.drag.over && ui.drag.over !== state.sessions[ui.drag.id]?.worldId"> → {{ state.worlds.find((w) => w.id === ui.drag!.over)?.name }}</template>
     </div>
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
-    <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" :run="newTaskRun" @close="newTaskWorld = null" />
+    <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" :run="newTaskRun" :fixed-world="newTaskFixed" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>
   </div>
 </template>
