@@ -69,7 +69,9 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   if (agent === 'kimi') {
     // Kimi takes no starting prompt (and drops keys typed before it draws): createSession turns the
     // task into a `kimi -p` + `kimi -c` chain; here the task only names the session.
-    return { args: o.resume ? ['--session', o.resume] : [], env: o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {} };
+    // KIMI_CODE_TRUST_WORKSPACE skips its trust prompt: trust is per folder and remembered, but every
+    // worktree session is a fresh folder, so the prompt would block the -p run before anything starts.
+    return { args: o.resume ? ['--session', o.resume] : [], env: { KIMI_CODE_TRUST_WORKSPACE: 'true', ...(o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {}) } };
   }
   if (agent === 'qwen') {
     // `-i` runs the task and stays interactive (a bare prompt would run once and exit).
