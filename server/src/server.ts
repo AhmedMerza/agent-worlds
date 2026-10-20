@@ -17,7 +17,7 @@ import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
-import { history, kimiHistory, kimiSessionDir, kimiState, findTranscript, scanClaude, transcriptSummary, SESSION_ID_RE, type ClaudeProc } from './history.ts';
+import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, findTranscript, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, midTurn } from './transcript.ts';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
@@ -41,7 +41,7 @@ const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.
 
 type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
-  home?: string; summarise?: Summarise; procRoot?: string; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
+  home?: string; summarise?: Summarise; procRoot?: string; homes?: AgentHomes; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
   restartClaude?: typeof sys.restartClaude;
   /** Closes a tmux pane (End session); tests stub it. */
@@ -252,8 +252,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const recent = new Map<string, { at: number; reply: Promise<string> }>();
   const DEDUPE_MS = 500;
   const worlds = new Worlds(cfg, join(opts.home ?? homeDir(), 'config.json'), opts.resolveRepo);
-  // Running claude processes (Linux /proc), refreshed every 10 s.
-  let procs: ClaudeProc[] = [];
+  // Running agent processes (Linux /proc), refreshed every 10 s.
+  let procs: AgentProc[] = [];
   let unmanaged: Record<string, unknown>[] = [];
   const repoCache = new Map<string, Promise<sys.RepoInfo>>();
   const repoOf = (cwd: string) => {
@@ -261,7 +261,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (repoCache.size > 500) repoCache.delete(repoCache.keys().next().value!);
     return repoCache.get(cwd)!;
   };
-  const isManaged = (p: ClaudeProc) => [...store.sessions.values()].some((s) => (p.pane && s.tmux?.pane === p.pane) || (p.direct && s.direct === p.direct) || s.id === p.sessionId);
+  const isManaged = (p: AgentProc) => [...store.sessions.values()].some((s) => (p.pane && s.tmux?.pane === p.pane) || (p.direct && s.direct === p.direct) || s.id === p.sessionId);
   /** What a plain-terminal session is doing: its last prompt and when its transcript last changed. Re-read only on change. */
   const ghostInfo = new Map<string, { mtime: number; lastPrompt: string | null }>();
   async function ghostOf(sessionId: string | null): Promise<{ lastPrompt: string | null; lastActivity: number | null }> {
@@ -278,25 +278,39 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     return { lastPrompt: hit.lastPrompt, lastActivity: mtime };
   }
   /**
-   * A session we started (its AGENT_WORLDS_HOME is ours, and it runs in a tmux pane) but don't know, because the server
-   * restarted and it sent no hook since (idle, or deep in one long tool call): take it back instead of showing it as a
-   * plain-terminal ghost. Its transcript says which.
+   * A session we started (its AGENT_WORLDS_HOME is ours, and it runs in a tmux pane or a pty of ours) but don't
+   * know, because the server restarted and it sent no hook since (idle, or deep in one long tool call): take it
+   * back instead of showing it as a plain-terminal ghost. Its transcript or log says what it was doing, as far as
+   * the agent's files allow (Claude's transcripts say the most; Qwen's and agy's only name the session).
    */
-  async function adopt(p: ClaudeProc) {
-    const transcript = findTranscript(cfg.claudeProjectsDir, p.sessionId!);
-    await store.handle({ hook_event_name: 'SessionStart', source: 'resume', session_id: p.sessionId, cwd: p.cwd, ...(transcript ? { transcript_path: transcript } : {}) }, p.pane);
+  async function adopt(p: AgentProc) {
+    const transcript = p.agent === 'claude' ? findTranscript(cfg.claudeProjectsDir, p.sessionId!) : null;
+    const log = p.agent === 'claude' ? transcript : p.log;
+    await store.handle({ hook_event_name: 'SessionStart', source: 'resume', session_id: p.sessionId, cwd: p.cwd, ...(log ? { transcript_path: log } : {}) }, p.pane, undefined, p.direct, p.agent);
     const s = store.sessions.get(p.sessionId!);
     if (!s) return;
     s.now = 'Picked up again after a server restart';
-    if (transcript && midTurn(await readTail(transcript, 65536).catch(() => []))) s.state = 'working';
-    if (transcript) s.lastPrompt = (await transcriptSummary(transcript)).lastPrompt ?? s.lastPrompt;
+    if (transcript) {
+      if (midTurn(await readTail(transcript, 65536).catch(() => []))) s.state = 'working';
+      s.lastPrompt = (await transcriptSummary(transcript)).lastPrompt ?? s.lastPrompt;
+    } else if (p.agent === 'codex' && p.log) {
+      const t = await codexTurn(p.log);
+      if (t.working) s.state = 'working';
+      s.lastPrompt = t.lastPrompt ?? s.lastPrompt;
+    } else if (p.agent === 'kimi' && p.log) {
+      s.lastPrompt = (await kimiLastPrompt(p.log)) ?? s.lastPrompt;
+    } else if (p.agent === 'gemini' && p.log) {
+      s.lastPrompt = (await geminiLastPrompt(p.log)) ?? s.lastPrompt;
+    } else if (p.agent === 'agy') {
+      s.lastPrompt = p.prompt ?? s.lastPrompt;
+    }
     store.push(s);
   }
-  async function scan() {
-    procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
+  async function scanNow() {
     const home = opts.home ?? homeDir();
-    for (const p of procs) if (p.managedHome === home && p.pane && p.sessionId && !isManaged(p)) await adopt(p);
-    const next = await Promise.all(procs.filter((p) => !isManaged(p)).map(async (p) => {
+    procs = scanAgents(opts.procRoot ?? '/proc', cfg.claudeProjectsDir, { home, homes: opts.homes });
+    for (const p of procs) if (p.managedHome === home && (p.pane || p.direct) && p.sessionId && !isManaged(p)) await adopt(p);
+    const next = await Promise.all(procs.filter((p) => p.agent === 'claude' && !isManaged(p)).map(async (p) => {
       const info = await repoOf(p.cwd);
       return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldFor(p.sessionId, info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since, ...(await ghostOf(p.sessionId)) };
     }));
@@ -304,6 +318,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       unmanaged = next;
       broadcast({ type: 'unmanaged', unmanaged });
     }
+  }
+  // One scan at a time: a second call (the 10 s timer, a test's own scan) waits for the run in flight
+  // instead of racing its adoptions and reading half-created sessions.
+  let scanning: Promise<void> | null = null;
+  function scan(): Promise<void> {
+    return (scanning ??= scanNow().finally(() => { scanning = null; }));
   }
   const worldsChanged = () => { broadcast({ type: 'worlds', worlds: cfg.worlds }); store.recomputeWorlds(); };
   const webDist = opts.webDist ?? WEB_DIST;
@@ -623,7 +643,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         // A Kimi copy is only seen through its hooks: no process scan finds one running in another terminal.
         if (!kimi) procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
         const live = store.sessions.get(b.sessionId);
-        const proc = kimi ? undefined : procs.find((p) => p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane));
+        const proc = kimi ? undefined : procs.find((p) => p.agent === 'claude' && (p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane)));
         // stop: quit the copy running in another terminal first (only ours: scanClaude keeps this user's processes).
         if (b.stop === true && proc && !live) {
           if (!(await (opts.stopProcess ?? stopProcess)(proc.pid))) return send(res, 409, { error: `it did not quit (pid ${proc.pid}); close it in its terminal`, pid: proc.pid, stopFailed: true });

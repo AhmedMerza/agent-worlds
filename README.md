@@ -224,7 +224,9 @@ Allow/Deny work the same. These features are Claude-only for now:
 
 - "Always allow" rules, permission modes, and questions answered from the inbox
 - Catch-up summaries, the context %, Recent sessions, and resume
-- Picking a session back up after a server restart (it returns on its next event instead)
+
+After a server restart, sessions of every agent are picked up again (Claude's with the most
+detail — Qwen's come back without their last prompt, which its files don't record).
 
 On its first start, Codex asks you in the terminal to review the new hooks. Choose "Trust all
 and continue". It remembers that choice, so later sessions don't ask again. Codex sends no
