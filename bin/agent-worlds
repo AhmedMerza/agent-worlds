@@ -3,9 +3,14 @@
 here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 run() { node --disable-warning=ExperimentalWarning "$here/../server/src/cli.ts" "$@"; }
 [ "$1" = start ] || { run "$@"; exit; }
+# Keep a copy of the server's output, so a server that died can be diagnosed afterwards.
+log="${AGENT_WORLDS_HOME:-$HOME/.config/agent-worlds}/server.log"
+mkdir -p "$(dirname "$log")"
 # "Update now" in the web app exits the server with 75: start it again on the new code.
 while :; do
-  run "$@"; code=$?
+  echo "--- $(date '+%F %T') start" >> "$log"
+  run "$@" 2>&1 | tee -a "$log"; code=${PIPESTATUS[0]}
+  echo "--- $(date '+%F %T') exited $code" >> "$log"
   [ "$code" = 75 ] || exit "$code"
   echo "agent-worlds: restarting on the new code"
 done
