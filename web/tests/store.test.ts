@@ -1,6 +1,7 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
-import { modeField, modeOptions } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, runsNeedingYou, runOf } from '../src/store'
+import { nextTick } from 'vue'
+import { modeField, modeOptions, cardKey } from '../src/logic'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, runsNeedingYou, runOf, skipped } from '../src/store'
 import type { Run } from '../src/types'
 import { mk, perm } from './helpers'
 
@@ -214,5 +215,18 @@ describe('fetchAgents cache', () => {
     expect((await fetchAgents()).ok).toBe(false)
     expect((await fetchAgents()).ok).toBe(true)
     expect(n).toBe(2)
+  })
+})
+
+describe('skipped', () => {
+  it("lasts while that card waits; once it is answered, the session's next card of the same kind is offered again", async () => {
+    const done = (id: string) => mk(id, { state: 'done', card: { kind: 'done', summary: 'x' }, waitingSince: 1 })
+    applyMessage(state, { type: 'snapshot', worlds: [], sessions: [done('d1')] })
+    skipped.add(cardKey(state.sessions.d1))
+    await nextTick()
+    expect(skipped.has('d1:done')).toBe(true) // still waiting: stays skipped
+    applyMessage(state, { type: 'session', session: mk('d1', { state: 'idle' }) })
+    await nextTick()
+    expect(skipped.has('d1:done')).toBe(false) // answered: forgotten, so its next 'done' is offered
   })
 })

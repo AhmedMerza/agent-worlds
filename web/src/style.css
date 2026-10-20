@@ -361,3 +361,96 @@ pre.diff{max-height:320px;overflow:auto}
 .browser .find{width:100%;margin:6px 0}
 .room.drop{outline:2px dashed var(--tint);outline-offset:-2px}
 .drag-tag{position:fixed;z-index:50;pointer-events:none;transform:translate(12px,8px);background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:3px 8px;font-size:12px;white-space:nowrap}
+
+/* Chats: a list of sessions and one session as a conversation. */
+.views{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:3px;flex:none}
+.views button{font:inherit;font-size:13px;color:var(--muted);background:none;border:0;border-radius:4px;padding:5px 14px;cursor:pointer}
+.views button[aria-pressed="true"]{background:var(--panel-2);color:var(--ink)}
+.views .count{margin-left:6px}
+.views-gap{flex:1}
+.chats{display:flex;flex-direction:column;min-height:0}
+.chat-new{font-family:var(--f-body)}
+.chats .count.tone-err{background:var(--err)}
+.chats .count.tone-ok{background:var(--ok)}
+.chat-acted{align-self:center;margin:0;font-size:12.5px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 12px;max-width:92%;overflow-wrap:anywhere;text-align:center}
+.chat-moved{flex:none;margin:0;padding:6px 14px;font-size:13px;color:var(--ok);background:var(--panel);border-top:1px solid var(--line);overflow-wrap:anywhere}
+.chat-next{all:unset;box-sizing:border-box;flex:none;display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:14px;min-height:48px}
+@media (hover:hover){.chat-next:hover{background:var(--panel-2)}}
+.chat-next:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.chat-next .lbl{margin:0;color:var(--wait)}
+.chat-next .chat-prev{flex:1;color:var(--muted)}
+.chat-worlds{display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;flex:none}
+.chat-worlds button{font:inherit;font-size:13px;color:var(--muted);background:none;border:1px solid var(--line);border-left:3px solid var(--tint,var(--line));border-radius:999px;padding:5px 12px;white-space:nowrap;cursor:pointer;min-height:34px}
+.chat-worlds button[aria-pressed="true"]{background:var(--panel-2);color:var(--ink);border-color:var(--muted);border-left-color:var(--tint,var(--muted))}
+.chat-wname{flex:none;font-size:12px;color:var(--muted)}
+.chat-rows{list-style:none;margin:0;padding:0;overflow:auto;min-height:0}
+.chat-row{all:unset;box-sizing:border-box;width:100%;display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-left:4px solid var(--tint);border-bottom:1px solid var(--line);cursor:pointer;min-height:56px}
+.chat-row.current{background:var(--panel-2)}
+@media (hover:hover){.chat-row:hover{background:var(--panel-2)}}
+.chat-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+.chat-row .dot{margin-top:7px}
+.chat-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.chat-top{display:flex;gap:6px;align-items:center;min-width:0}
+.chat-top b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-top .tag{flex:none;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-time{margin-left:auto;flex:none;font-size:12px;color:var(--muted)}
+.chat-row.needs .chat-time{color:var(--wait)}
+.chat-sub{display:flex;gap:6px;align-items:center;min-width:0;font-size:13px;color:var(--muted)}
+.chat-sub .count{flex:none}
+.chat-state{flex:none}
+.chat-state:not(.solo)::after{content:"·";margin-left:6px}
+.chat-prev{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.chat .term-head{flex:none}
+.chat-term{margin-left:auto;min-height:40px}
+/* A card in the chat is answered with a thumb: big targets, apart, and Always allow folded away until wanted. */
+.chat-card .btn{min-height:44px;font-size:15px}
+.chat-card .actions{gap:10px}
+.chat-card details.scope > summary{cursor:pointer;color:var(--muted);font-size:13.5px;min-height:32px;display:flex;align-items:center}
+.chat-card.risky{border-left-color:var(--err)}
+.chat-card .why.risky{color:var(--err);font-weight:700}
+.chat-card.settling{opacity:.55;pointer-events:none;transition:opacity .2s}
+@media (prefers-reduced-motion: reduce){.chat-card.settling{transition:none}}
+.chat-back{font-size:18px;line-height:1;padding:4px 12px;min-height:36px}
+.chat-body{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:14px;display:flex;flex-direction:column;gap:10px;font-size:14.5px;line-height:1.5}
+.bubble{max-width:min(720px,88%);padding:8px 12px;border-radius:10px;overflow-wrap:anywhere}
+.bubble.you{align-self:flex-end;background:var(--panel-2);border:1px solid var(--line);border-bottom-right-radius:3px;white-space:pre-wrap}
+.bubble.you.sending{opacity:.6}
+.bubble.claude{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--tint);border-bottom-left-radius:3px}
+.md > :first-child{margin-top:0}.md > :last-child{margin-bottom:0}
+.md p,.md ul,.md ol{margin:0 0 8px}
+.md ul,.md ol{padding-left:20px}
+.md h1,.md h2,.md h3,.md h4{font-size:15px;margin:10px 0 6px}
+.md a{color:var(--work)}
+.md code{font-family:var(--f-mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.md pre{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px 10px;overflow-x:auto;margin:0 0 8px}
+.md pre code{background:none;border:0;padding:0;white-space:pre}
+.md table{border-collapse:collapse;display:block;overflow-x:auto;margin:0 0 8px;font-size:13px}
+.md th,.md td{border:1px solid var(--line);padding:3px 8px;text-align:left}
+.md blockquote{margin:0 0 8px;padding-left:10px;border-left:3px solid var(--line);color:var(--muted)}
+.chat-steps{align-self:flex-start;font-family:var(--f-mono);font-size:12px;color:var(--muted);max-width:100%}
+.chat-steps summary{cursor:pointer;padding:2px 0}
+.chat-steps ul{margin:4px 0 0;padding-left:16px}
+.chat-steps li{overflow-wrap:anywhere}
+.chat-card{flex:none;border-top:1px solid var(--line);border-bottom:0;background:var(--panel);max-height:45%;overflow:auto}
+.chat-input{flex:none;display:flex;gap:8px;align-items:flex-end;padding:8px 10px;border-top:1px solid var(--line);background:var(--panel)}
+.chat-input textarea{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:none;field-sizing:content;min-height:40px;max-height:30vh}
+.chat-input textarea:focus{outline:2px solid var(--ink);outline-offset:1px}
+.chat-input .btn{min-height:40px}
+@media (max-width:999px){.chat{height:70vh}}
+@media (min-width:1000px){
+  .main-col.chats-mode{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+  .main-col.chats-mode > .chats{overflow:hidden}
+  .main-col > .chat{flex:2 1 0;min-height:0}
+}
+/* Ultrawide: the list, the chat and the inbox each get a column, as the rooms, terminal and inbox do. */
+@media (min-width:2200px){
+  .main-col.chats-mode{display:contents}
+  .layout > .chats{align-self:stretch;min-height:0}
+}
+/* On a phone an open chat takes the whole screen, like a messaging app. */
+@media (max-width:699px){
+  .chat{position:fixed;inset:0;z-index:20;height:100dvh;border-radius:0;border-left:0;border-right:0}
+  .chat-world{display:none}
+  .chats > h3 .hint{flex-basis:100%;order:3;margin-left:0}
+  .chat-new{margin-left:auto}
+}

@@ -158,8 +158,19 @@ In a folder that is not a git repo the session starts right there, with no workt
 ### Ultrawide and phone
 
 The layout uses the whole screen. On an ultrawide monitor you get rooms, a full-height terminal
-and the inbox side by side; on a phone it collapses to Inbox / Rooms / Terminal tabs so you can
+and the inbox side by side; on a phone it collapses to Chats / Rooms / Terminal tabs so you can
 answer cards one-handed.
+
+### Chats
+
+**Chats** lists every session like a messaging app: the ones that need you first, then the latest.
+Each row shows what the session is doing or asking. Open one to read the conversation as messages
+(each run of tool calls folds into one "6 steps" line), answer its card, and type to it. On a phone
+the chat takes the whole screen and Back returns to the list; on a wide screen, **World / Chats**
+switches the left side and **Chat / Terminal** switches the session's panel. The chat reads Claude's
+conversation; other agents open in their terminal.
+
+<img src="docs/media/chats-phone.png" alt="Chats on a phone: sessions needing you first, each with its request" width="280"> <img src="docs/media/chat-phone.png" alt="A chat on a phone: the conversation, its request with Allow once and Deny, and Skip to the next" width="280">
 
 ![Ultrawide layout: rooms, terminal and inbox side by side](docs/media/ultrawide.png)
 
