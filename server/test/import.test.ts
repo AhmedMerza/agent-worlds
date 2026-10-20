@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, symlinkSync, utimesSync, chmodSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { history, inRepo, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
+import { history, inRepo, scanClaude, scanAgents, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
 import { startServer, spawnTmuxPty } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { midTurn } from '../src/transcript.ts';
@@ -98,6 +98,124 @@ test('process scan: interactive claude only, session from --resume or newest tra
   ]);
   assert.ok(got.every((p) => p.since > 0));
   assert.deepEqual(scanClaude(join(root, 'no-proc'), dir), [], 'no /proc (not Linux): nothing');
+});
+
+/**
+ * Fake on-disk homes for the non-Claude agents, all naming sessions in `repo`:
+ * Kimi's session folder (+wire log), Qwen's per-pid file, a Codex rollout, a Gemini chat, agy's history.
+ */
+function agentHomes(root: string, repo: string, pid: number) {
+  const kimiId = 'session_11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const kimiDir = join(root, 'kimi-home', 'sessions', 'wd_x_1a2b3c4d5e6f', kimiId);
+  mkdirSync(join(kimiDir, 'agents', 'main'), { recursive: true });
+  writeFileSync(join(kimiDir, 'state.json'), JSON.stringify({ cwd: repo, updatedAt: 1000 }));
+  writeFileSync(join(kimiDir, 'agents', 'main', 'wire.jsonl'), line({ type: 'turn.prompt', origin: { kind: 'user' }, input: [{ text: 'fix the tests' }] }));
+  const qwenId = '22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const qwen = join(root, 'qwen');
+  mkdirSync(join(qwen, 'sessions'), { recursive: true });
+  writeFileSync(join(qwen, 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: qwenId, cwd: repo }));
+  const codexId = '33333333-cccc-4ccc-8ccc-cccccccccccc';
+  const codex = join(root, 'codex');
+  const rolloutDir = join(codex, 'sessions', '2026', '10', '20');
+  mkdirSync(rolloutDir, { recursive: true });
+  const rollout = join(rolloutDir, `rollout-2026-10-20T10-00-00-${codexId}.jsonl`);
+  writeFileSync(rollout,
+    line({ timestamp: '2026-10-20T10:00:00.000Z', type: 'session_meta', payload: { id: codexId, cwd: repo } }) +
+    line({ timestamp: '2026-10-20T10:01:00.000Z', type: 'event_msg', payload: { type: 'user_message', message: 'check the diff' } }) +
+    line({ timestamp: '2026-10-20T10:01:01.000Z', type: 'event_msg', payload: { type: 'task_started' } }));
+  const geminiId = '44444444-dddd-4ddd-8ddd-dddddddddddd';
+  const gemini = join(root, 'gemini');
+  const chatDir = join(gemini, 'tmp', 'repo-a', 'chats');
+  mkdirSync(chatDir, { recursive: true });
+  writeFileSync(join(gemini, 'tmp', 'repo-a', '.project_root'), repo);
+  writeFileSync(join(chatDir, 'session-2026-10-20T10-00-abc12345.json'), JSON.stringify({ sessionId: geminiId, messages: [{ type: 'user', content: 'build the page' }] }));
+  const agyId = '55555555-eeee-4eee-8eee-eeeeeeeeeeee';
+  const agy = join(root, 'agy');
+  mkdirSync(agy, { recursive: true });
+  writeFileSync(join(agy, 'history.jsonl'),
+    line({ display: '/exit', workspace: repo, conversationId: agyId, type: 'slash_command' }) +
+    line({ display: 'write the docs', workspace: repo, conversationId: agyId }));
+  return { kimiId, kimiDir, qwenId, codexId, rollout, geminiId, agyId, homes: { qwen, codex, gemini, agy } };
+}
+
+test('process scan: codex, qwen, kimi, gemini and agy too, each session from its own files', () => {
+  const root = tmp();
+  const repo = join(root, 'repo-a');
+  mkdirSync(repo);
+  const { dir } = projects(root, repo);
+  const f = agentHomes(root, repo, 402);
+  const proc = fakeProc(root, [
+    { pid: 401, argv: ['kimi-co'], env: { TMUX_PANE: '%21' }, cwd: repo },                                     // kimi renames its process
+    { pid: 402, argv: ['node', '/home/u/.npm-global/bin/qwen', '-i', 'a task'], env: {}, cwd: repo },          // qwen runs as a node script
+    { pid: 403, argv: ['/home/u/.local/bin/codex'], env: {}, cwd: repo },
+    { pid: 404, argv: ['node', '/home/u/.npm-global/bin/gemini'], env: {}, cwd: repo },
+    { pid: 405, argv: ['/home/u/.local/bin/agy'], env: {}, cwd: repo },
+    { pid: 406, argv: ['kimi', '--session', 'session_99999999-ffff-4fff-8fff-ffffffffffff'], env: {}, cwd: repo }, // resumed: its flag names it
+    { pid: 407, argv: ['kimi', '-p', 'one shot'], env: {}, cwd: repo },                                        // print mode: skipped
+    { pid: 408, argv: ['codex', 'exec', 'one shot'], env: {}, cwd: repo },                                     // one-shot: skipped
+    { pid: 409, argv: ['qwen'], env: { AGENT_WORLDS_DISABLE: '1' }, cwd: repo },                               // our own run: skipped
+  ]);
+  const got = scanAgents(proc, dir, { home: root, homes: f.homes });
+  assert.deepEqual(got.map((p) => [p.pid, p.agent, p.sessionId]), [
+    [401, 'kimi', f.kimiId],
+    [402, 'qwen', f.qwenId],
+    [403, 'codex', f.codexId],
+    [404, 'gemini', f.geminiId],
+    [405, 'agy', f.agyId],
+    [406, 'kimi', 'session_99999999-ffff-4fff-8fff-ffffffffffff'],
+  ]);
+  assert.equal(got[0].log, f.kimiDir, 'kimi: its session folder, for the last prompt');
+  assert.equal(got[2].log, f.rollout, 'codex: its rollout log, so turn checks keep working');
+  assert.ok(got[3].log?.endsWith('.json'), 'gemini: its chat file');
+  assert.equal(got[4].prompt, 'write the docs', 'agy: its last prompt from history.jsonl');
+  assert.ok(scanClaude(proc, dir).every((p) => p.agent === 'claude'), 'scanClaude stays Claude-only');
+});
+
+test('server restart: sessions of every agent are taken back, with state and last prompt where the logs allow', async () => {
+  const root = tmp();
+  const repo = join(root, 'repo-a');
+  mkdirSync(repo);
+  const { dir } = projects(root, repo);
+  const f = agentHomes(root, repo, 502);
+  const proc = fakeProc(root, [
+    { pid: 501, argv: ['kimi-co'], env: { AGENT_WORLDS_HOME: root, TMUX_PANE: '%21' }, cwd: repo },
+    { pid: 502, argv: ['node', '/u/bin/qwen'], env: { AGENT_WORLDS_HOME: root, TMUX_PANE: '%22' }, cwd: repo },
+    { pid: 503, argv: ['codex'], env: { AGENT_WORLDS_HOME: root, TMUX_PANE: '%23' }, cwd: repo },
+    { pid: 504, argv: ['node', '/u/bin/gemini'], env: { AGENT_WORLDS_HOME: root, TMUX_PANE: '%24' }, cwd: repo },
+    { pid: 505, argv: ['agy'], env: { AGENT_WORLDS_HOME: root, TMUX_PANE: '%25' }, cwd: repo },
+    { pid: 506, argv: ['qwen'], env: { TMUX_PANE: '%26' }, cwd: repo }, // not ours: no qwen ghost either
+  ]);
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: dir }), port: 0 };
+  const app = startServer(cfg, 'i'.repeat(64), {
+    home: root, procRoot: proc, homes: f.homes,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-repo-a-1' },
+  });
+  await app.listen();
+  try {
+    await app.scan();
+    const s = (id: string) => app.store.sessions.get(id)!;
+    assert.equal(s(f.kimiId).agent, 'kimi');
+    assert.equal(s(f.kimiId).lastPrompt, 'fix the tests');
+    assert.equal(s(f.qwenId).agent, 'qwen');
+    assert.equal(s(f.qwenId).state, 'idle', 'qwen has no readable turn state: idle');
+    assert.equal(s(f.codexId).agent, 'codex');
+    assert.equal(s(f.codexId).logPath, f.rollout, 'codex turn checks read the rollout again');
+    assert.equal(s(f.codexId).lastPrompt, 'check the diff');
+    assert.equal(s(f.codexId).state, 'working', 'the rollout ends on task_started: mid-turn');
+    assert.equal(s(f.geminiId).agent, 'gemini');
+    assert.equal(s(f.geminiId).lastPrompt, 'build the page');
+    assert.equal(s(f.agyId).agent, 'agy');
+    assert.equal(s(f.agyId).lastPrompt, 'write the docs');
+    for (const id of [f.kimiId, f.qwenId, f.codexId, f.geminiId, f.agyId]) {
+      assert.equal(s(id).now, 'Picked up again after a server restart');
+      assert.equal(s(id).worldId, 'web');
+    }
+    assert.equal(app.store.sessions.size, 5, 'the qwen that is not ours stays invisible');
+    const st = await (await fetch(`http://127.0.0.1:${(app.server.address() as any).port}/api/state`, { headers: { 'x-aw-token': 'i'.repeat(64) } })).json() as any;
+    assert.deepEqual(st.unmanaged, [], 'non-Claude agents never show as plain-terminal ghosts');
+    await app.scan();
+    assert.equal(app.store.sessions.size, 5, 'a second scan adopts nothing twice');
+  } finally { await app.close(); }
 });
 
 test('server: unmanaged list, history flags, resume conflict / force / validation', async () => {
