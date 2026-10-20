@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, readlinkSync, lstatSync, statSync, writeFileSync, chmodSync, realpathSync, existsSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, readlinkSync, lstatSync, statSync, writeFileSync, chmodSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { startServer } from '../src/server.ts';
@@ -10,7 +9,7 @@ import { launchArgs, writeGeminiHome } from '../src/agents.ts';
 import { fromGemini, toGemini } from '../src/gemini.ts';
 import { readKeys, saveKey, readServers, saveServer, serverUrl } from '../src/providers.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
+import { tmp } from './fixtures.ts';
 const TOKEN = 'g'.repeat(64);
 
 test('Gemini payloads become Claude-shaped events; only tools it would ask about are held', () => {

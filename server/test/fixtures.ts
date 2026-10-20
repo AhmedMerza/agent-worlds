@@ -1,5 +1,21 @@
-import { writeFileSync, chmodSync } from 'node:fs';
+import { writeFileSync, chmodSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const tmpDirs: string[] = [];
+process.on('exit', () => {
+  for (const d of tmpDirs) {
+    rmSync(d, { recursive: true, force: true });
+    rmSync(`${d}-worktrees`, { recursive: true, force: true }); // git worktrees live next to their repo
+  }
+});
+
+/** A fresh temp dir that is removed when the test process exits. */
+export function tmp(prefix = 'awtest-'): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  tmpDirs.push(dir);
+  return dir;
+}
 
 /** A fake claude binary: a bash script running `body`. */
 export function stubClaude(dir: string, body: string): string {

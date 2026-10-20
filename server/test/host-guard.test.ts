@@ -3,16 +3,14 @@ import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { connect, createServer as createNetServer } from 'node:net';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const TOKEN = 'h'.repeat(64);
 
 async function boot(extra: Record<string, unknown> = {}, opts: Record<string, unknown> = {}) {

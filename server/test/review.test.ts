@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, realpathSync, chmodSync, existsSync, readFileSync } from 'node:fs';
+import { writeFileSync, realpathSync, chmodSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
@@ -10,9 +10,8 @@ import { reviewOf } from '../src/review.ts';
 import { createSession, repoInfo } from '../src/sys.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, ...a], { stdio: 'pipe' }).toString().trim();
 function gitRepo(): string {
   const d = tmp();

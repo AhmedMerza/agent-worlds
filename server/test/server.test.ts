@@ -1,16 +1,15 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
 const TOKEN = 'a'.repeat(64);
-const dist = mkdtempSync(join(tmpdir(), 'aw-dist-'));
+const dist = tmp('aw-dist-');
 mkdirSync(join(dist, 'assets'));
 writeFileSync(join(dist, 'index.html'), '<h1>app</h1>');
 writeFileSync(join(dist, 'assets', 'x.js'), 'console.log(1)');

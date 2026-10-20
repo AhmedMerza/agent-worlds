@@ -2,15 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync, statSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, statSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hooksBlock, HOOK_EVENTS, writeHooksFile } from '../src/hooks.ts';
 import { ensureToken, parseConfig, loadConfig, writeEndpoint, DEFAULTS } from '../src/config.ts';
 
 const BIN = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin');
-const tmp = () => mkdtempSync(join(tmpdir(), 'awtest-'));
+import { tmp } from './fixtures.ts';
 
 function runHook(env: Record<string, string>, stdin: string, args: string[] = []): Promise<{ code: number; out: string; ms: number }> {
   const t = Date.now();

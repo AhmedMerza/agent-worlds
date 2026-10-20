@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, utimesSync, chmodSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, symlinkSync, utimesSync, chmodSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { history, inRepo, scanClaude, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
@@ -11,9 +10,8 @@ import { parseConfig } from '../src/config.ts';
 import { midTurn } from '../src/transcript.ts';
 import { createSession, keptFlags } from '../src/sys.ts';
 import { awSessions, formatRows, pick } from '../src/cli.ts';
-import { ev } from './fixtures.ts';
+import { ev, tmp } from './fixtures.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
 const line = (o: unknown) => JSON.stringify(o) + '\n';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

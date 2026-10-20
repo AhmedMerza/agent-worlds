@@ -1,14 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { launchArgs, writeAgyHooks } from '../src/agents.ts';
 import { fromAgy, toAgy, lastStep, agyHooksDir, asHelper } from '../src/agy.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
+import { tmp } from './fixtures.ts';
 const TOKEN = 'a'.repeat(64);
 // agy's transcripts are only read under ~/.gemini/antigravity-cli: a home of our own holds the test's
 process.env.HOME = tmp();

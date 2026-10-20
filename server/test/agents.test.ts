@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync, mkdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { launchArgs, defaultAgent, installed, writeKimiHome, AGENTS } from '../src/agents.ts';
+import { tmp } from './fixtures.ts';
 
 test('codex gets its hooks as -c overrides, the permission hook held for an hour', () => {
   const { args, env } = launchArgs('codex', { home: '/h', task: 'fix it' });
@@ -21,7 +21,7 @@ test('codex gets its hooks as -c overrides, the permission hook held for an hour
 });
 
 test('qwen reads the hooks from a settings file named in its env', () => {
-  const home = mkdtempSync(join(tmpdir(), 'aw-agents-'));
+  const home = tmp('aw-agents-');
   const { args, env } = launchArgs('qwen', { home, task: 'fix it' });
   assert.deepEqual(args, ['-i', 'fix it']);
   const hooks = JSON.parse(readFileSync(env.QWEN_CODE_SYSTEM_SETTINGS_PATH, 'utf8')).hooks;
@@ -33,8 +33,8 @@ test('qwen reads the hooks from a settings file named in its env', () => {
 });
 
 test('kimi gets a home of its own: the user\'s files linked, their config plus our hooks', () => {
-  const home = mkdtempSync(join(tmpdir(), 'aw-agents-'));
-  const real = mkdtempSync(join(tmpdir(), 'aw-kimi-'));
+  const home = tmp('aw-agents-');
+  const real = tmp('aw-kimi-');
   mkdirSync(join(real, 'credentials'));
   writeFileSync(join(real, 'config.toml'), 'default_model = "k3"');
   writeFileSync(join(real, 'mcp.json'), '{"mcpServers":{"theirs":{"url":"http://x"}}}');
@@ -62,18 +62,18 @@ test('kimi gets a home of its own: the user\'s files linked, their config plus o
 });
 
 test('kimi home: a first-run user (no Kimi home, or no config.toml) gets only our hooks', () => {
-  for (const real of [join(mkdtempSync(join(tmpdir(), 'aw-kimi-')), 'missing'), mkdtempSync(join(tmpdir(), 'aw-kimi-'))]) {
-    const toml = readFileSync(join(writeKimiHome(mkdtempSync(join(tmpdir(), 'aw-agents-')), real), 'config.toml'), 'utf8');
+  for (const real of [join(tmp('aw-kimi-'), 'missing'), tmp('aw-kimi-')]) {
+    const toml = readFileSync(join(writeKimiHome(tmp('aw-agents-'), real), 'config.toml'), 'utf8');
     assert.ok(toml.startsWith('\n\n# Added by Agent Worlds'), 'nothing of the user\'s before our block');
     assert.equal(toml.match(/^\[\[hooks\]\]$/gm)?.length, 14);
   }
 });
 
 test('kimi home: the user\'s own [[hooks]] stay, ours follow after a blank line', () => {
-  const real = mkdtempSync(join(tmpdir(), 'aw-kimi-'));
+  const real = tmp('aw-kimi-');
   const mine = '[[hooks]]\nevent = "Stop"\ncommand = "notify-send done"'; // no trailing newline
   writeFileSync(join(real, 'config.toml'), mine);
-  const toml = readFileSync(join(writeKimiHome(mkdtempSync(join(tmpdir(), 'aw-agents-')), real), 'config.toml'), 'utf8');
+  const toml = readFileSync(join(writeKimiHome(tmp('aw-agents-'), real), 'config.toml'), 'utf8');
   assert.ok(toml.startsWith(mine + '\n\n# Added by Agent Worlds'));
   assert.equal(toml.match(/^\[\[hooks\]\]$/gm)?.length, 15);
 });

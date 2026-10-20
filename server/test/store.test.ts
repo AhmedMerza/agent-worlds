@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store, riskOf, oneLine, nextWake } from '../src/store.ts';
 import { parseConfig } from '../src/config.ts';
-import { ev, QUESTION } from './fixtures.ts';
+import { ev, QUESTION, tmp } from './fixtures.ts';
 
 const tick = () => new Promise((r) => setImmediate(r));
 
@@ -435,10 +435,9 @@ test('a helper backgrounded mid-run keeps the session working through idle_promp
 });
 
 test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is the fallback', async () => {
-  const { mkdtempSync, writeFileSync, appendFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
+  const { writeFileSync, appendFileSync } = await import('node:fs');
   const { store, view, cfg } = setup();
-  cfg.claudeProjectsDir = mkdtempSync(`${tmpdir()}/awproj-`);
+  cfg.claudeProjectsDir = tmp('awproj-');
   const tp = `${cfg.claudeProjectsDir}/s.jsonl`;
   const line = (text: string, at: number) => JSON.stringify({ type: 'user', timestamp: new Date(at).toISOString(), message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
   // a marker left by an earlier turn is stale: the new prompt came after it
@@ -469,11 +468,10 @@ test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is th
 });
 
 test('a Codex turn that ends without a hook is read from its rollout log', async () => {
-  const { mkdtempSync, writeFileSync, appendFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
+  const { writeFileSync, appendFileSync } = await import('node:fs');
   let t = Date.parse('2026-10-18T10:00:00Z');
   const { store, view } = setup({ now: () => t });
-  const log = `${mkdtempSync(`${tmpdir()}/awcodex-`)}/rollout.jsonl`;
+  const log = `${tmp('awcodex-')}/rollout.jsonl`;
   const entry = (payload: object, at: number) => JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'event_msg', payload }) + '\n';
   const prompt = async () => { await store.handle({ ...ev.prompt, transcript_path: log }, '%5', undefined, null, 'codex'); };
   // an earlier turn's ending is stale: the new prompt came after it
@@ -539,11 +537,10 @@ test('moving one session to another world: its repo stays, /clear keeps the move
 });
 
 test('placements are saved to a private file and read back after a restart', async () => {
-  const { mkdtempSync, statSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
+  const { statSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { Placements } = await import('../src/placements.ts');
-  const file = join(mkdtempSync(join(tmpdir(), 'aw-place-')), 'placements.json');
+  const file = join(tmp('aw-place-'), 'placements.json');
   const p = new Placements(file);
   p.set('sess-1', 'pos'); p.set('sess-2', 'web'); p.set('sess-2', null);
   assert.equal(statSync(file).mode & 0o777, 0o600);

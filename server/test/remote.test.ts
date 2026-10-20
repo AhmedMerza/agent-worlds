@@ -1,14 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { request } from 'node:http';
 import { parseConfig } from '../src/config.ts';
 import { startServer } from '../src/server.ts';
 import { Password, LoginLimiter } from '../src/remote.ts';
 
-const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'awtest-')));
+import { tmp } from './fixtures.ts';
 const TOKEN = 'r'.repeat(64);
 
 test('Password: hash only, right one passes, wrong and missing fail', () => {
