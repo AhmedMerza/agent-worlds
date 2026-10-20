@@ -182,7 +182,7 @@ const server = http.createServer(async (req, res) => {
       { who: 'step', text: 'Read: src/checkout.ts' },
       { who: 'step', text: 'Grep: applyCoupon' },
       { who: 'step', text: 'Bash: npm test -- checkout' },
-      { who: 'claude', text: 'Found it. `applyCoupon` rounds **before** adding tax, so totals drift by a cent:\n\n```ts\nconst total = round(subtotal - coupon) + tax\n```\n\nI will move the rounding to the end. See https://example.com/rounding for the rule.\n\n<script>alert(1)</script>' },
+      { who: 'claude', text: 'Found it. `applyCoupon` rounds **before** adding tax, so totals drift by a cent:\n\n```ts\nconst total = round(subtotal - coupon) + tax\n```\n\nI will move the rounding to the end. See https://example.com/rounding for the rule.' },
       { who: 'you', text: 'ok go ahead' },
       { who: 'step', text: 'Edit: src/checkout.ts' },
       { who: 'step', text: 'Bash: npm test -- checkout' },

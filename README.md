@@ -170,6 +170,8 @@ the chat takes the whole screen and Back returns to the list; on a wide screen, 
 switches the left side and **Chat / Terminal** switches the session's panel. The chat reads Claude's
 conversation; other agents open in their terminal.
 
+<img src="docs/media/chats-phone.png" alt="Chats on a phone: sessions needing you first, each with its request" width="280"> <img src="docs/media/chat-phone.png" alt="A chat on a phone: the conversation, its request with Allow once and Deny, and Skip to the next" width="280">
+
 ![Ultrawide layout: rooms, terminal and inbox side by side](docs/media/ultrawide.png)
 
 <img src="docs/media/phone.png" alt="Phone layout with the inbox tab open" width="280">
