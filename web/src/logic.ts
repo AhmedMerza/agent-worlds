@@ -524,6 +524,9 @@ export function actedLine(c: Card, did: 'allow' | 'deny' | 'ack' | { scope: stri
   if ('answers' in did) return `You answered: ${Object.values(did.answers).join(', ')}`
   return `You always allow (${did.scope}): ${what}`
 }
+/** While a permission or question is on the agent's screen, text typed to it lands in that dialog (and its Enter picks
+ *  the highlighted option), so the message box waits. */
+export const typingWaits = (c: Card | null): boolean => c?.kind === 'permission' || c?.kind === 'question'
 /** The chat to go to next: the first one needing you that is not this one and not a card you skipped. */
 export function nextChat(queue: Session[], currentId: string | null, skipped: Set<string>): Session | null {
   return queue.find((s) => s.id !== currentId && !skipped.has(cardKey(s))) ?? null

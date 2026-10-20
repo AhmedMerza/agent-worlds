@@ -91,17 +91,19 @@ export function contextOf(entries: Entry[], model: string | null, limit = DEFAUL
 
 export type Turn = { who: 'you' | 'claude' | 'step'; text: string };
 
-/** The conversation as turns, oldest first: what you typed, what Claude wrote, and one line per tool step. */
-/** A slash command you sent, as you typed it: "/name args". Claude records it as `<command-name>` markup. */
+/** A slash command you sent, as you typed it: "/name args". Claude records it as markup, `<command-name>` first or after
+ *  `<command-message>` (skills and custom commands). */
 export function slashCommand(e: Entry): string | null {
   if (e.type !== 'user' || e.isMeta || e.message?.role !== 'user') return null;
   const t = textOf(e.message.content);
-  const name = t.match(/^<command-name>([^<]+)<\/command-name>/)?.[1].trim();
+  if (!/^<command-(name|message)>/.test(t)) return null;
+  const name = t.match(/<command-name>([^<]+)<\/command-name>/)?.[1].trim();
   if (!name) return null;
   const args = t.match(/<command-args>([^<]*)<\/command-args>/)?.[1].trim();
   return args ? `${name} ${args}` : name;
 }
 
+/** The conversation as turns, oldest first: what you typed, what Claude wrote, and one line per tool step. */
 export function conversation(entries: Entry[]): Turn[] {
   const turns: Turn[] = [];
   for (const e of entries) {

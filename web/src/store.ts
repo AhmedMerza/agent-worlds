@@ -2,7 +2,7 @@ import { reactive, computed, ref, watch } from 'vue'
 import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
-import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf } from './logic'
+import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey } from './logic'
 
 export interface StoreState {
   worlds: World[]
@@ -346,6 +346,10 @@ export const chatRun = ref(false)
 export const openChat = (id: string, run = false): void => { chatRun.value = run; select(id); ui.pane = 'chat'; chatTick.value++ }
 /** Cards you skipped with "Skip" in a chat: Next stops offering them (a new card from that session is offered again). */
 export const skipped = reactive(new Set<string>())
+watch(() => needsYou.value.map(cardKey), (keys) => {
+  const live = new Set(keys)
+  for (const k of skipped) if (!live.has(k)) skipped.delete(k)
+})
 /** A session you just started or resumed: shown where you were looking, its chat or its terminal. */
 const showFollowed = (id: string): void => { if (ui.pane === 'chat') openChat(id); else { select(id); focusTerminal() } }
 

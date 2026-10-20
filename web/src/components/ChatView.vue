@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Turn } from '../types'
-import { NEEDS_YOU, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel } from '../logic'
+import { NEEDS_YOU, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
 import { state, selected as s, groups, needsYou, sessionConversation, sendInput, focusTerminal, openChat, skipped, chatRun, showToast } from '../store'
 import { renderMarkdown } from '../markdown'
 import CardActions from './CardActions.vue'
@@ -17,9 +17,12 @@ const err = ref('')
 const noTranscript = ref(false)
 const box = ref<HTMLElement | null>(null)
 const items = computed(() => chatItems(turns.value ?? []))
-/** A question the agent can only take in its terminal: a message typed here would not answer it. */
-const terminalOnly = computed(() => !!card.value && !cardLive(card.value) && card.value.kind === 'question')
+/** Claude's messages as HTML, rendered once per fetched transcript (not on every keystroke in the message box). */
+const html = computed(() => items.value.map((it) => (it.who === 'claude' ? renderMarkdown(it.text) : '')))
 const card = computed(() => (s.value?.card && NEEDS_YOU.includes(s.value.state) ? s.value.card : null))
+const holdsInput = computed(() => typingWaits(card.value))
+const inputHint = computed(() => !holdsInput.value ? (s.value?.state === 'working' ? 'Message (it reads this when it can)' : 'Message')
+  : card.value && !cardLive(card.value) ? 'Answer its request in its terminal first' : 'Answer its request above first')
 
 const text = ref('')
 const sending = ref(false)
@@ -103,7 +106,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 async function send() {
   const cur = s.value
   const t = text.value.trim()
-  if (!cur || !t || sending.value) return
+  if (!cur || !t || sending.value || holdsInput.value) return
   sending.value = true
   try {
     const answering = cur.card?.kind === 'asking' && NEEDS_YOU.includes(cur.state)
@@ -135,12 +138,12 @@ function onKey(e: KeyboardEvent) {
     </div>
 
     <p v-if="!s" class="term-view">Pick a session to see its chat.</p>
-    <div v-else-if="!hasChat(s)" class="term-view">
-      <p class="why">The chat view reads Claude's conversation. {{ agentName(s) }}'s shows in its terminal.</p>
-      <button v-if="!s.ghost" class="btn primary" @click="focusTerminal()">Open its terminal</button>
-    </div>
     <template v-else>
-      <div ref="box" class="chat-body">
+      <div v-if="!hasChat(s)" class="chat-body">
+        <p class="why">The chat view reads Claude's conversation. {{ agentName(s) }}'s shows in its terminal.</p>
+        <button v-if="!s.ghost" class="btn" @click="focusTerminal()">Open its terminal</button>
+      </div>
+      <div v-else ref="box" class="chat-body">
         <p v-if="err" class="err" role="alert">{{ err }} <button class="linkbtn" @click="load">Try again</button></p>
         <p v-else-if="noTranscript" class="why">No conversation to show yet. It appears once the session has said something; until then, its terminal has it.</p>
         <p v-else-if="!turns" class="why">Loading the conversation…</p>
@@ -153,7 +156,7 @@ function onKey(e: KeyboardEvent) {
           </details>
           <div v-else-if="it.who === 'you'" class="bubble you">{{ it.text }}</div>
           <!-- eslint-disable-next-line vue/no-v-html -- markdown-it with html off escapes raw HTML (tests/chat.test.ts) -->
-          <div v-else class="bubble claude md" v-html="renderMarkdown(it.text)" />
+          <div v-else class="bubble claude md" v-html="html[i]" />
           <p v-for="(a, j) in actedAt(i + 1)" :key="'a' + j" class="chat-acted">{{ a.text }}</p>
         </template>
         <div v-if="sent" class="bubble you sending">{{ sent }}</div>
@@ -162,8 +165,8 @@ function onKey(e: KeyboardEvent) {
       <div v-if="card" :class="['card', 'chat-card', { settling, risky: card.kind === 'permission' && card.risky }]" :aria-busy="settling"><CardActions :key="s.id + card.kind + ('requestId' in card ? card.requestId : '')" :s="s" :c="card" :no-reply="true" :on-acted="onActed" fold-scopes /></div>
       <button v-if="next" class="chat-next" @click="goNext"><span class="lbl">{{ card ? 'Skip to' : 'Next' }}</span><b>{{ nameOf(next) }}</b><span class="chat-prev">{{ next.card ? chatPreview(next.card) : '' }}</span><span aria-hidden="true">→</span></button>
       <form class="chat-input" @submit.prevent="send">
-        <textarea v-model="text" rows="1" enterkeyhint="send" :aria-label="`Message ${nameOf(s)}`" :placeholder="terminalOnly ? 'Its question is answered in the terminal, not here' : s.state === 'working' ? 'Message (it reads this when it can)' : 'Message'" @keydown="onKey" />
-        <button class="btn primary" :disabled="!text.trim() || sending">Send</button>
+        <textarea v-model="text" rows="1" enterkeyhint="send" :aria-label="`Message ${nameOf(s)}`" :placeholder="inputHint" :disabled="holdsInput" @keydown="onKey" />
+        <button class="btn primary" :disabled="!text.trim() || sending || holdsInput">Send</button>
       </form>
     </template>
   </section>

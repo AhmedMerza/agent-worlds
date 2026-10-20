@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatRows, chatItems, hasChat, cardAsk, chatBadge, actedLine, chatPreview, nextChat, cardKey } from '../src/logic'
+import { chatRows, chatItems, hasChat, cardAsk, chatBadge, actedLine, chatPreview, nextChat, cardKey, typingWaits } from '../src/logic'
 import { mk, perm } from './helpers'
 import { renderMarkdown } from '../src/markdown'
 
@@ -105,5 +105,15 @@ describe('nextChat', () => {
     expect(nextChat([a, b], 'a', new Set([cardKey(b)]))).toBeNull()
     const bAgain = { ...b, card: { ...perm, requestId: 'r9' } }
     expect(nextChat([a, bAgain], 'a', new Set([cardKey(b)]))?.id).toBe('b')
+  })
+})
+
+describe('typingWaits', () => {
+  it('holds the message box while a permission or question is on screen, not for a reply the agent asked for', () => {
+    expect(typingWaits(perm)).toBe(true)
+    expect(typingWaits({ kind: 'question', requestId: 'q', questions: [], live: false })).toBe(true)
+    expect(typingWaits({ kind: 'asking', summary: 'yes?' })).toBe(false)
+    expect(typingWaits({ kind: 'done', summary: null })).toBe(false)
+    expect(typingWaits(null)).toBe(false)
   })
 })
