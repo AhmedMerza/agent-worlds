@@ -286,8 +286,8 @@ agy runs the task while it is still asking whether to trust a new folder; the ho
 agy reads hooks from a `.agents/hooks.json` in any workspace folder, so its sessions get `agy-hooks` in the
 Agent Worlds folder added as one (`--add-dir`); neither the repo nor `~/.gemini/config` is changed.
 **A repo with its own `.agents/hooks.json`**, in its folder or any folder above it, could switch ours off by
-name, so there the session starts without `--dangerously-skip-permissions`: agy asks in its terminal, and
-the request also waits under Needs you. Two side effects:
+name, so there the session starts without `--dangerously-skip-permissions`: a tool waits under Needs you
+first, and once you allow it there agy asks in its terminal as well. Two side effects:
 - agy lists that folder in its workspace and could read it. A note at the start of each session tells it
   which folder is the project and to leave ours alone, but nothing stops it looking.
 - No mailbox: agy only takes MCP servers from `~/.gemini/config`, so its sessions can't message others.
