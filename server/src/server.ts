@@ -440,7 +440,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (body && agent === 'agy') {
         const id = body.session_id;
         const parent = typeof id === 'string' && id ? agyParent(id, body.transcript_path, pane, pty) : undefined;
-        if (parent === null) body = null;
+        if (parent === null) {
+          // Nobody can answer for a session that is gone, and an empty reply would let a held tool run
+          if (body.hook_event_name === 'PermissionRequest') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(toGemini('')); }
+          body = null;
+        }
         else if (parent) body = asHelper(body, parent);
       }
       if (!body) { res.writeHead(204); return res.end(); }
@@ -449,7 +453,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       res.on('close', () => { if (!res.writableFinished) ac.abort(); });
       const now = Date.now();
       for (const [k, v] of recent) if (v.at && now - v.at > DEDUPE_MS) recent.delete(k);
-      const key = createHash('sha1').update(String(pane)).update('\0').update(String(pty)).update('\0').update(JSON.stringify(body)).digest('hex');
+      // agy's payloads leave out a write's content: its step tells two calls apart, so one answer never covers another
+      const step = agent === 'agy' ? String(raw.stepIdx) : '';
+      const key = createHash('sha1').update(String(pane)).update('\0').update(String(pty)).update('\0').update(step).update('\0').update(JSON.stringify(body)).digest('hex');
       let reply = recent.get(key)?.reply;
       if (!reply) {
         if (agent === 'agy') agyCount(body); // once per event, not again for a repeat of it

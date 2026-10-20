@@ -83,6 +83,11 @@ test('agy sessions get our hooks folder added to the workspace, one hook per eve
   mkdirSync(join(repo, '.agents'));
   writeFileSync(join(repo, '.agents', 'hooks.json'), '{}');
   assert.deepEqual(launchArgs('agy', { home, task: 'x', dir: join(repo, 'sub', 'deeper') }).args[0], '--add-dir', 'a parent\'s too');
+  // and one above the Agent Worlds folder, which agy reads for ours
+  const above = tmp(), inner = join(above, 'aw');
+  mkdirSync(join(above, '.agents'), { recursive: true });
+  writeFileSync(join(above, '.agents', 'hooks.json'), '{}');
+  assert.equal(launchArgs('agy', { home: inner, task: 'x', dir: tmp() }).args[0], '--add-dir');
   const { aw } = JSON.parse(readFileSync(join(writeAgyHooks(home), '.agents', 'hooks.json'), 'utf8'));
   assert.deepEqual(Object.keys(aw), ['SessionStart', 'PreInvocation', 'PreToolUse', 'PostToolUse', 'Stop']);
   assert.match(aw.SessionStart[0].command, /bin\/aw-hook agy SessionStart$/);
@@ -92,11 +97,11 @@ test('agy sessions get our hooks folder added to the workspace, one hook per eve
   assert.equal(aw.Stop[0].timeout, 10, 'seconds');
 });
 
-async function boot() {
+async function boot(holdMs?: number) {
   const repo = tmp(), home = tmp();
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }] }), port: 0 };
   const app = startServer(cfg, TOKEN, {
-    home, procRoot: join(tmp(), 'none'),
+    home, procRoot: join(tmp(), 'none'), holdMs,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
   } as any);
   await app.listen();
@@ -139,11 +144,31 @@ test('an agy session: tool use shows on its card, the project note goes back, th
     assert.deepEqual([allowed.status, await allowed.text()], [204, ''], 'allow = an empty reply');
     await hook('PostToolUse', { error: '', ...ls });
     const held2 = hook('PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'rm -rf build', Cwd: repo } } });
+    // Another command finishing does not answer it, and a second write to the same file gets a card of its own
+    await hook('PostToolUse', { error: '', toolCall: { name: 'run_command', args: { CommandLine: 'pwd', Cwd: repo } } });
+    const w = (stepIdx: number) => hook('PreToolUse', { stepIdx, toolCall: { name: 'write_to_file', args: { TargetFile: `${repo}/a` } } });
+    const writes = [w(7), w(8)];
+    for (let i = 0; i < 50 && app.store.sessions.get('agy-1')!.pending.length < 3; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(app.store.sessions.get('agy-1')!.pending.map((p) => p.tool), ['Bash', 'Write', 'Write']);
     await decide('deny');
     assert.equal((await (await held2).json()).decision, 'deny');
+    await decide('allow');
+    await decide('deny');
+    assert.deepEqual(await Promise.all(writes.map(async (r) => (await r).status)), [204, 200], 'each write its own answer');
     assert.equal((await hook('Stop', { terminationReason: 'NO_TOOL_CALL', fullyIdle: true })).status, 204);
     const s = await session();
     assert.deepEqual([s.state, s.card.kind, s.card.summary], ['done', 'done', 'MARKER_PROJ']);
+  } finally { await app.close(); }
+});
+
+test('an agy tool nobody answers is denied when the hold runs out, and leaves Needs you', async () => {
+  const { app, repo, hook, sessions } = await boot(50);
+  try {
+    await hook('SessionStart');
+    const r = await hook('PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'make', Cwd: repo } } });
+    assert.equal((await r.json()).decision, 'deny');
+    const s = (await sessions()).find((x: any) => x.id === 'agy-1');
+    assert.deepEqual([app.store.sessions.get('agy-1')!.pending.length, s.state], [0, 'working']);
   } finally { await app.close(); }
 });
 
@@ -189,6 +214,9 @@ test('agy subagents are helpers of the session that made them, not conversations
     assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
     // A subagent of the session that is gone stays out: it does not bring that session back over the new one
     assert.equal((await kid('kid-1', 'PreToolUse', { toolCall: { name: 'list_dir', args: {} } })).status, 204);
+    // and nobody can approve its tools, so they are denied rather than let through
+    const orphan = await kid('kid-1', 'PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'rm -rf build' } } });
+    assert.deepEqual([orphan.status, (await orphan.json()).decision], [200, 'deny']);
     assert.deepEqual((await sessions()).map((s: any) => s.id), ['new-1']);
   } finally { await app.close(); }
 });
