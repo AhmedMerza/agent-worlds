@@ -3,6 +3,8 @@
 Newest first. Dates are commit dates.
 
 ## 2026-10-20
+- **Chats**: every session as a conversation, on the phone and the web. The Chats list puts what needs you first (Needs you, Problem, To review), then the latest, with world chips and the real request on each row ("Run: npm test"). A chat shows the transcript as messages, with each run of tool calls folded into "N steps", the session's card above a message box, and a line for what you did on it ("You allowed once: …"). **Next / Skip** works through what needs you, and answering in that run opens the next one. On a phone the tabs are Chats / Rooms / Terminal and a chat takes the whole screen (Back returns to the list); on a wide screen **World / Chats** and **Conversation / Terminal** switch the panels. Claude only for now; other agents open in their terminal. Markdown is rendered with raw HTML and images off.
+- The conversation (Scroll back, chats, catch-ups, handoffs) now includes the slash commands you sent, such as `/commit`; they were dropped as markup.
 - **Antigravity CLI: Allow/Deny from Needs you.** agy sessions now run with `--dangerously-skip-permissions`, and every tool agy would ask about is held at its PreToolUse hook (timeout raised to an hour) until you allow or deny it, as Gemini's are; reads, searches and subagent bookkeeping run freely. When Agent Worlds can't be reached, `aw-hook` denies every agy tool, reads included. Where the project or a folder above it has its own `.agents/hooks.json` (which can switch our hook off by name), agy's own prompt stays the gate. Checked on agy 1.4.2.
 
 ## 2026-10-19

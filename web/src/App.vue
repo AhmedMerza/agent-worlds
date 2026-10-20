@@ -172,7 +172,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
         <TerminalPanel v-show="termShown" />
       </div>
       <aside>
-        <Inbox v-show="!phone" />
+        <Inbox v-show="!phone && ui.left !== 'chats'" />
         <Detail v-show="showTab('term')" />
       </aside>
     </div>

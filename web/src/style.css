@@ -375,7 +375,7 @@ pre.diff{max-height:320px;overflow:auto}
 .chat-acted{align-self:center;margin:0;font-size:12.5px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 12px;max-width:92%;overflow-wrap:anywhere;text-align:center}
 .chat-moved{flex:none;margin:0;padding:6px 14px;font-size:13px;color:var(--ok);background:var(--panel);border-top:1px solid var(--line);overflow-wrap:anywhere}
 .chat-next{all:unset;box-sizing:border-box;flex:none;display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:14px;min-height:48px}
-.chat-next:hover{background:var(--panel-2)}
+@media (hover:hover){.chat-next:hover{background:var(--panel-2)}}
 .chat-next:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .chat-next .lbl{margin:0;color:var(--wait)}
 .chat-next .chat-prev{flex:1;color:var(--muted)}
@@ -385,7 +385,8 @@ pre.diff{max-height:320px;overflow:auto}
 .chat-wname{flex:none;font-size:12px;color:var(--muted)}
 .chat-rows{list-style:none;margin:0;padding:0;overflow:auto;min-height:0}
 .chat-row{all:unset;box-sizing:border-box;width:100%;display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-left:4px solid var(--tint);border-bottom:1px solid var(--line);cursor:pointer;min-height:56px}
-.chat-row:hover,.chat-row.current{background:var(--panel-2)}
+.chat-row.current{background:var(--panel-2)}
+@media (hover:hover){.chat-row:hover{background:var(--panel-2)}}
 .chat-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .chat-row .dot{margin-top:7px}
 .chat-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
@@ -400,7 +401,15 @@ pre.diff{max-height:320px;overflow:auto}
 .chat-state:not(.solo)::after{content:"·";margin-left:6px}
 .chat-prev{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .chat .term-head{flex:none}
-.chat-term{margin-left:auto}
+.chat-term{margin-left:auto;min-height:40px}
+/* A card in the chat is answered with a thumb: big targets, apart, and Always allow folded away until wanted. */
+.chat-card .btn{min-height:44px;font-size:15px}
+.chat-card .actions{gap:10px}
+.chat-card details.scope > summary{cursor:pointer;color:var(--muted);font-size:13.5px;min-height:32px;display:flex;align-items:center}
+.chat-card.risky{border-left-color:var(--err)}
+.chat-card .why.risky{color:var(--err);font-weight:700}
+.chat-card.settling{opacity:.55;pointer-events:none;transition:opacity .2s}
+@media (prefers-reduced-motion: reduce){.chat-card.settling{transition:none}}
 .chat-back{font-size:18px;line-height:1;padding:4px 12px;min-height:36px}
 .chat-body{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:14px;display:flex;flex-direction:column;gap:10px;font-size:14.5px;line-height:1.5}
 .bubble{max-width:min(720px,88%);padding:8px 12px;border-radius:10px;overflow-wrap:anywhere}

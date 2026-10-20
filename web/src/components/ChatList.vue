@@ -36,7 +36,7 @@ const emit = defineEmits<{ 'new-task': [] }>()
     <p v-if="!rows.length" class="empty">{{ state.filter === 'all' ? 'No sessions yet.' : 'No sessions in this world.' }} Start one with <b>+ New chat</b>.</p>
     <ul class="chat-rows">
       <li v-for="r in rows" :key="r.s.id">
-        <button :class="['chat-row', { current: state.selectedId === r.s.id, needs: r.needs }]" :style="{ '--tint': worldOf(r.s)?.color ?? '#8a92a0' }" @click="openChat(r.s.id)">
+        <button :class="['chat-row', { current: state.selectedId === r.s.id, needs: r.needs }]" :style="{ '--tint': worldOf(r.s)?.color ?? 'var(--idle)' }" @click="openChat(r.s.id)">
           <span :class="['dot', r.s.state]" />
           <span class="chat-main">
             <span class="chat-top"><b>{{ nameOf(r.s) }}</b><span v-if="state.filter === 'all' && worldOf(r.s)" class="chat-wname">{{ worldOf(r.s)!.name }}</span><span v-if="r.s.branch" class="tag">{{ r.s.branch }}</span><span class="chat-time">{{ chatTime(r.at, state.now) }}</span></span>

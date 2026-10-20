@@ -15,7 +15,7 @@ import ContinueIn from './ContinueIn.vue'
 /** What a session's card asks of you and the buttons that answer it: shared by the inbox and the chat. */
 /** `onActed`: told what you did once the server took it (the chat writes it into the conversation). A callback, not an
  *  event: the server's update can remove this card before the request returns, and an unmounted component's events go nowhere. */
-const props = defineProps<{ s: Session; c: Card; noReply?: boolean; onActed?: (line: string) => void }>()
+const props = defineProps<{ s: Session; c: Card; noReply?: boolean; onActed?: (line: string) => void; foldScopes?: boolean }>()
 const busy = reactive<Record<string, boolean>>({})
 const picked = reactive<Record<string, string[]>>({})
 
@@ -58,8 +58,8 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
   <p class="ask">{{ ask }}</p>
 
   <template v-if="c.kind === 'permission'">
+    <p v-if="c.risky" class="why risky">Careful: this {{ c.risky }}.</p>
     <code class="cmd">{{ permissionDetail(c) }}</code>
-    <p v-if="c.risky" class="why">Careful: this {{ c.risky }}.</p>
     <div v-if="!cardLive(c)" class="actions">
       <p class="why" style="width:100%">Answer this in the terminal.</p>
       <button class="btn primary" @click="select(s.id); focusTerm()">Open its terminal</button>
@@ -69,14 +69,15 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
       <button class="btn primary" :disabled="busy[c.requestId]" @click="act(rid, 'allow', () => decidePermission(s.id, rid, 'allow'))">Allow once</button>
       <button class="btn danger" :disabled="busy[c.requestId]" @click="act(rid, 'deny', () => decidePermission(s.id, rid, 'deny'))">Deny</button>
     </div>
-    <div v-if="(s.agent ?? 'claude') === 'claude'" class="scope">
+    <component :is="foldScopes ? 'details' : 'div'" v-if="(s.agent ?? 'claude') === 'claude'" class="scope" :open="foldScopes && showLearnNudge(c) ? true : undefined">
+      <summary v-if="foldScopes">Always allow…</summary>
       <p v-if="showLearnNudge(c)" class="learn">You've allowed this {{ c.seenCount }} times in {{ s.repoName }}. Stop asking?</p>
-      <span class="lbl">Always allow</span>
+      <span v-if="!foldScopes" class="lbl">Always allow</span>
       <div class="actions">
         <button v-for="o in scopes" :key="o.scope" class="btn" :disabled="busy[c.requestId] || (o.scope === 'all' && !scopeAvailability(c).all)" @click="act(rid, { scope: o.label(s.repoName, world?.name ?? '') }, () => decidePermission(s.id, rid, 'allow', o.scope))">{{ o.label(s.repoName, world?.name ?? '') }}</button>
       </div>
       <p v-if="scopeAvailability(c).allReason" class="soon">"Everywhere" {{ scopeAvailability(c).allReason?.toLowerCase() }}</p>
-    </div>
+    </component>
     </template>
   </template>
 
