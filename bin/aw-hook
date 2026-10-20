@@ -32,7 +32,7 @@ token="$(head -n1 "$home/token")"
 max=2
 re='"hook_event_name":[[:space:]]*"(PermissionRequest|BeforeTool|SessionEnd)"'
 if [[ "$payload" =~ $re ]]; then
-  # PermissionRequest (and Gemini's BeforeTool) is held until the GUI decides (the server gives up at 3540 s, the hook timeout is 3600 s).
+  # PermissionRequest (and Gemini's BeforeTool, agy's PreToolUse below) is held until the GUI decides (the server gives up at 3540 s, the hook timeout is 3600 s).
   [ "${BASH_REMATCH[1]}" = SessionEnd ] && max=1 || max=3590
 fi
 [ -n "$gate" ] && max=3590
