@@ -132,7 +132,11 @@ export const oneLine = (s: unknown, max = 160): string | null => {
 };
 
 function describe(tool: string, input: Record<string, unknown>): string {
-  const arg = input.command ?? input.description ?? input.file_path ?? input.pattern ?? input.url ?? input.query ?? input.prompt;
+  let arg = input.command ?? input.description ?? input.file_path ?? input.pattern ?? input.url ?? input.query ?? input.prompt;
+  if (typeof arg !== 'string' && tool === 'AskUserQuestion') {
+    const q = (Array.isArray(input.questions) ? input.questions[0] : null) as Record<string, unknown> | null;
+    arg = q?.question;
+  }
   return oneLine(typeof arg === 'string' ? `${tool}: ${arg}` : tool, 120) ?? tool;
 }
 

@@ -3,9 +3,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf } from '../logic'
+import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive } from '../logic'
 import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession } from '../store'
 import { copyText, osc52Text } from '../clipboard'
+import QuestionOptions from './QuestionOptions.vue'
 import type { Turn } from '../types'
 
 const s = computed(() => selected.value)
@@ -24,6 +25,8 @@ const hasTmux = computed(() => !!s.value?.tmux || !!s.value?.direct)
 const termFocused = ref(false)
 const showCatchup = computed(() => !!s.value && !s.value.ghost && s.value.state !== 'starting')
 const attachId = computed(() => (hasTmux.value ? s.value!.id : null))
+/** A non-live question card: the terminal asks it, so its options show here while you type the number. */
+const termQuestion = computed(() => (s.value?.card?.kind === 'question' && !cardLive(s.value.card) ? s.value.card : null))
 const termKey = computed(() => terminalOf(state, s.value))
 
 let term: Terminal | null = null
@@ -248,6 +251,10 @@ watch(termFocusTick, async () => {
         </div>
         <div class="actions"><button class="btn" @click="loadHistory">Refresh</button><button class="btn" @click="historyOpen = false">Back to live terminal</button></div>
       </template>
+    </div>
+    <div v-if="termQuestion && hasTmux && !historyOpen" class="term-q">
+      <QuestionOptions :card="termQuestion" show-question />
+      <p class="why">{{ termQuestion.questions.every(q => q.options.length) ? 'Type the number in the terminal below.' : 'Answer in the terminal below.' }}</p>
     </div>
     <div v-show="hasTmux && !historyOpen" ref="host" class="term-body" />
   </section>
