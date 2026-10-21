@@ -52,13 +52,21 @@ export async function tmuxSessionOf(pane: string): Promise<string | null> {
   return s && s.trim() ? s.trim() : null;
 }
 
-/** Names of live tmux sessions, [] when no tmux server runs, null when tmux itself is unavailable. */
-export function tmuxSessions(): Promise<string[] | null> {
+/** Live tmux panes and their sessions; empty when no server runs, null when tmux is unavailable. */
+export function tmuxPanes(): Promise<Map<string, Set<string>> | null> {
   return new Promise((done) => {
-    execFile('tmux', ['list-sessions', '-F', '#{session_name}'], { timeout: 3000 }, (err, stdout, stderr) => {
-      if (!err) return done(stdout.toString().split('\n').filter(Boolean));
+    execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id}\t#{session_name}'], { timeout: 3000 }, (err, stdout, stderr) => {
+      if (!err) {
+        const panes = new Map<string, Set<string>>();
+        for (const line of stdout.toString().trimEnd().split('\n').filter(Boolean)) {
+          const [pane, session] = line.split('\t');
+          if (!panes.has(pane)) panes.set(pane, new Set());
+          panes.get(pane)!.add(session);
+        }
+        return done(panes);
+      }
       const msg = String(stderr);
-      done(/no server running|error connecting/i.test(msg) ? [] : null);
+      done(/no server running|error connecting/i.test(msg) ? new Map() : null);
     });
   });
 }

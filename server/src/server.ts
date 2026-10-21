@@ -334,8 +334,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   // A newer version of the code on disk shows an "Update now" banner; the click restarts into it.
   let update = false, restarting = false;
   const stopWatch = opts.onRestart ? watchCode(() => { update = true; broadcast({ type: 'update' }); }) : null;
-  /** Drops sessions whose tmux session is gone (also run at once when a terminal's tmux attach ends). */
-  const sweepNow = async () => { const alive = await sys.tmuxSessions(); if (alive) store.sweep(alive); };
+  /** Drops sessions whose tmux pane is gone (also run at once when a terminal's tmux attach ends). */
+  const sweepNow = async () => { const alive = await sys.tmuxPanes(); if (alive) store.sweep(alive); };
   const waiting = () => [...store.sessions.values()].filter((s) => s.pending.length);
   const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
   let installed: string | null = null;

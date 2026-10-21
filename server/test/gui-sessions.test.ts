@@ -66,7 +66,7 @@ test('a GUI-started session shows at once as starting, then becomes the real ses
     // a starting session whose tmux died is swept
     await app.store.addStarting({ tmuxSession: 'aw-repo-2', pane: '%56', dir: repo, task: null });
     assert.equal(app.store.list().length, 2);
-    app.store.sweep(['aw-repo-1']);
+    app.store.sweep(new Map([['%55', new Set(['aw-repo-1'])]]));
     assert.deepEqual(app.store.list().map((x: any) => x.id), ['sess-1']);
 
     // Claude's first hook arrives before addStarting (a fast start): no second 'starting' card
