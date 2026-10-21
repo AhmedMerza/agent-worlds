@@ -1106,7 +1106,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
-      interrupts = setInterval(() => { void store.checkInterrupts(); store.checkBusy(); void deliverMail(); }, 2_000);
+      interrupts = setInterval(() => { void store.checkInterrupts(); void store.checkCodexPrompts(sys.capturePane); store.checkBusy(); void deliverMail(); }, 2_000);
       interrupts.unref();
       const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
       void rescan();

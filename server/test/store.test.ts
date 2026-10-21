@@ -603,3 +603,24 @@ test('a Codex session is tagged codex and can only be allowed once from the inbo
   assert.equal(store.decide('cx-1', { requestId, decision: 'allow' }), null);
   assert.deepEqual(JSON.parse(await held), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
 });
+
+test('Codex native approval appears in Needs you until its tmux prompt clears', async () => {
+  const { store, view } = setup();
+  const cx = { session_id: 'cx-native', cwd: '/work/repo-a' };
+  await store.handle({ ...cx, hook_event_name: 'SessionStart' }, '%5', undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'UserPromptSubmit', prompt: 'check a command' }, '%5', undefined, null, 'codex');
+  await tick();
+  const prompt = 'Would you like to run the following command?\n$ gh pr view 63\n› 1. Yes, proceed (y)\n  2. No (esc)\nPress enter to confirm or esc to cancel\n';
+  await store.checkCodexPrompts(async () => prompt);
+  assert.equal(view().state, 'waiting');
+  assert.equal(view().card.kind, 'permission');
+  assert.equal(view().card.live, false);
+
+  await store.checkCodexPrompts(async () => 'Codex is thinking\n› Ask Codex to do anything');
+  assert.equal(view().state, 'working');
+  assert.equal(view().card, null);
+
+  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'gh pr view 63' } }, '%5', undefined, null, 'codex');
+  await store.checkCodexPrompts(async () => prompt);
+  assert.equal(view().card.command, 'gh pr view 63', 'a real hook card takes priority over the terminal fallback');
+});

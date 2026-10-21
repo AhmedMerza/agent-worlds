@@ -52,6 +52,11 @@ export async function tmuxSessionOf(pane: string): Promise<string | null> {
   return s && s.trim() ? s.trim() : null;
 }
 
+/** The pane's visible screen only (no scrollback), for prompts Codex does not report through hooks. */
+export function capturePane(pane: string): Promise<string | null> {
+  return PANE_RE.test(pane) ? run('tmux', ['capture-pane', '-p', '-t', pane]) : Promise.resolve(null);
+}
+
 /** Live tmux panes and their sessions; empty when no server runs, null when tmux is unavailable. */
 export function tmuxPanes(): Promise<Map<string, Set<string>> | null> {
   return new Promise((done) => {
