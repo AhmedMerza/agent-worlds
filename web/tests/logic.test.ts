@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents, openHttp } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -232,6 +232,13 @@ const f = (path: string) => ({ path, added: 1, deleted: 0 })
 const asking = { kind: 'asking', summary: 'Same change for the invoices?' } as const
 const doneCard = { kind: 'done', summary: null } as const
 const permCard = { kind: 'permission', requestId: 'r', tool: 'Bash', command: 'ls', input: {}, risky: null, seenCount: 0 } as const
+
+it('describes ambiguous Codex permissions without naming the wrong command', () => {
+  const card = { ...permCard, ambiguous: true }
+  expect(permissionAsk(card)).toBe('Review pending permissions in Codex’s terminal.')
+  expect(permissionWho(card)).toBe('needs permission in its terminal')
+  expect(permissionDetail(card)).toBe('More than one request may be pending.')
+})
 
 describe('review block', () => {
   it('Commit only when something is uncommitted', () => {

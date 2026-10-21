@@ -10,15 +10,14 @@ import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT, MCP_B
  * The agent CLIs a session can run. All of them report through the same aw-hook script with
  * Claude-shaped hook payloads (session_id, hook_event_name, tool_name, tool_input, ...), so the
  * store handles them alike (Gemini's and agy's are translated first, see gemini.ts and agy.ts); what differs is how the hooks get into each CLI and which features it has.
- * `decides`: the CLI waits on its PermissionRequest hook, so Allow/Deny can be answered from here.
+ * `decides`: Agent Worlds can answer PermissionRequest from the inbox.
  * `holds`: the CLI runs without prompts of its own, its tool hook held here instead: anything but an allow denies.
  * `task`: the CLI can be started with the task as its first prompt.
  */
 export const AGENTS = {
   claude: { name: 'Claude Code', bin: 'claude', alwaysAllow: true, modes: true, decides: true, holds: false, task: true },
-  // Codex has no Notification, PostToolUseFailure or StopFailure, and its PermissionRequest takes
-  // allow/deny only (no updatedPermissions), so "always allow" stays with Claude.
-  codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: true, holds: false, task: true },
+  // Return no decision from Codex's PermissionRequest hook so its own prompt stays usable.
+  codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: false, holds: false, task: true },
   // Qwen Code >= 0.13 copies Claude's hooks, reply format included.
   qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, holds: false, task: true },
   // Kimi Code fires PermissionRequest without waiting for the hook, so its prompts are answered in the terminal.

@@ -85,7 +85,7 @@ test('/api/agents says which CLIs take a starting task and wait on their permiss
   try {
     const { agents } = await (await fetch(`${base}/api/agents`, { headers: { 'x-aw-token': TOKEN } })).json() as { agents: { id: string; decides: boolean; task: boolean }[] };
     const flags = Object.fromEntries(agents.map((a) => [a.id, [a.decides, a.task]]));
-    assert.deepEqual(flags, { claude: [true, true], codex: [true, true], qwen: [true, true], kimi: [false, true], gemini: [true, true], agy: [true, true] });
+    assert.deepEqual(flags, { claude: [true, true], codex: [false, true], qwen: [true, true], kimi: [false, true], gemini: [true, true], agy: [true, true] });
   } finally { await app.close(); }
 });
 

@@ -33,14 +33,18 @@ export const runClaude: Summarise = (bin, transcript) => new Promise((ok, fail) 
   const child = spawn(bin, args, { cwd: dir, env: { ...process.env, AGENT_WORLDS_DISABLE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
+  let inputError: Error | null = null;
   const timer = setTimeout(() => child.kill('SIGKILL'), CATCHUP_TIMEOUT_MS);
   child.stdout.on('data', (d) => { if (out.length < 1_000_000) out += d; });
   child.stderr.on('data', (d) => { if (err.length < 4000) err += d; });
+  // A fast failure can close stdin before the transcript is written; close below prefers its exit error.
+  child.stdin.on('error', (e) => { inputError = e; });
   child.on('error', (e) => { clearTimeout(timer); rmSync(dir, { recursive: true, force: true }); fail(e); });
   child.on('close', (code, sig) => {
     clearTimeout(timer);
     rmSync(dir, { recursive: true, force: true });
     if (code !== 0) return fail(new Error(`${bin} exited ${code ?? sig}: ${err.trim().slice(0, 300)}`));
+    if (inputError) return fail(new Error(`${bin} input failed: ${inputError.message}`));
     try {
       const j = JSON.parse(out);
       const r = j.structured_output ?? (typeof j.result === 'string' ? JSON.parse(j.result) : null);

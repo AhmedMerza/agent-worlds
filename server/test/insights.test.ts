@@ -136,7 +136,8 @@ test('runClaude: passes AGENT_WORLDS_DISABLE=1, the schema flags and the transcr
   const bin = stubClaude(d, `in=$(cat); printf '{"type":"result","is_error":false,"structured_output":{"did":"%s|%s","needs":""}}' "$AGENT_WORLDS_DISABLE" "$(printf '%s' "$*" | grep -o -- '--json-schema' | head -1)"; printf '%s' "$in" > ${d}/stdin`);
   assert.deepEqual(await runClaude(bin, 'USER: hi'), { did: '1|--json-schema', needs: '' });
   assert.match(readFileSync(join(d, 'stdin'), 'utf8'), /USER: hi/);
-  await assert.rejects(runClaude(stubClaude(d, 'echo nope >&2; exit 3'), 'x'), /exited 3/);
+  await assert.rejects(runClaude(stubClaude(d, 'echo nope >&2; exit 3'), 'x'.repeat(1 << 20)), /exited 3/);
+  await assert.rejects(runClaude(stubClaude(d, `exec 0<&-; sleep 0.05; echo '{"structured_output":{"did":"partial","needs":""}}'`), 'x'.repeat(1 << 20)), /input failed/);
   await assert.rejects(runClaude(stubClaude(d, 'echo "{\\"is_error\\":true}"'), 'x'), /unreadable/);
   await assert.rejects(runClaude(join(d, 'missing'), 'x'));
 });
@@ -165,7 +166,7 @@ test('catch-up: manual, one at a time per session, max 2 concurrent, failures ke
   assert.equal(ins.requestCatchup(s1), 'busy');
   ins.requestCatchup(store.sessions.get('s2')!);
   ins.requestCatchup(store.sessions.get('s3')!);
-  for (let i = 0; i < 20 && gate.length < 2; i++) await tick();
+  for (let i = 0; i < 1000 && gate.length < 2; i++) await new Promise((r) => setTimeout(r, 1));
   assert.equal(peak, 2);
   while (calls < 3 || gate.length) { gate.shift()?.(); await tick(); }
   for (let i = 0; i < 20 && s1.catchupRunning; i++) await tick();
@@ -177,7 +178,8 @@ test('catch-up: manual, one at a time per session, max 2 concurrent, failures ke
   fail = true;
   const before = { ...(s1.catchup as object) };
   ins.requestCatchup(s1);
-  for (let i = 0; i < 20 && !gate.length; i++) await tick();
+  for (let i = 0; i < 1000 && !gate.length; i++) await new Promise((r) => setTimeout(r, 1));
+  assert.ok(gate.length, 'failed catch-up reached the summariser');
   gate.shift()!();
   for (let i = 0; i < 20 && s1.catchupRunning; i++) await tick();
   assert.deepEqual(s1.catchup, before);

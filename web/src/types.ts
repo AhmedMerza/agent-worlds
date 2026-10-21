@@ -16,7 +16,7 @@ export interface Review { dir?: string; branch?: string | null; elsewhere?: bool
 export interface PermissionTarget { type: 'command' | 'file' | 'url' | 'other'; value: string }
 
 export type Card =
-  | { kind: 'permission'; requestId: string; tool: string; command: string | null; target?: PermissionTarget; input: unknown; risky: string | null; everywhere?: string | null; seenCount: number; live?: boolean }
+  | { kind: 'permission'; requestId: string; tool: string; command: string | null; target?: PermissionTarget; input: unknown; risky: string | null; everywhere?: string | null; seenCount: number; live?: boolean; ambiguous?: boolean }
   | { kind: 'question'; requestId: string; questions: Question[]; live?: boolean }
   | { kind: 'done'; summary: string | null; review?: Review | null }
   | { kind: 'asking'; summary: string }

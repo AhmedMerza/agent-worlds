@@ -344,6 +344,7 @@ export const withRepo = (repos: string[], repo: string): string[] => (repos.incl
 
 // ---- permission wording ----
 export function permissionAsk(c: Extract<Card, { kind: 'permission' }>): string {
+  if (c.ambiguous) return 'Review pending permissions in Codex’s terminal.'
   switch (c.target?.type) {
     case 'command': return 'Run this command?'
     case 'file': return 'Edit this file?'
@@ -353,6 +354,7 @@ export function permissionAsk(c: Extract<Card, { kind: 'permission' }>): string 
   }
 }
 export function permissionWho(c: Extract<Card, { kind: 'permission' }>): string {
+  if (c.ambiguous) return 'needs permission in its terminal'
   switch (c.target?.type) {
     case 'file': return 'wants to edit a file'
     case 'url': return 'wants to open an address'
@@ -362,6 +364,7 @@ export function permissionWho(c: Extract<Card, { kind: 'permission' }>): string 
 }
 /** The line shown under the question: the target's value, else the command, else the raw input. */
 export function permissionDetail(c: Extract<Card, { kind: 'permission' }>): string {
+  if (c.ambiguous) return 'More than one request may be pending.'
   if (c.target?.value) return c.target.value
   if (c.command) return c.command
   try { return JSON.stringify(c.input, null, 2) ?? '' } catch { return String(c.input) }
