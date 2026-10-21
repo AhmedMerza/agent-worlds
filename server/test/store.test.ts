@@ -629,17 +629,24 @@ test('an unrelated Codex helper tool does not clear a native permission request'
   assert.equal(view().state, 'waiting');
 });
 
-test('a newer same-actor Codex permission is shown without discarding the older request', async () => {
-  const { store, view } = setup({ clients: true });
+test('Codex clears answered overlapping permissions when its terminal returns to the input', async () => {
+  let now = 10_000;
+  const { store, view } = setup({ clients: true, now: () => now });
   const cx = { session_id: 'cx-denied', cwd: '/work/repo-a' };
-  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
-  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch b' } }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch a' } }, '%5', undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch b' } }, '%5', undefined, null, 'codex');
   assert.equal(view().card?.command, 'touch b');
   assert.equal(view().card?.ambiguous, true);
-  await store.handle({ ...cx, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'touch b' } }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'touch b' } }, '%5', undefined, null, 'codex');
   assert.equal(view().card?.command, 'touch a');
-  assert.equal(view().card?.ambiguous, true);
-  assert.equal(view().state, 'waiting');
+  await store.checkCodexPrompts(async () => '› Ask Codex to do anything');
+  assert.equal(view().card?.command, 'touch a', 'a fresh request survives the prompt-render race');
+  now += 5_001;
+  await store.checkCodexPrompts(async () => 'Would you like to run the following command?\n› 1. Yes, proceed (y)\nPress enter to confirm or esc to cancel');
+  assert.equal(view().card?.command, 'touch a', 'a visible approval remains pending');
+  await store.checkCodexPrompts(async () => '› Ask Codex to do anything');
+  assert.equal(view().card, null);
+  assert.equal(view().state, 'working');
 });
 
 test('Codex PostToolUse does not consume an identical concurrent permission', async () => {
