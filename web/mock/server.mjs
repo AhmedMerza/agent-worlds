@@ -371,7 +371,12 @@ server.on('upgrade', (req, socket) => {
     for (const ch of String(m.d)) {
       if (ch === '\r') {
         const line = buf; buf = ''
-        const reply = line.startsWith('/') ? `\x1b[2mRunning ${line.split(' ')[0]} ...\x1b[0m` : '⏺ On it. I will check the failing test first.'
+        const question = s?.card?.kind === 'question' && s.card.live === false ? s.card.questions[0] : null
+        const choice = question?.options.find((o, i) => line.trim() === String(i + 1) || line.trim().toLowerCase() === o.label.toLowerCase())
+        const reply = question
+          ? choice ? `⏺ Answered: ${choice.label}` : `Choose 1–${question.options.length}.`
+          : line.startsWith('/') ? `\x1b[2mRunning ${line.split(' ')[0]} ...\x1b[0m` : '⏺ On it. I will check the failing test first.'
+        if (choice) resume(s, 'Continuing with your answer')
         socket.write(frame(`\r\x1b[J\x1b[1m>\x1b[0m ${line}\r\n\r\n${reply}\r\n\r\n` + render('')))
       } else if (ch === '\x7f') { buf = buf.slice(0, -1); socket.write(frame(render(buf))) }
       else if (ch === '\t') { const it = menu(buf)[0]; if (it) { buf = `/${it[0]} `; socket.write(frame(render(buf))) } }
