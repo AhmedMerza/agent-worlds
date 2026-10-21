@@ -392,13 +392,20 @@ test('bad payloads throw, unknown events are ignored', async () => {
   assert.equal((store.list()[0] as any).worldId, null, 'unknown repo has no world');
 });
 
-test('sweep removes sessions whose tmux session is gone', async () => {
+test('sweep removes sessions whose tmux pane is gone, even before its session name is resolved', async () => {
   const { store } = setup();
   await store.handle(ev.start, '%5');
   await new Promise((r) => setImmediate(r));
-  store.sweep(['aw-repo-a']);
+  store.sweep(new Map([['%5', new Set(['linked-session', 'aw-repo-a'])]]));
   assert.equal(store.list().length, 1);
-  store.sweep([]);
+  store.sweep(new Map());
+  assert.equal(store.list().length, 0);
+
+  await store.handle({ ...ev.start, session_id: 'unresolved' }, '%6');
+  store.sessions.get('unresolved')!.tmux!.session = null;
+  store.sweep(new Map([['%6', new Set(['aw-repo-a'])]]));
+  assert.equal(store.list().length, 1, 'a live pane remains even while its session name is unresolved');
+  store.sweep(new Map([['%5', new Set(['aw-repo-a'])]]));
   assert.equal(store.list().length, 0);
 });
 

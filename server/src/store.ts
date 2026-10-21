@@ -748,9 +748,9 @@ export class Store {
     this.push(s);
   }
 
-  /** Drop sessions whose tmux session has gone away. */
-  sweep(alive: string[]) {
-    for (const s of [...this.sessions.values()]) if (s.tmux?.session && !alive.includes(s.tmux.session)) this.remove(s);
+  /** Drop sessions whose tmux pane has gone away, including panes whose session name was never resolved. */
+  sweep(alive: Map<string, Set<string>>) {
+    for (const s of [...this.sessions.values()]) if (s.tmux && (!alive.has(s.tmux.pane) || (s.tmux.session && !alive.get(s.tmux.pane)!.has(s.tmux.session)))) this.remove(s);
   }
 }
 
