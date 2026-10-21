@@ -588,20 +588,71 @@ test('a Kimi session: block prompts, terminal-only permission cards, Esc back to
   assert.equal(view().card, null);
 });
 
-test('a Codex session is tagged codex and can only be allowed once from the inbox', async () => {
-  const { store, view } = setup({ clients: true });
+test('a Codex permission appears in Needs you without blocking its native terminal prompt', async () => {
+  const { store, view } = setup({ clients: true, holdMs: 50 });
   // Recorded from Codex 0.156.1 (ids and paths genericised); Codex sends model on every event.
   const cx = { session_id: 'cx-1', transcript_path: '/home/u/.codex/sessions/2026/10/14/rollout-x-cx-1.jsonl', cwd: '/work/repo-a', model: 'gpt-5.6-terra', permission_mode: 'default' };
   await store.handle({ ...cx, hook_event_name: 'SessionStart', source: 'startup' }, null, undefined, null, 'codex');
   await store.handle({ ...cx, hook_event_name: 'UserPromptSubmit', turn_id: 't1', prompt: 'touch a file' }, null, undefined, null, 'codex');
   assert.equal(view().agent, 'codex');
   assert.equal(view().state, 'working');
-  const held = store.handle({ ...cx, hook_event_name: 'PermissionRequest', turn_id: 't1', tool_name: 'Bash', tool_input: { command: 'touch a', description: null } }, null, undefined, null, 'codex');
+  const request = store.handle({ ...cx, hook_event_name: 'PermissionRequest', turn_id: 't1', tool_name: 'Bash', tool_input: { command: 'touch a', description: null } }, null, undefined, null, 'codex');
   await tick();
   const { requestId } = view().card;
-  assert.match(store.decide('cx-1', { requestId, decision: 'allow', scope: 'repo' })?.[1] ?? '', /only be allowed once/);
-  assert.equal(store.decide('cx-1', { requestId, decision: 'allow' }), null);
-  assert.deepEqual(JSON.parse(await held), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
+  assert.equal(view().card.live, false);
+  assert.equal(view().card.command, 'touch a');
+  assert.equal(await request, '{}', 'no hook decision blocks Codex from displaying its own prompt');
+  assert.equal(store.decide('cx-1', { requestId, decision: 'allow' })?.[0], 409);
+  await store.handle({ ...cx, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'touch a', description: null } }, null, undefined, null, 'codex');
+  assert.equal(view().card, null, 'a resolved terminal prompt leaves Needs you');
+  assert.equal(view().state, 'working');
+});
+
+test('starting one Codex tool keeps another permission request in Needs you', async () => {
+  const { store, view } = setup({ clients: true });
+  const cx = { session_id: 'cx-parallel', cwd: '/work/repo-a' };
+  for (const [agent_id, command] of [['helper-a', 'touch a'], ['helper-b', 'touch b']]) {
+    await store.handle({ ...cx, hook_event_name: 'PermissionRequest', agent_id, tool_name: 'Bash', tool_input: { command } }, null, undefined, null, 'codex');
+  }
+  await store.handle({ ...cx, hook_event_name: 'PreToolUse', agent_id: 'helper-a', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PostToolUse', agent_id: 'helper-a', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  assert.equal(view().card?.command, 'touch b');
+  assert.equal(view().state, 'waiting');
+});
+
+test('an unrelated Codex helper tool does not clear a native permission request', async () => {
+  const { store, view } = setup({ clients: true });
+  const cx = { session_id: 'cx-unrelated', cwd: '/work/repo-a' };
+  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PreToolUse', agent_id: 'helper-a', tool_name: 'Read', tool_input: { file_path: '/work/repo-a/a' } }, null, undefined, null, 'codex');
+  assert.equal(view().card?.command, 'touch a');
+  assert.equal(view().state, 'waiting');
+});
+
+test('a newer same-actor Codex permission is shown without discarding the older request', async () => {
+  const { store, view } = setup({ clients: true });
+  const cx = { session_id: 'cx-denied', cwd: '/work/repo-a' };
+  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch b' } }, null, undefined, null, 'codex');
+  assert.equal(view().card?.command, 'touch b');
+  assert.equal(view().card?.ambiguous, true);
+  await store.handle({ ...cx, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'touch b' } }, null, undefined, null, 'codex');
+  assert.equal(view().card?.command, 'touch a');
+  assert.equal(view().card?.ambiguous, true);
+  assert.equal(view().state, 'waiting');
+});
+
+test('Codex PostToolUse does not consume an identical concurrent permission', async () => {
+  const { store, view } = setup({ clients: true });
+  const cx = { session_id: 'cx-identical', cwd: '/work/repo-a' };
+  for (let i = 0; i < 2; i++) {
+    await store.handle({ ...cx, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  }
+  await store.handle({ ...cx, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  await store.handle({ ...cx, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'touch a' } }, null, undefined, null, 'codex');
+  assert.equal(view().card?.command, 'touch a');
+  assert.equal(view().card?.ambiguous, true);
+  assert.equal(view().state, 'waiting');
 });
 
 test('Codex native approval appears in Needs you until its tmux prompt clears', async () => {

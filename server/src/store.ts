@@ -40,6 +40,8 @@ export function codexApprovalOnScreen(screen: string): boolean {
 
 type Pending = {
   requestId: string;
+  actor: string | null;
+  ambiguous: boolean;
   kind: 'permission' | 'question';
   tool: string;
   input: Record<string, unknown>;
@@ -226,7 +228,7 @@ export class Store {
     const p = s.pending[0];
     let card: unknown = s.card;
     if (p && p.kind === 'permission') {
-      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), target: targetOf(p.tool, p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, everywhere: whyNotEverywhere(p.rule, p.risky), seenCount: p.seenCount, live: p.live };
+      card = { kind: 'permission', requestId: p.requestId, tool: p.tool, command: commandOf(p.input), target: targetOf(p.tool, p.input), input: p.input, rule: ruleText(p.rule), risky: p.risky, everywhere: whyNotEverywhere(p.rule, p.risky), seenCount: p.seenCount, live: p.live, ambiguous: p.ambiguous };
     } else if (p) {
       card = { kind: 'question', requestId: p.requestId, questions: questionsOf(p.input), live: p.live };
     }
@@ -430,6 +432,12 @@ export class Store {
         break;
       }
       case 'PreToolUse':
+        // A terminal approval precedes this hook; only its matching actor and input are resolved.
+        if (s.agent === 'codex') {
+          const actor = typeof p.agent_id === 'string' ? p.agent_id : null;
+          const pending = s.pending.find((p) => !p.live && p.actor === actor && p.key === inputKey(tool, input));
+          if (pending) this.settle(s, pending, null);
+        }
         this.log(s, describe(tool, input));
         if (input.run_in_background === true || tool === 'Monitor') s.launched = true;
         if (!rest) {
@@ -453,7 +461,9 @@ export class Store {
       case 'PostToolUseFailure': {
         const key = inputKey(tool, input);
         // A held call's input is the same before and after; matching its tool name alone could deny another held call of it.
-        const match = s.pending.find((x) => x.key === key) ?? (AGENTS[s.agent].holds ? undefined : s.pending.find((x) => x.tool === tool));
+        // Codex already resolved its request at PreToolUse; without request ids, PostToolUse could consume an identical concurrent prompt.
+        const match = s.agent === 'codex' ? undefined
+          : s.pending.find((x) => x.key === key) ?? (AGENTS[s.agent].holds ? undefined : s.pending.find((x) => x.tool === tool));
         if (match) this.settle(s, match, '{}');
         this.afterPending(s, rest ?? 'working');
         if (typeof p.tool_use_id === 'string') s.testing.delete(p.tool_use_id);
@@ -479,15 +489,22 @@ export class Store {
         break;
       }
       case 'PermissionRequest': {
+        const actor = typeof p.agent_id === 'string' ? p.agent_id : null;
+        const overlapping = s.agent === 'codex' ? s.pending.filter((pending) => !pending.live && pending.actor === actor) : [];
+        for (const pending of overlapping) pending.ambiguous = true;
         const rule = ruleFor(tool, input, p.permission_suggestions);
         const pend: Pending = {
-          requestId: randomUUID(), kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
+          requestId: randomUUID(), actor, ambiguous: overlapping.length > 0,
+          kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
           tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
           // A held CLI has no prompt of its own to fall back on (gemini.ts, agy.ts): its requests wait for a page to open.
           live: AGENTS[s.agent].decides && (this.deps.clientsConnected() || AGENTS[s.agent].holds), resolve: null, timer: null,
         };
-        s.pending.push(pend);
+        // Codex has no stable request id: show its newest native prompt without discarding an
+        // older request that may still be waiting concurrently.
+        if (s.agent === 'codex') s.pending.unshift(pend);
+        else s.pending.push(pend);
         s.state = 'waiting';
         s.waitingSince ??= this.now();
         if (!rest) s.card = null;

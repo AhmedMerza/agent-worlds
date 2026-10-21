@@ -219,8 +219,9 @@ asks first (**Update anyway**).
 
 New session has an **Agent** choice: Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI or Antigravity CLI (whichever is on
 your PATH). They all report through the same hook as Claude, added only for the sessions
-Agent Worlds starts, so your own config is never edited. The rooms, timers, inbox and
-Allow/Deny work the same. These features are Claude-only for now:
+Agent Worlds starts, so your own config is never edited. The rooms, timers and inbox
+work the same. Codex and Kimi show permission requests under **Needs you**, but you answer them in
+their own terminal. These features are Claude-only for now:
 
 - "Always allow" rules, permission modes, and questions answered from the inbox
 - Catch-up summaries, the context %, Recent sessions, and resume
@@ -233,12 +234,12 @@ and continue". It remembers that choice, so later sessions don't ask again. Code
 event when a turn fails (for example when you hit a usage limit), so Agent Worlds reads Codex's
 own session log instead: a failed turn moves to the Help desk with its error a few seconds later.
 
-Kimi Code is different in two ways:
+Kimi Code has two additional details:
 
 - **No starting task.** Kimi opens at its empty prompt; type your first message in the terminal.
   The task box still names the session and its branch.
-- **Permission prompts are answered in the terminal.** Kimi doesn't wait for the hook, so its
-  cards show what it is asking but have no Allow/Deny.
+- **Permission prompts are answered in the terminal.** Kimi does not wait for the hook. Like Codex,
+  its cards show what it is asking but have no Allow/Deny.
 
 Kimi only reads hooks from `config.toml` in its home folder, so its sessions get a home of their own
 (`kimi-home` in the Agent Worlds folder). It links to everything in yours (login, sessions, MCP

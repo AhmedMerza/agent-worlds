@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { launchArgs, defaultAgent, installed, writeKimiHome, AGENTS } from '../src/agents.ts';
 import { tmp } from './fixtures.ts';
 
-test('codex gets its hooks as -c overrides, the permission hook held for an hour', () => {
+test('codex gets its hooks as -c overrides, with a permission hook timeout', () => {
   const { args, env } = launchArgs('codex', { home: '/h', task: 'fix it' });
   assert.deepEqual(env, {});
   assert.deepEqual(args.slice(-2), ['--', 'fix it']);
