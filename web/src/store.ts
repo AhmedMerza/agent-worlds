@@ -215,6 +215,9 @@ export const pairPhone = (address: string) => api<{ url: string; expiresAt: numb
 export type Scope = 'once' | 'repo' | 'world' | 'all'
 export const decidePermission = (id: string, requestId: string, decision: 'allow' | 'deny', scope: Scope = 'once') =>
   post(`${base(id)}/permission`, { requestId, decision, scope })
+export const fetchSavedRules = () => api<import('./types').SavedRules>('GET', '/api/allow-rules')
+export const deleteSavedRule = (body: { scope: 'all' | 'world' | 'repo'; rule: string; worldId?: string; repo?: string }) =>
+  api<{ removed: number }>('DELETE', '/api/allow-rules', body)
 export const sendInput = (id: string, text: string) => post(`${base(id)}/input`, { text })
 /** Sends a slash command to a session and says so, since nothing else on screen changes. */
 export async function askClaude(id: string, repoName: string, command: string): Promise<boolean> {

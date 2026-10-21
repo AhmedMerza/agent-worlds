@@ -64,7 +64,7 @@ export function whyNotEverywhere(rule: Rule, risky: string | null): string | nul
 export const ruleText = (r: Rule) => (r.ruleContent === undefined ? r.toolName : `${r.toolName}(${r.ruleContent})`);
 
 /** Add `rule` to permissions.allow of a settings file, keeping everything else. Atomic; refuses to touch invalid JSON. */
-export function addAllowRule(file: string, rule: string): void {
+function allowSettings(file: string): { data: Record<string, unknown>; perms: Record<string, unknown>; allow: unknown[] } {
   let data: Record<string, unknown> = {};
   if (existsSync(file)) {
     const text = readFileSync(file, 'utf8');
@@ -77,12 +77,35 @@ export function addAllowRule(file: string, rule: string): void {
   if (typeof perms !== 'object' || Array.isArray(perms)) throw new Error(`${file}: "permissions" is not an object`);
   const allow = perms.allow ?? [];
   if (!Array.isArray(allow)) throw new Error(`${file}: "permissions.allow" is not an array`);
-  if (allow.includes(rule)) return;
-  data.permissions = { ...perms, allow: [...allow, rule] };
+  return { data, perms, allow };
+}
+
+function writeSettings(file: string, data: Record<string, unknown>): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = join(dirname(file), `.${randomBytes(4).toString('hex')}.tmp`);
   writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
   renameSync(tmp, file);
+}
+
+export function allowRules(file: string): string[] {
+  return allowSettings(file).allow.filter((rule): rule is string => typeof rule === 'string');
+}
+
+export function addAllowRule(file: string, rule: string): void {
+  const { data, perms, allow } = allowSettings(file);
+  if (allow.includes(rule)) return;
+  data.permissions = { ...perms, allow: [...allow, rule] };
+  writeSettings(file, data);
+}
+
+/** Remove exactly one saved allowance, leaving other settings and other rules untouched. */
+export function removeAllowRule(file: string, rule: string): boolean {
+  if (!existsSync(file)) return false;
+  const { data, perms, allow } = allowSettings(file);
+  if (!allow.includes(rule)) return false;
+  data.permissions = { ...perms, allow: allow.filter((item) => item !== rule) };
+  writeSettings(file, data);
+  return true;
 }
 
 /** How often each rule was allowed per repo, persisted in <home>/stats.json. */

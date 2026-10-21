@@ -67,6 +67,9 @@ The list holds still while your pointer is over it, so a click never lands on a 
   commands (a command can be reworded to slip past any check) and for rules that would allow a
   whole tool; this repo and this world still work. Risky requests (pushes, database changes,
   deploys, recursive deletes, writes outside the project) also get a warning.
+  **Saved permissions** in the header lists and removes these rules by settings location. A world
+  removal clears the rule from every repo currently in that world. Running sessions may keep an
+  allowance until restarted.
 - **Questions**: each option is a button; multi-select and several questions work.
 - **A turn that ends in a question** shows as "asking": the question and a reply box.
 - **Finished turns**: a review of what changed since the session started (files +/-, the commits

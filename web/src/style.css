@@ -167,6 +167,17 @@ pre.diff{max-height:320px;overflow:auto}
 .catch-run{grid-column:1/-1;margin:0;color:var(--muted);font-style:italic;font-size:13px}
 .catch-act{grid-column:1/-1;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dialog.worlds{max-width:560px}
+.dialog.saved-permissions{max-width:620px}
+.saved-permissions .rule-scope{border-top:1px solid var(--line);padding-top:12px;margin-top:14px}
+.saved-permissions h3{font-size:16px;margin:0 0 3px}
+.saved-permissions h4{font-family:var(--f-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere;margin:12px 0 5px}
+.saved-permissions .rule-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+.saved-permissions .rule-list li{display:flex;justify-content:space-between;align-items:baseline;gap:12px;background:var(--panel-2);padding:6px 8px;border-radius:4px}
+.saved-permissions code{font-family:var(--f-mono);font-size:12px;overflow-wrap:anywhere;min-width:0}
+.saved-permissions .linkbtn{flex:none}
+.saved-permissions .world-rule-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
+.saved-permissions .world-rule-actions .linkbtn{flex:initial;text-align:left;overflow-wrap:anywhere}
+.saved-permissions .empty-rules{margin-top:16px}
 .wlist{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:12px}
 .winfo{border:1px solid var(--line);border-left:4px solid var(--tint);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .wrow{display:flex;gap:6px}

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { riskOf, ruleFor, ruleText, addAllowRule, Stats } from '../src/rules.ts';
+import { riskOf, ruleFor, ruleText, addAllowRule, allowRules, removeAllowRule, Stats } from '../src/rules.ts';
 import { computeConflicts, issueOf } from '../src/conflicts.ts';
 import { readTail, readHead, contextOf, firstPrompt, excerpt } from '../src/transcript.ts';
 import { reviewOf, testLine, TEST_RE } from '../src/review.ts';
@@ -98,6 +98,46 @@ test('addAllowRule keeps other content, never duplicates, refuses invalid JSON',
   assert.equal(readFileSync(f, 'utf8'), '{ "permissions": { // a comment\n } }', 'left untouched');
   writeFileSync(f, '{"permissions":{"allow":"Read"}}');
   assert.throws(() => addAllowRule(f, 'Bash(x)'), /not an array/);
+});
+
+test('saved allow rules can be listed and removed without changing other settings', () => {
+  const file = join(tmp(), 'settings.json');
+  assert.deepEqual(allowRules(file), []);
+  assert.equal(removeAllowRule(file, 'Read'), false);
+  writeFileSync(file, JSON.stringify({ theme: 'dark', permissions: { allow: ['Read', 'Bash(npm test)'], deny: ['Bash(rm *)'] } }));
+  assert.deepEqual(allowRules(file), ['Read', 'Bash(npm test)']);
+  assert.equal(removeAllowRule(file, 'Bash(npm test)'), true);
+  assert.equal(removeAllowRule(file, 'Bash(npm test)'), false);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { theme: 'dark', permissions: { allow: ['Read'], deny: ['Bash(rm *)'] } });
+  writeFileSync(file, '{broken');
+  assert.throws(() => removeAllowRule(file, 'Read'), /not valid JSON/);
+  assert.equal(readFileSync(file, 'utf8'), '{broken');
+});
+
+test('allow-rules API lists configured scopes and removes only the requested rule', async () => {
+  const root = tmp();
+  const a = join(root, 'a'), b = join(root, 'b');
+  const global = join(root, 'user-settings.json');
+  const file = (repo: string) => join(repo, '.claude', 'settings.local.json');
+  addAllowRule(global, 'WebFetch(domain:example.com)');
+  for (const repo of [a, b]) { addAllowRule(file(repo), 'Bash(npm test)'); addAllowRule(file(repo), 'Read'); }
+  const cfg = { ...parseConfig({ userSettingsPath: global, worlds: [{ id: 'web', name: 'Web', repos: [a, b] }] }), port: 0 };
+  const app = startServer(cfg, 'a'.repeat(64), { home: root });
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}/api/allow-rules`;
+  const headers = { 'x-aw-token': 'a'.repeat(64), 'content-type': 'application/json' };
+  const del = (body: object) => fetch(base, { method: 'DELETE', headers, body: JSON.stringify(body) });
+  try {
+    const listed = await (await fetch(base, { headers })).json() as any;
+    assert.deepEqual(listed.global, ['WebFetch(domain:example.com)']);
+    assert.deepEqual(listed.worlds[0].repos.map((r: any) => r.rules), [['Bash(npm test)', 'Read'], ['Bash(npm test)', 'Read']]);
+    assert.equal((await del({ scope: 'repo', repo: '/not-listed', rule: 'Read' })).status, 400);
+    assert.equal((await (await del({ scope: 'world', worldId: 'web', rule: 'Bash(npm test)' })).json() as any).removed, 2);
+    assert.deepEqual(allowRules(file(a)), ['Read']);
+    assert.deepEqual(allowRules(file(b)), ['Read']);
+    assert.deepEqual(allowRules(global), ['WebFetch(domain:example.com)']);
+    assert.equal((await (await del({ scope: 'all', rule: 'WebFetch(domain:example.com)' })).json() as any).removed, 1);
+  } finally { app.close(); }
 });
 
 test('Stats persist per repo and rule', () => {

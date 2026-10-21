@@ -10,7 +10,7 @@ import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from
 import { fromGemini, toGemini } from './gemini.ts';
 import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
-import { Stats } from './rules.ts';
+import { Stats, allowRules, removeAllowRule } from './rules.ts';
 import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
 import * as sys from './sys.ts';
@@ -581,6 +581,33 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       let permissionMode: string | null = null;
       try { const m = JSON.parse(readFileSync(cfg.userSettingsPath, 'utf8'))?.permissions?.defaultMode; if (typeof m === 'string') permissionMode = m; } catch { /* no settings file */ }
       return send(res, 200, { permissionMode });
+    }
+    if (url.pathname === '/api/allow-rules') {
+      const fileFor = (repo: string) => join(repo, '.claude', 'settings.local.json');
+      const configured = new Set(cfg.worlds.flatMap((w) => w.repos));
+      const otherRepos = [...new Set([...store.sessions.values()].map((s) => s.repo))].filter((repo) => !configured.has(repo));
+      try {
+        if (method === 'GET') return send(res, 200, {
+          global: allowRules(cfg.userSettingsPath),
+          worlds: cfg.worlds.map((w) => ({ id: w.id, name: w.name, repos: w.repos.map((repo) => ({ repo, rules: allowRules(fileFor(repo)) })) })),
+          other: otherRepos.map((repo) => ({ repo, rules: allowRules(fileFor(repo)) })),
+        });
+        if (method === 'DELETE') {
+          const body = await readBody(req);
+          if (typeof body.rule !== 'string' || !body.rule || body.rule.length > 4000) return send(res, 400, { error: 'rule must be a non-empty string up to 4000 characters' });
+          let files: string[];
+          if (body.scope === 'all') files = [cfg.userSettingsPath];
+          else if (body.scope === 'world') {
+            const world = cfg.worlds.find((w) => w.id === body.worldId);
+            if (!world?.repos.length) return send(res, 404, { error: 'no such world with repos' });
+            files = world.repos.map(fileFor);
+          } else if (body.scope === 'repo' && typeof body.repo === 'string' && (configured.has(body.repo) || otherRepos.includes(body.repo))) files = [fileFor(body.repo)];
+          else return send(res, 400, { error: 'choose a listed repo, world, or everywhere' });
+          // Reject a broken settings file before changing any other repo in a world.
+          for (const file of files) allowRules(file);
+          return send(res, 200, { removed: files.filter((file) => removeAllowRule(file, body.rule as string)).length });
+        }
+      } catch (e) { return send(res, 500, { error: (e as Error).message }); }
     }
     if (method === 'POST' && url.pathname === '/api/restart') {
       if (!opts.onRestart) return send(res, 501, { error: 'updating needs the server started with `agent-worlds start`' });

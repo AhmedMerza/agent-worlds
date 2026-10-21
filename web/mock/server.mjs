@@ -21,6 +21,13 @@ let worlds = process.env.MOCK_EMPTY ? [] : [
   { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: ['/work/repo-e', '/work/repo-f', '/work/repo-g'] },
   { id: 'tools', name: 'Tools', color: '#9c88df', repos: ['/work/repo-h', '/work/repo-j'] },
 ]
+const savedGlobal = new Set(['Read'])
+const savedByRepo = new Map([
+  ['/work/repo-a', new Set(['Bash(npm test)', 'WebFetch(domain:example.com)'])],
+  ['/work/repo-b', new Set(['Bash(npm test)'])],
+  ['/work/repo-e', new Set(['Bash(npm test)'])],
+  ['/work/repo-i', new Set(['Bash(git status)'])],
+])
 const mkSession = (id, worldId, over) => ({
   id, worldId, repo: `/work/${id}`, repoName: id, cwd: `/work/${id}`, branch: 'main', worktree: false,
   tmux: { session: `aw-${id}`, pane: '%1' }, state: 'working', waitingSince: null, task: `Task for ${id}`,
@@ -163,6 +170,20 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
+  if (url.pathname === '/api/allow-rules') {
+    const listed = new Set(worlds.flatMap((w) => w.repos))
+    const other = [...new Set([...sessions.values()].map((s) => s.repo))].filter((repo) => !listed.has(repo))
+    if (req.method === 'GET') return json(200, { global: [...savedGlobal], worlds: worlds.map((w) => ({ id: w.id, name: w.name, repos: w.repos.map((repo) => ({ repo, rules: [...(savedByRepo.get(repo) ?? [])] })) })), other: other.map((repo) => ({ repo, rules: [...(savedByRepo.get(repo) ?? [])] })) })
+    if (req.method === 'DELETE') {
+      const b = await readBody(req)
+      let targets
+      if (b.scope === 'all') targets = [savedGlobal]
+      else if (b.scope === 'world') targets = worlds.find((w) => w.id === b.worldId)?.repos.map((repo) => savedByRepo.get(repo)) ?? []
+      else if (b.scope === 'repo' && (listed.has(b.repo) || other.includes(b.repo))) targets = [savedByRepo.get(b.repo)]
+      else return json(400, { error: 'choose a listed repo, world, or everywhere' })
+      return json(200, { removed: targets.filter((rules) => rules?.delete(b.rule)).length })
+    }
+  }
   if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
   if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false }, { id: 'qwen', name: 'Qwen Code', installed: true, modes: false, decides: true, task: true }, { id: 'kimi', name: 'Kimi Code', installed: true, modes: false, decides: false, task: true }, { id: 'gemini', name: 'Gemini CLI', installed: true, modes: false, decides: true, task: true }, { id: 'agy', name: 'Antigravity CLI', installed: true, modes: false, decides: false, task: true }], default: 'claude' })
   if (req.method === 'GET' && url.pathname === '/api/providers') return json(200, { providers: [{ id: 'openrouter', name: 'OpenRouter', model: 'openrouter/free', keyUrl: 'https://openrouter.ai/keys', hasKey: false }, { id: 'gemini', name: 'Gemini API', model: 'gemini-2.5-flash', keyUrl: 'https://aistudio.google.com/apikey', hasKey: true }, { id: 'anthropic', name: 'Anthropic', model: 'claude-sonnet-5-5', keyUrl: 'https://console.anthropic.com/settings/keys', hasKey: false }, ...servers], default: defaultProvider })
