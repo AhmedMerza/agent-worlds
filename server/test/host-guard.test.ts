@@ -81,7 +81,7 @@ test('a busy port gives a clear startup error', async () => {
   writeFileSync(join(home, 'config.json'), JSON.stringify({ port }));
   const bin = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin/agent-worlds');
   const r = await new Promise<{ code: number; err: string }>((ok) =>
-    execFile(bin, ['start'], { env: { ...process.env, AGENT_WORLDS_HOME: home }, timeout: 15000 }, (e, _o, err) => ok({ code: (e?.code as number) ?? 0, err: String(err) })));
+    execFile(bin, ['start'], { env: { ...process.env, AGENT_WORLDS_HOME: home }, timeout: 15000 }, (e, out, err) => ok({ code: (e?.code as number) ?? 0, err: String(out) + String(err) })));
   busy.close();
   assert.equal(r.code, 1);
   assert.match(r.err, new RegExp(`port ${port} is busy — another Agent Worlds\\? change "port" in .*config\\.json`));
