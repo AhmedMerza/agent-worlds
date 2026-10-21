@@ -16,6 +16,7 @@ type Helper = { id: string; task: string; state: 'working' | 'done'; startedAt: 
 type Question = { question: string; header: string; multiSelect: boolean; options: { label: string; description: string }[] };
 type Card =
   | null
+  | { kind: 'permission'; requestId: string; tool: string; command: string; target: { type: 'command'; value: string }; input: Record<string, never>; risky: null; seenCount: number; live: false }
   | { kind: 'done'; summary: string | null; review: Review | null }
   | { kind: 'asking'; summary: string | null }
   | { kind: 'error'; summary: string };
@@ -29,6 +30,13 @@ const WAKE_GRACE = 5 * 60_000;
 /** Codex rollout entries that start or end a turn, and how long its Stop hook gets to arrive first. */
 const CODEX_TURN = new Set(['task_started', 'task_complete', 'turn_aborted']);
 const CODEX_GRACE = 5_000;
+const CODEX_TERMINAL_REQUEST = 'codex-terminal';
+
+/** Codex's native command approval controls, matched near the bottom of the current screen. */
+export function codexApprovalOnScreen(screen: string): boolean {
+  const tail = screen.trimEnd().split('\n').slice(-12).join('\n');
+  return /1\. Yes, proceed \(y\)/.test(tail) && /Press enter to confirm or esc to cancel/.test(tail);
+}
 
 type Pending = {
   requestId: string;
@@ -701,6 +709,28 @@ export class Store {
   /** Claude sits at its prompt but comes back by itself: background tasks, a wake-up, or a background helper still running. */
   private awaited(s: Session) {
     return !!s.busy || s.helpers.some((h) => h.bg && h.state === 'working');
+  }
+
+  /** Surface Codex's native approval when its PermissionRequest hook did not arrive. */
+  async checkCodexPrompts(capture: (pane: string) => Promise<string | null>) {
+    const sessions = [...this.sessions.values()].filter((s) => s.agent === 'codex' && s.tmux &&
+      (s.state === 'working' || s.card?.kind === 'permission' && s.card.requestId === CODEX_TERMINAL_REQUEST));
+    await Promise.all(sessions.map(async (s) => {
+      const screen = await capture(s.tmux!.pane);
+      if (screen === null || this.sessions.get(s.id) !== s || s.pending.length) return;
+      const synthetic = s.card?.kind === 'permission' && s.card.requestId === CODEX_TERMINAL_REQUEST;
+      if (codexApprovalOnScreen(screen)) {
+        if (s.state !== 'working' || s.card) return;
+        const command = 'Review the command in Codex’s terminal';
+        s.card = { kind: 'permission', requestId: CODEX_TERMINAL_REQUEST, tool: 'Bash', command,
+          target: { type: 'command', value: command }, input: {}, risky: null, seenCount: 0, live: false };
+        s.state = 'waiting'; s.waitingSince = this.now(); s.now = 'Approval in terminal';
+      } else {
+        if (!synthetic) return;
+        s.card = null; s.state = 'working'; s.waitingSince = null; s.now = 'Thinking';
+      }
+      this.push(s);
+    }));
   }
 
   /**
