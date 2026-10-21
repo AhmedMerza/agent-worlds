@@ -125,6 +125,7 @@ button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var
 .term-body{height:300px;padding:6px 0 6px 8px;min-width:0;overflow:hidden}
 .term-body .xterm{height:100%}
 .term-view{padding:16px 14px;color:var(--muted);font-size:14px;margin:0}
+.term-q{display:flex;flex-direction:column;gap:4px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
 .term-state{margin-left:auto;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
 .term-note{font-size:11px;color:var(--muted);margin-left:8px}
 .btn.opt.on{border-color:var(--wait);background:var(--line)}

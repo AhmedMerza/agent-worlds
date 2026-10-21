@@ -10,6 +10,7 @@ import type { Session, Question, Card } from '../types'
 import { actedLine, cardAsk, permissionDetail, buildAnswers, scopeAvailability, showLearnNudge, cardLive, agentName } from '../logic'
 import { groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
+import QuestionOptions from './QuestionOptions.vue'
 import ContinueIn from './ContinueIn.vue'
 
 /** What a session's card asks of you and the buttons that answer it: shared by the inbox and the chat. */
@@ -23,7 +24,6 @@ const world = computed(() => groups.value.find((g) => g.sessions.includes(props.
 const ask = computed(() => cardAsk(props.c))
 /** The pending request a permission or question card answers (narrowing on `c` does not reach into click handlers). */
 const rid = computed(() => ('requestId' in props.c ? props.c.requestId : ''))
-const options = (c: Extract<Card, { kind: 'question' }>) => c.questions.filter((q) => q.options.length)
 async function run(key: string, fn: () => Promise<boolean>) {
   if (busy[key]) return
   busy[key] = true
@@ -82,12 +82,9 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
   </template>
 
   <template v-else-if="c.kind === 'question' && !cardLive(c)">
-    <div v-for="q in options(c)" :key="q.question" class="ro">
-      <p v-if="c.questions.length > 1" class="why">{{ q.header ? q.header + ': ' : '' }}{{ q.question }}</p>
-      <ol class="ro-opts"><li v-for="o in q.options" :key="o.label"><b>{{ o.label }}</b><small v-if="o.description" class="why">{{ o.description }}</small></li></ol>
-    </div>
+    <QuestionOptions :card="c" />
     <div class="actions">
-      <p class="why" style="width:100%">Type the number in its terminal.</p>
+      <p class="why" style="width:100%">{{ c.questions.every(q => q.options.length) ? 'Type the number in its terminal.' : 'Answer in its terminal.' }}</p>
       <button class="btn primary" @click="select(s.id); focusTerm()">Open its terminal</button>
     </div>
   </template>
