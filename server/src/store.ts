@@ -30,6 +30,7 @@ const WAKE_GRACE = 5 * 60_000;
 /** Codex rollout entries that start or end a turn, and how long its Stop hook gets to arrive first. */
 const CODEX_TURN = new Set(['task_started', 'task_complete', 'turn_aborted']);
 const CODEX_GRACE = 5_000;
+const CODEX_PERMISSION_GRACE = 5_000;
 const CODEX_TERMINAL_REQUEST = 'codex-terminal';
 
 /** Codex's native command approval controls, matched near the bottom of the current screen. */
@@ -49,6 +50,7 @@ type Pending = {
   rule: Rule;
   risky: string | null;
   seenCount: number;
+  createdAt: number;
   live: boolean;
   resolve: ((body: string) => void) | null;
   timer: NodeJS.Timeout | null;
@@ -498,6 +500,7 @@ export class Store {
           kind: tool === 'AskUserQuestion' ? 'question' : 'permission',
           tool, input, key: inputKey(tool, input), rule, risky: riskOf(tool, input, s.top),
           seenCount: this.deps.stats.get(s.repo, ruleText(rule)),
+          createdAt: this.now(),
           // A held CLI has no prompt of its own to fall back on (gemini.ts, agy.ts): its requests wait for a page to open.
           live: AGENTS[s.agent].decides && (this.deps.clientsConnected() || AGENTS[s.agent].holds), resolve: null, timer: null,
         };
@@ -731,10 +734,20 @@ export class Store {
   /** Surface Codex's native approval when its PermissionRequest hook did not arrive. */
   async checkCodexPrompts(capture: (pane: string) => Promise<string | null>) {
     const sessions = [...this.sessions.values()].filter((s) => s.agent === 'codex' && s.tmux &&
-      (s.state === 'working' || s.card?.kind === 'permission' && s.card.requestId === CODEX_TERMINAL_REQUEST));
+      (s.state === 'working' || s.pending.some((p) => !p.live) || s.card?.kind === 'permission' && s.card.requestId === CODEX_TERMINAL_REQUEST));
     await Promise.all(sessions.map(async (s) => {
       const screen = await capture(s.tmux!.pane);
-      if (screen === null || this.sessions.get(s.id) !== s || s.pending.length) return;
+      if (screen === null || this.sessions.get(s.id) !== s) return;
+      const terminalPending = s.pending.filter((p) => !p.live);
+      if (terminalPending.length) {
+        if (codexApprovalOnScreen(screen) || !/› Ask Codex to do anything/.test(screen) || terminalPending.some((p) => this.now() - p.createdAt < CODEX_PERMISSION_GRACE)) return;
+        const rest = this.ended(s) ?? 'working';
+        for (const pending of terminalPending) this.settle(s, pending, null);
+        this.afterPending(s, rest);
+        if (rest === 'working') s.now = 'Thinking';
+        this.push(s);
+        return;
+      }
       const synthetic = s.card?.kind === 'permission' && s.card.requestId === CODEX_TERMINAL_REQUEST;
       if (codexApprovalOnScreen(screen)) {
         if (s.state !== 'working' || s.card) return;
