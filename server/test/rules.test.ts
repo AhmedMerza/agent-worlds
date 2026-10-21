@@ -116,11 +116,13 @@ test('saved allow rules can be listed and removed without changing other setting
 
 test('allow-rules API lists configured scopes and removes only the requested rule', async () => {
   const root = tmp();
-  const a = join(root, 'a'), b = join(root, 'b');
+  const a = join(root, 'a'), b = join(root, 'b'), past = join(root, 'past');
   const global = join(root, 'user-settings.json');
   const file = (repo: string) => join(repo, '.claude', 'settings.local.json');
   addAllowRule(global, 'WebFetch(domain:example.com)');
   for (const repo of [a, b]) { addAllowRule(file(repo), 'Bash(npm test)'); addAllowRule(file(repo), 'Read'); }
+  addAllowRule(file(past), 'Bash(git status)');
+  new Stats(join(root, 'stats.json')).rememberRepos([past]);
   const cfg = { ...parseConfig({ userSettingsPath: global, worlds: [{ id: 'web', name: 'Web', repos: [a, b] }] }), port: 0 };
   const app = startServer(cfg, 'a'.repeat(64), { home: root });
   await app.listen();
@@ -131,11 +133,13 @@ test('allow-rules API lists configured scopes and removes only the requested rul
     const listed = await (await fetch(base, { headers })).json() as any;
     assert.deepEqual(listed.global, ['WebFetch(domain:example.com)']);
     assert.deepEqual(listed.worlds[0].repos.map((r: any) => r.rules), [['Bash(npm test)', 'Read'], ['Bash(npm test)', 'Read']]);
+    assert.deepEqual(listed.other, [{ repo: past, rules: ['Bash(git status)'] }]);
     assert.equal((await del({ scope: 'repo', repo: '/not-listed', rule: 'Read' })).status, 400);
     assert.equal((await (await del({ scope: 'world', worldId: 'web', rule: 'Bash(npm test)' })).json() as any).removed, 2);
     assert.deepEqual(allowRules(file(a)), ['Read']);
     assert.deepEqual(allowRules(file(b)), ['Read']);
     assert.deepEqual(allowRules(global), ['WebFetch(domain:example.com)']);
+    assert.equal((await (await del({ scope: 'repo', repo: past, rule: 'Bash(git status)' })).json() as any).removed, 1);
     assert.equal((await (await del({ scope: 'all', rule: 'WebFetch(domain:example.com)' })).json() as any).removed, 1);
   } finally { app.close(); }
 });
@@ -167,6 +171,7 @@ test('scope repo / world / all write the right settings files and tell Claude fo
   await decideWith('world');
   assert.deepEqual(allow(`${root}/repo-b/.claude/settings.local.json`), ['Bash(touch hello.txt)']);
   assert.deepEqual(allow(`${root}/repo-a/.claude/settings.local.json`), ['Bash(touch hello.txt)'], 'no duplicate');
+  assert.ok(Object.hasOwn(new Stats(join(root, 'stats.json')).data, `${root}/repo-b`), 'world target remains discoverable after its session ends');
 
   writeFileSync(join(root, 'user-settings.json'), JSON.stringify({ theme: 'dark' }));
   store.handle(ev.permBash, null);

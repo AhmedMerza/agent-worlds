@@ -195,7 +195,7 @@ test('context and review are filled on Stop', async () => {
   const store = new Store(cfg, {
     repoInfo: async () => ({ repo: d, branch: 'main', worktree: false, top: d }),
     branchOf: async () => 'main', tmuxSessionOf: async () => null, clientsConnected: () => false, holdMs: 1000,
-    stats: { get: () => 0, inc: () => 1 },
+    stats: { get: () => 0, inc: () => 1, rememberRepos: () => {} },
     onEvent: (s, e) => ins.onEvent(s, e),
   }, () => {});
   const ins = new Insights(store, 'unused', { summarise: async () => ({ did: '', needs: '' }) });

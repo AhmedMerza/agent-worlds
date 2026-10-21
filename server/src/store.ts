@@ -110,7 +110,7 @@ export type Deps = {
   holdMs: number;
   /** Minimum gap between branch refreshes of one session (default 2000). */
   branchDebounceMs?: number;
-  stats: { get(repo: string, rule: string): number; inc(repo: string, rule: string): number };
+  stats: { get(repo: string, rule: string): number; inc(repo: string, rule: string): number; rememberRepos(repos: string[]): void };
   /** Sessions moved to a world by hand, by conversation id (see placements.ts). */
   placements?: { get(id: string): string | undefined; set(id: string, worldId: string | null): void };
   /** Names you gave sessions, by conversation id. */
@@ -645,6 +645,7 @@ export class Store {
         const files = this.settingsFiles(s!, scope as string);
         if (typeof files[0] === 'number') return files as [number, string];
         try { for (const f of files as string[]) addAllowRule(f, rule); } catch (e) { return [500, (e as Error).message]; }
+        if (scope === 'world') this.deps.stats.rememberRepos(this.cfg.worlds.find((w) => w.id === s!.worldId)!.repos);
         decision.updatedPermissions = [{ type: 'addRules', rules: [p!.rule], behavior: 'allow', destination: 'session' }];
       }
       this.deps.stats.inc(s!.repo, rule);

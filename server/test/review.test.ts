@@ -75,7 +75,7 @@ test('review follows the worktree a session committed in, with its branch', asyn
   writeFileSync(join(main, 'unrelated.txt'), 'someone else\n'); // dirty main checkout: not this session's work
   const store = new Store(parseConfig({}), {
     repoInfo, branchOf: async () => 'main', tmuxSessionOf: async () => null, clientsConnected: () => false, holdMs: 1000,
-    stats: { get: () => 0, inc: () => 1 }, onEvent: (s, e) => ins.onEvent(s, e),
+    stats: { get: () => 0, inc: () => 1, rememberRepos: () => {} }, onEvent: (s, e) => ins.onEvent(s, e),
   }, () => {});
   const ins = new Insights(store, 'unused', { summarise: async () => ({ did: '', needs: '' }) });
   await store.handle({ ...ev.prompt, cwd: main }, null);

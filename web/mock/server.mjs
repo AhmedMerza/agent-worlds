@@ -172,7 +172,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
   if (url.pathname === '/api/allow-rules') {
     const listed = new Set(worlds.flatMap((w) => w.repos))
-    const other = [...new Set([...sessions.values()].map((s) => s.repo))].filter((repo) => !listed.has(repo))
+    const other = [...new Set([...sessions.values()].map((s) => s.repo).concat([...savedByRepo.keys()]))].filter((repo) => !listed.has(repo))
     if (req.method === 'GET') return json(200, { global: [...savedGlobal], worlds: worlds.map((w) => ({ id: w.id, name: w.name, repos: w.repos.map((repo) => ({ repo, rules: [...(savedByRepo.get(repo) ?? [])] })) })), other: other.map((repo) => ({ repo, rules: [...(savedByRepo.get(repo) ?? [])] })) })
     if (req.method === 'DELETE') {
       const b = await readBody(req)

@@ -219,11 +219,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
+  const stats = new Stats(join(opts.home ?? homeDir(), 'stats.json'));
   const store = new Store(cfg, {
     repoInfo: sys.repoInfo, branchOf: sys.branchOf, tmuxSessionOf: sys.tmuxSessionOf,
     clientsConnected: () => wss.clients.size > 0,
     holdMs: opts.holdMs ?? HOLD_MS,
-    stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
+    stats,
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
     labels: new Placements(join(opts.home ?? homeDir(), 'labels.json')),
     onEvent: (s, ev, p) => {
@@ -585,7 +586,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/api/allow-rules') {
       const fileFor = (repo: string) => join(repo, '.claude', 'settings.local.json');
       const configured = new Set(cfg.worlds.flatMap((w) => w.repos));
-      const otherRepos = [...new Set([...store.sessions.values()].map((s) => s.repo))].filter((repo) => !configured.has(repo));
+      const otherRepos = [...new Set([...store.sessions.values()].map((s) => s.repo).concat(Object.keys(stats.data)))].filter((repo) => !configured.has(repo));
       try {
         if (method === 'GET') return send(res, 200, {
           global: allowRules(cfg.userSettingsPath),

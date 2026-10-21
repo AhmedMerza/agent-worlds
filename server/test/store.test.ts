@@ -31,6 +31,7 @@ function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSe
     stats: {
       get: (r, k) => counts.get(r + '|' + k) ?? 0,
       inc: (r, k) => { const n = (counts.get(r + '|' + k) ?? 0) + 1; counts.set(r + '|' + k, n); return n; },
+      rememberRepos: () => {},
     },
   }, (e) => emitted.push(e));
   const view = () => store.list()[0] as any;

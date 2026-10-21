@@ -120,12 +120,20 @@ export class Stats {
   inc(repo: string, rule: string): number {
     const n = this.get(repo, rule) + 1;
     (this.data[repo] ??= {})[rule] = n;
+    this.save();
+    return n;
+  }
+  /** Keep world targets discoverable after a repo leaves the world or its session ends. */
+  rememberRepos(repos: string[]): void {
+    for (const repo of repos) this.data[repo] ??= {};
+    this.save();
+  }
+  private save(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       const tmp = this.file + '.tmp';
       writeFileSync(tmp, JSON.stringify(this.data));
       renameSync(tmp, this.file);
     } catch (e) { console.error('[agent-worlds] cannot save stats', (e as Error).message); }
-    return n;
   }
 }

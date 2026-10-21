@@ -61,7 +61,7 @@ onMounted(() => { box.value?.focus(); void load() })
           </div>
         </section>
         <section v-if="saved.other.some((r) => r.rules.length)" class="rule-scope">
-          <h3>Other active repos</h3>
+          <h3>Other known repos</h3>
           <div v-for="repo in saved.other.filter((r) => r.rules.length)" :key="repo.repo" class="rule-repo">
             <h4 :title="repo.repo">{{ repo.repo }}</h4>
             <ul class="rule-list"><li v-for="rule in repo.rules" :key="rule"><code>{{ rule }}</code><button class="linkbtn" :disabled="busy" :aria-label="`Remove ${rule} from ${repo.repo}`" @click="remove({ scope: 'repo', repo: repo.repo, rule })">Remove from repo</button></li></ul>
