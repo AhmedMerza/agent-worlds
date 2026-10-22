@@ -129,6 +129,19 @@ test('update: rename keeps the id, repos change moves sessions between worlds', 
   assert.deepEqual(saved().worlds.find((w: any) => w.id === 'mobile').repos, [repoB]);
 });
 
+test('the world editor turns lead-started workers on and off and sets their limit', async () => {
+  assert.equal((await call('PATCH', '/api/worlds/mobile', { leadSpawn: 'yes' })).status, 400);
+  assert.equal((await call('PATCH', '/api/worlds/mobile', { maxSpawned: -1 })).status, 400);
+  assert.equal((await call('PATCH', '/api/worlds/mobile', { maxSpawned: 2.5 })).status, 400);
+  const r = await call('PATCH', '/api/worlds/mobile', { leadSpawn: true, maxSpawned: 3 });
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.world.leadSpawn, r.body.world.maxSpawned], [true, 3]);
+  const w = saved().worlds.find((x: any) => x.id === 'mobile');
+  assert.deepEqual([w.leadSpawn, w.maxSpawned], [true, 3], 'saved to config.json, where spawn() reads it');
+  await call('PATCH', '/api/worlds/mobile', { leadSpawn: false });
+  assert.equal(saved().worlds.find((x: any) => x.id === 'mobile').leadSpawn, false);
+});
+
 test('order: must list every id once', async () => {
   assert.equal((await call('POST', '/api/worlds/order', { ids: ['mobile'] })).status, 400);
   assert.equal((await call('POST', '/api/worlds/order', { ids: ['mobile', 'mobile', 'web-apps'] })).status, 400);

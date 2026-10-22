@@ -1,7 +1,11 @@
 // Server contract (see team ledger "Contracts"). Fields marked v2/v3 may be null/empty until later rounds.
 export type SessionState = 'starting' | 'working' | 'waiting' | 'done' | 'error' | 'idle'
 
-export interface World { id: string; name: string; color: string; repos: string[] }
+export interface World {
+  id: string; name: string; color: string; repos: string[]
+  /** Its sessions may start and end their own workers (aw_spawn / aw_stop), at most maxSpawned at once (server default 6). */
+  leadSpawn?: boolean; maxSpawned?: number
+}
 export interface LogLine { t: number; text: string }
 export interface Helper { id: string; task: string; state: 'working' | 'done'; startedAt: number }
 

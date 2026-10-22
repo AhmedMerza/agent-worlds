@@ -131,6 +131,7 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
   <article class="room" :class="{ drop: ui.drag && ui.drag.over === group.world.id && dropTarget(state.sessions[ui.drag.id], ui.drag.over, state.worlds) }" :data-world="canCreate ? group.world.id : undefined" :style="{ '--tint': group.world.color }">
     <header>
       <h2>{{ group.world.name }}</h2>
+      <span v-if="group.world.leadSpawn" class="badge mgd" title="Lead sessions here may start and end their own workers (Manage worlds)">leads start workers</span>
       <span class="meta">{{ needN }} need you · {{ working }} working · {{ idle }} idle</span>
       <span v-if="conflictN" class="warn" :title="'Sessions in this room may be working on the same thing'">⚠ {{ conflictN }}</span>
       <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>

@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive } from '../logic'
-import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession } from '../store'
+import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession, restartQueued } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import QuestionOptions from './QuestionOptions.vue'
 import type { Turn } from '../types'
@@ -64,18 +64,23 @@ async function sendFiles(files: File[]) {
 }
 /** Claude's full-screen view jumps to the latest output on Ctrl+End; phones and Mac keyboards have no such key. */
 function jumpToLatest() { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d: '\x1b[1;5F' })) }
-/** A fresh claude resumes this conversation and draws it from scratch: the fix for a wrecked screen. Mid-turn it asks first. */
-const restartArmed = ref(false)
-let armTimer: ReturnType<typeof setTimeout> | undefined
+/**
+ * A fresh claude resumes this conversation and draws it from scratch: the fix for a wrecked screen.
+ * Mid-turn the first click queues it for when the turn ends; a second click restarts now and stops the turn.
+ */
+const restartArmed = computed(() => !!s.value && restartQueued.has(s.value.id))
 async function restart() {
   const cur = s.value
   if (!cur) return
-  if (cur.state === 'working' && !restartArmed.value) { restartArmed.value = true; clearTimeout(armTimer); armTimer = setTimeout(() => { restartArmed.value = false }, 6000); return }
-  restartArmed.value = false
+  if (cur.state === 'working' && !restartQueued.has(cur.id)) {
+    restartQueued.add(cur.id)
+    showToast(`${cur.repoName} restarts when this turn ends. Click Restart again to restart now and stop the turn.`)
+    return
+  }
+  restartQueued.delete(cur.id)
   const r = await restartSession(cur.id, cur.state === 'working')
   showToast(r.ok ? `Restarting ${cur.repoName}: Claude comes back with the same conversation.` : `Could not restart: ${r.error}`)
 }
-watch(() => s.value?.id, () => { restartArmed.value = false })
 /** Quits its agent and closes its terminal. There is no undo, so it always asks once; mid-turn it says what it cuts short. */
 const endArmed = ref(false)
 let endTimer: ReturnType<typeof setTimeout> | undefined
@@ -214,7 +219,7 @@ watch(termFocusTick, async () => {
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into {{ s ? agentName(s) : 'Claude' }}</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
         <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" :title="`Jump to ${agentName(s)}'s latest output (Ctrl+End)`" @click="jumpToLatest">Jump to latest</button>
-        <button v-if="hasTmux && !historyOpen && link === 'live' && (s?.agent ?? 'claude') === 'claude'" :class="['hdr-btn', 'term-scroll', { danger: restartArmed }]" title="Screen looks wrecked? Quit this Claude and resume the same conversation in a fresh one" @click="restart">{{ restartArmed ? 'Stop the turn and restart?' : 'Restart' }}</button>
+        <button v-if="hasTmux && !historyOpen && link === 'live' && (s?.agent ?? 'claude') === 'claude'" :class="['hdr-btn', 'term-scroll', { danger: restartArmed }]" title="Screen looks wrecked? Quit this Claude and resume the same conversation in a fresh one" @click="restart">{{ restartArmed ? 'Restart now (stops the turn)' : 'Restart' }}</button>
         <button v-if="!s.ghost && renaming === null" class="hdr-btn term-scroll" title="Give this session a name for its name tag" @click="startRename">Rename</button>
         <button v-if="hasTmux" :class="['hdr-btn', 'term-scroll', { danger: endArmed }]" :title="`Quit ${agentName(s)} and close this terminal`" @click="end">{{ endLabel }}</button>
         <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>

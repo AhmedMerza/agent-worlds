@@ -19,7 +19,7 @@ before(async () => {
     { id: 'ops', name: 'Ops', repos: ['/work/ops'] },
   ] }), port: 0 };
   app = startServer(cfg, TOKEN, {
-    home,
+    home, spawnIdMs: 1000,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
     createSession: (async (o: any) => {
       launched.push(o);
@@ -62,16 +62,18 @@ test('aw_spawn only starts sessions in the caller\'s own world\'s folders', asyn
 });
 
 test('a spawned session records its lead, shows it in aw_agents and survives its first hook', async () => {
-  const r = await tool('%1', 'aw_spawn', { folder: 'repo-b', task: 'add CSV export', agent: 'claude' });
-  assert.equal(r.isError, undefined, r.content[0].text);
-  assert.match(r.content[0].text, /tmux session awtest-spawn-1/);
-  assert.deepEqual([launched[0].repo, launched[0].task, launched[0].worktree, launched[0].agent], ['/work/repo-b', 'add CSV export', true, 'claude']);
+  const pending = tool('%1', 'aw_spawn', { folder: 'repo-b', task: 'add CSV export', agent: 'claude' });
   let s = await state();
+  for (let i = 0; i < 40 && !s.sessions.some((x: any) => x.id === 'starting:awtest-spawn-1'); i++) { await new Promise((r) => setTimeout(r, 10)); s = await state(); }
+  assert.deepEqual([launched[0].repo, launched[0].task, launched[0].worktree, launched[0].agent], ['/work/repo-b', 'add CSV export', true, 'claude']);
   assert.equal(s.sessions.find((x: any) => x.id === 'starting:awtest-spawn-1').parent, LEAD);
-  assert.ok(s.sessions.find((x: any) => x.id === LEAD).log.some((l: any) => /^Started Claude Code in repo-b: add CSV export/.test(l.text)), 'logged in the lead\'s recent steps');
 
   await hook(ev.start, 'dddd4444-0000', '%11', '/work/repo-b'); // its agent is up: the card gets its real id
+  const r = await pending;
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.match(r.content[0].text, /session id dddd4444-0000/, 'aw_spawn waits for the real id instead of handing back the tmux name');
   s = await state();
+  assert.ok(s.sessions.find((x: any) => x.id === LEAD).log.some((l: any) => /^Started Claude Code in repo-b: add CSV export/.test(l.text)), 'logged in the lead\'s recent steps');
   assert.equal(s.sessions.find((x: any) => x.id === 'dddd4444-0000').parent, LEAD);
   const peers = JSON.parse((await tool('%1', 'aw_agents')).content[0].text);
   assert.equal(peers.find((p: any) => p.id === 'dddd4444-0000').parent, LEAD);
