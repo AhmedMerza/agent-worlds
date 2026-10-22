@@ -588,6 +588,44 @@ test('a Kimi session: block prompts, terminal-only permission cards, Esc back to
   assert.equal(view().card, null);
 });
 
+test('a Qwen permission is answered at once so its own prompt shows; the card stays until the terminal answers', async () => {
+  const { store, view } = setup({ clients: true });
+  // Sequence recorded from Qwen Code 0.25.3 (ids and paths genericised).
+  const qw = { session_id: 'qw-1', cwd: '/work/repo-a', permission_mode: 'default' };
+  await store.handle({ ...qw, hook_event_name: 'UserPromptSubmit', prompt: 'touch a file' }, null, undefined, null, 'qwen');
+  // Qwen waits ~4 s on this hook before drawing its prompt, then drops it: never hold it
+  const reply = store.handle({ ...qw, hook_event_name: 'PermissionRequest', tool_name: 'run_shell_command', tool_input: { command: 'touch a' } }, null, undefined, null, 'qwen');
+  await tick();
+  const { requestId, live } = view().card;
+  assert.equal(live, false, 'not held for an answer from Needs you');
+  assert.equal(await reply, '{}');
+  assert.equal(store.decide('qw-1', { requestId, decision: 'allow' })?.[0], 409);
+  // its background memory writes run on while the prompt waits
+  await store.handle({ ...qw, hook_event_name: 'PreToolUse', tool_name: 'write_file', tool_input: { file_path: '/home/u/.qwen/memories/x.md' } }, null, undefined, null, 'qwen');
+  await store.handle({ ...qw, hook_event_name: 'PostToolUse', tool_name: 'write_file', tool_input: { file_path: '/home/u/.qwen/memories/x.md' } }, null, undefined, null, 'qwen');
+  assert.equal(view().state, 'waiting');
+  assert.equal(view().card.requestId, requestId);
+  // answering in the terminal sends an empty prompt
+  await store.handle({ ...qw, hook_event_name: 'UserPromptSubmit', prompt: '' }, null, undefined, null, 'qwen');
+  assert.equal(view().card, null);
+  assert.equal(view().state, 'working');
+  assert.deepEqual(view().log.filter((l: { text: string }) => l.text.startsWith('You:')).map((l: { text: string }) => l.text), ['You: touch a file'], 'the empty prompt is not logged');
+  // denied or dismissed with Esc, Qwen sends only idle_prompt (it also sends one just before each request)
+  await store.handle({ ...qw, hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Qwen Code is waiting for your input' }, null, undefined, null, 'qwen');
+  await store.handle({ ...qw, hook_event_name: 'PermissionRequest', tool_name: 'run_shell_command', tool_input: { command: 'touch b' } }, null, undefined, null, 'qwen');
+  assert.equal(view().card.command, 'touch b');
+  await store.handle({ ...qw, hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Qwen Code is waiting for your input' }, null, undefined, null, 'qwen');
+  assert.equal(view().card, null);
+  assert.equal(view().state, 'idle');
+  // after a finished turn its memory pass runs tools with no agent_id and no Stop after them: still done
+  await store.handle({ ...qw, hook_event_name: 'UserPromptSubmit', prompt: 'say hi' }, null, undefined, null, 'qwen');
+  await store.handle({ ...qw, hook_event_name: 'Stop', last_assistant_message: 'hi' }, null, undefined, null, 'qwen');
+  await store.handle({ ...qw, hook_event_name: 'PreToolUse', tool_name: 'read_file', tool_input: { file_path: '/home/u/.qwen/memories/MEMORY.md' } }, null, undefined, null, 'qwen');
+  await store.handle({ ...qw, hook_event_name: 'PostToolUse', tool_name: 'read_file', tool_input: { file_path: '/home/u/.qwen/memories/MEMORY.md' } }, null, undefined, null, 'qwen');
+  assert.equal(view().state, 'done');
+  assert.equal(view().card.kind, 'done');
+});
+
 test('a Codex permission appears in Needs you without blocking its native terminal prompt', async () => {
   const { store, view } = setup({ clients: true, holdMs: 50 });
   // Recorded from Codex 0.156.1 (ids and paths genericised); Codex sends model on every event.

@@ -220,7 +220,7 @@ asks first (**Update anyway**).
 New session has an **Agent** choice: Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI or Antigravity CLI (whichever is on
 your PATH). They all report through the same hook as Claude, added only for the sessions
 Agent Worlds starts, so your own config is never edited. The rooms, timers and inbox
-work the same. Codex and Kimi show permission requests under **Needs you**, but you answer them in
+work the same. Codex, Qwen Code and Kimi show permission requests under **Needs you**, but you answer them in
 their own terminal. These features are Claude-only for now:
 
 - "Always allow" rules, permission modes, and questions answered from the inbox

@@ -18,8 +18,9 @@ export const AGENTS = {
   claude: { name: 'Claude Code', bin: 'claude', alwaysAllow: true, modes: true, decides: true, holds: false, task: true },
   // Return no decision from Codex's PermissionRequest hook so its own prompt stays usable.
   codex: { name: 'Codex', bin: 'codex', alwaysAllow: false, modes: false, decides: false, holds: false, task: true },
-  // Qwen Code >= 0.13 copies Claude's hooks, reply format included.
-  qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: true, holds: false, task: true },
+  // Qwen Code >= 0.13 copies Claude's hooks, reply format included, but drops a PermissionRequest hook after ~4 s
+  // and only then draws its own prompt: answer at once so the prompt shows, and answer it in the terminal.
+  qwen: { name: 'Qwen Code', bin: 'qwen', alwaysAllow: false, modes: false, decides: false, holds: false, task: true },
   // Kimi Code fires PermissionRequest without waiting for the hook, so its prompts are answered in the terminal.
   kimi: { name: 'Kimi Code', bin: 'kimi', alwaysAllow: false, modes: false, decides: false, holds: false, task: true },
   // Gemini CLI runs without prompts of its own: every tool it would ask about is held for you here (gemini.ts).
