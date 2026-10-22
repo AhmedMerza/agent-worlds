@@ -28,6 +28,9 @@ export function stepTags(runs: Run[], sessions: Session[]): Record<string, strin
 }
 /** What a session is called: the name you gave it, else its repo. */
 export const nameOf = (s: { label?: string | null; repoName: string }): string => s.label || s.repoName
+/** "team of <lead>" for a session a lead started with aw_spawn, else null. */
+export const teamOf = (s: { parent?: string | null }, sessions: Record<string, { label?: string | null; repoName: string }>): string | null =>
+  s.parent ? `team of ${sessions[s.parent] ? nameOf(sessions[s.parent]) : 'a lead that ended'}` : null
 export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi', gemini: 'Gemini', agy: 'Antigravity' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
 
 /** The state label, with the busy-but-not-you variants of 'working'. */

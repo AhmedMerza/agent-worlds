@@ -39,6 +39,8 @@ export interface Session {
   direct?: string | null
   /** Your name for it, shown instead of the repo name. */
   label?: string | null
+  /** The session that started this one with aw_spawn (its lead). */
+  parent?: string | null
   state: SessionState
   /** Busy, but not needing you (state stays 'working'): compacting, or background work runs on after the turn. */
   busy?: { kind: 'compact' } | { kind: 'background'; tasks: number; nextAt: number | null } | null

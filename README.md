@@ -308,12 +308,13 @@ first, and once you allow it there agy asks in its terminal as well. Two side ef
 
 ## Sessions message each other
 
-Every session Agent Worlds starts, whichever agent runs it, gets three MCP tools from a server named `aw`:
+Every session Agent Worlds starts, whichever agent runs it, gets these MCP tools from a server named `aw`:
 
-- `aw_agents` lists the other sessions: id, agent, repo, branch, task and state.
+- `aw_agents` lists the other sessions: id, agent, repo, branch, task, state, and the lead that started it (`parent`).
 - `aw_send` sends one of them a message.
 - `aw_inbox` reads the messages sent to this session.
 - `aw_handoff` ends this session's step of a run (see Runs).
+- `aw_spawn` and `aw_stop` start and end worker sessions, where you allow it (see below).
 
 So you can tell Claude "ask the Codex session to review your plan". As soon as the recipient is free
 (at its prompt, or its turn has ended), Agent Worlds types a one-line notice into its terminal:
@@ -340,6 +341,25 @@ who is speaking. It is set up only for the sessions Agent Worlds starts:
 - Antigravity CLI: not set up (see [Other agent CLIs](#other-agent-clis)).
 
 The mailbox tools run without asking for permission, because they only talk to Agent Worlds.
+
+### Leads that start their own workers
+
+A lead session (one you ask to manage the work) can start its workers itself, instead of you
+opening New session for each. It is off until you turn it on per world: set `"leadSpawn": true` on
+the world in `config.json` and restart the server. Until then `aw_spawn` refuses and tells the agent
+to ask you.
+
+- `aw_spawn { folder, task, agent?, worktree?, steps? }` starts a session the same way New session
+  does: in `folder` (one of the lead's own world's folders, by path or by name), on `agent` (your
+  default when left out), in a new worktree unless `worktree` is false, with `task` as its first
+  message. With `steps` it starts a [run](#runs-one-task-several-agents) instead.
+- The new session is on the lead's team: its panel and its Needs you card say "team of <lead>",
+  and `aw_agents` shows the lead as its `parent`. This survives a restart (`<home>/parents.json`).
+- `aw_stop { session }` ends one of the lead's own workers, as **End** does (a run it is a step of
+  stops too). A lead cannot end sessions it did not start.
+- At most `maxSpawned` (default 6) sessions started this way are open in a world at once; past that
+  `aw_spawn` refuses until one ends.
+- Each start and stop shows in the lead's recent steps.
 
 ## Runs: one task, several agents
 
@@ -505,6 +525,8 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen`, `kimi`, `gemini` or `agy`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
+| `worlds[].leadSpawn` | `false` | let sessions in this world start and end their own worker sessions (`aw_spawn`, `aw_stop`; see [Leads that start their own workers](#leads-that-start-their-own-workers)). Set it by hand |
+| `worlds[].maxSpawned` | `6` | the most sessions started by `aw_spawn` open in this world at once |
 
 Rules written by "Always allow" use Claude Code's permission syntax: "In `<repo>`" goes to
 `<repo>/.claude/settings.local.json`, "In the `<world>` world" to every repo of that world,

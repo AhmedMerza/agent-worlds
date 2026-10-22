@@ -1,12 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { basename, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { homeDir, type Config } from './config.ts';
+import { homeDir, MAX_SPAWNED, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
-import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId } from './agents.ts';
+import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId, type Provider } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
 import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
@@ -24,8 +24,8 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
-import { handleMcp, type Peer } from './mcp.ts';
-import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, reviewVerdict, STEP_KINDS, RUN_FILES, MAX_ROUNDS, type Run } from './runs.ts';
+import { handleMcp, type Peer, type SpawnArgs } from './mcp.ts';
+import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, reviewVerdict, STEP_KINDS, RUN_FILES, MAX_ROUNDS, type Run, type StepKind } from './runs.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -226,6 +226,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
     labels: new Placements(join(opts.home ?? homeDir(), 'labels.json')),
+    parents: new Placements(join(opts.home ?? homeDir(), 'parents.json')),
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
       // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
@@ -741,8 +742,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         via = `${p.name} · ${provider.model}`;
       }
       try {
-        const r = await createSession({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: (b.task as string) || null, agent, via });
+        const r = await launch({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), via });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -754,17 +754,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (typeof b.repo !== 'string' || !world.repos.includes(b.repo)) return send(res, 400, { error: `repo is not one of the ${world.name} world's repos` });
       if (typeof b.task !== 'string' || !b.task.trim() || b.task.length > 10000) return send(res, 400, { error: 'task must be a non-empty string up to 10000 chars' });
       if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
-      const steps = Array.isArray(b.steps) ? b.steps as Record<string, unknown>[] : [];
-      if (!steps.length || steps.length > 8) return send(res, 400, { error: 'steps must list 1 to 8 steps' });
-      for (const st of steps) {
-        if (!st || !isStepKind(st.kind)) return send(res, 400, { error: `each step needs a kind: ${Object.keys(STEP_KINDS).join(', ')}` });
-        if (!isAgent(st.agent)) return send(res, 400, { error: `each step needs an agent: ${Object.keys(AGENTS).join(', ')}` });
-        if (st.agent !== 'claude' && !onPath(AGENTS[st.agent].bin)) return send(res, 422, { error: `${AGENTS[st.agent].name} is not installed (no ${AGENTS[st.agent].bin} on PATH)` });
-      }
-      const r = newRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, now: Date.now(),
-        steps: steps.map((st) => ({ kind: st.kind as never, agent: st.agent as AgentId, checkpoint: st.checkpoint === true })) });
-      runs.set(r.id, r);
-      await startStep(r, 0);
+      const steps = parseSteps(b.steps);
+      if ('err' in steps) return send(res, steps.err[0], { error: steps.err[1] });
+      const r = await beginRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, steps });
       return r.status === 'failed' ? send(res, 422, { error: r.note, run: r }) : send(res, 201, { run: r });
     }
     const runm = url.pathname.match(/^\/api\/runs\/([^/]+)\/(next|stop)$/);
@@ -840,8 +832,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       try {
         const handoff = await writeHandoff(s, home);
         const task = `Read "${handoff}" and carry on from there.`;
-        const r = await createSession({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task, agent: b.agent });
+        const r = await launch({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}) });
         return send(res, 201, { tmuxSession: r.tmuxSession, handoff });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -946,8 +937,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   function mcpContext(self: string | null) {
     return {
       self,
-      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id))
-        .map((s) => ({ id: s.id, agent: AGENTS[s.agent].name, repo: s.repoName, branch: s.branch, task: s.task, state: s.state })),
+      // Its own workers too while they start (before their CLI reached /mcp)
+      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (self && s.parent === self)))
+        .map((s) => ({ id: s.id, agent: AGENTS[s.agent].name, repo: s.repoName, branch: s.branch, task: s.task, state: s.state, parent: s.parent })),
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
         const hits = [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id) && s.id.startsWith(to));
@@ -960,6 +952,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         return `Sent to ${label(hits[0])}. ${hits[0].state === 'working' ? 'It is working now and will be told when it is free.' : 'It is being told now.'}`;
       },
       handoff: (summary: string) => handoff(self!, summary),
+      spawn: (a: SpawnArgs) => spawn(self!, a),
+      stop: (session: string) => stopWorker(self!, session),
       inbox(): string {
         const got = mailbox.take(self!);
         return got.length ? got.map((m) => {
@@ -968,6 +962,83 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         }).join('\n\n') : 'No new messages.';
       },
     };
+  }
+  /**
+   * Starts a session: New session, a run's step and aw_spawn all come here. Its CLI in tmux (or a pty), then its
+   * 'starting' card; `made` runs in between. card: the task its card shows, when not the first message.
+   */
+  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; via?: string | null; card?: string; parent?: string | null },
+    made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    await made?.(c);
+    const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
+    return { ...c, id };
+  }
+  /** A run's steps from a request (POST /api/runs, aw_spawn): the steps, or err: [status, why not]. */
+  function parseSteps(raw: unknown): { kind: StepKind; agent: AgentId; checkpoint: boolean }[] | { err: [number, string] } {
+    const steps = Array.isArray(raw) ? raw as Record<string, unknown>[] : [];
+    if (!steps.length || steps.length > 8) return { err: [400, 'steps must list 1 to 8 steps'] };
+    for (const st of steps) {
+      if (!st || !isStepKind(st.kind)) return { err: [400, `each step needs a kind: ${Object.keys(STEP_KINDS).join(', ')}`] };
+      if (!isAgent(st.agent)) return { err: [400, `each step needs an agent: ${Object.keys(AGENTS).join(', ')}`] };
+      if (st.agent !== 'claude' && !onPath(AGENTS[st.agent].bin)) return { err: [422, `${AGENTS[st.agent].name} is not installed (no ${AGENTS[st.agent].bin} on PATH)`] };
+    }
+    return steps.map((st) => ({ kind: st.kind as StepKind, agent: st.agent as AgentId, checkpoint: st.checkpoint === true }));
+  }
+  async function beginRun(o: Omit<Parameters<typeof newRun>[0], 'now'>) {
+    const r = newRun({ ...o, now: Date.now() });
+    runs.set(r.id, r);
+    await startStep(r, 0);
+    return r;
+  }
+  /** aw_spawn calls still starting, per world: the cap counts them, or two at once could both slip under it. */
+  const spawning = new Map<string, number>();
+  /** aw_spawn: a lead starts a worker session (or a run) in one of its world's folders, if that world allows it. */
+  async function spawn(self: string, a: SpawnArgs): Promise<string | Error> {
+    const lead = store.sessions.get(self);
+    const world = cfg.worlds.find((w) => w.id === lead?.worldId);
+    if (!lead || !world) return new Error('this session is not in a world, so it cannot start sessions: ask the user to start them');
+    if (!world.leadSpawn) return new Error(`starting sessions is off for the ${world.name} world. Ask the user to start the session for you, or to allow it by setting "leadSpawn": true on the ${world.name} world in Agent Worlds' config.json.`);
+    const path = resolve(lead.cwd, a.folder);
+    const byName = world.repos.filter((r) => basename(r) === a.folder);
+    const folder = world.repos.includes(path) ? path : byName.length === 1 ? byName[0] : null;
+    if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the ${world.name} world's folders: ${world.repos.join(', ')}`);
+    if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
+    const agent = isAgent(a.agent) ? a.agent : defaultAgent(cfg.defaultAgent);
+    if (agent !== 'claude' && !onPath(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
+    const steps = a.steps === undefined ? null : parseSteps(a.steps);
+    if (steps && 'err' in steps) return new Error(steps.err[1]);
+    const max = world.maxSpawned ?? MAX_SPAWNED;
+    const live = [...store.sessions.values()].filter((s) => s.parent && s.worldId === world.id).length + (spawning.get(world.id) ?? 0);
+    if (live >= max) return new Error(`the ${world.name} world already has ${live} sessions started by leads, its limit (maxSpawned ${max}): end one with aw_stop first, or ask the user to raise maxSpawned`);
+    spawning.set(world.id, (spawning.get(world.id) ?? 0) + 1);
+    const task = a.task.trim(), worktree = a.worktree !== false;
+    try {
+      if (steps) {
+        const r = await beginRun({ task, worldId: world.id, repo: folder, worktree, steps, parent: self });
+        if (r.status === 'failed') return new Error(r.note ?? 'the run could not start');
+        store.log(lead, `Started run ${r.id} in ${basename(folder)}: ${task}`); store.push(lead);
+        return `Started run ${r.id} in ${folder} (${r.steps.map((x) => `${STEP_KINDS[x.kind].label} on ${AGENTS[x.agent].name}`).join(', ')}). Each step's session shows in aw_agents with you as its parent; end one with aw_stop.`;
+      }
+      const c = await launch({ agent, repo: folder, task, worktree, parent: self });
+      store.log(lead, `Started ${AGENTS[agent].name} in ${basename(folder)}: ${task}`); store.push(lead);
+      return `Started ${AGENTS[agent].name} in ${c.dir} (tmux session ${c.tmuxSession}, id ${c.id} until its agent is up). It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`;
+    } catch (e) { return new Error(`could not start it: ${(e as Error).message}`); }
+    finally { spawning.set(world.id, spawning.get(world.id)! - 1); }
+  }
+  /** aw_stop: a lead ends one of its own workers, the way End does (a run it is a step of stops too). */
+  async function stopWorker(self: string, which: string): Promise<string | Error> {
+    const hits = [...store.sessions.values()].filter((s) => s.id.startsWith(which) || s.tmux?.session === which || s.direct === which);
+    if (hits.length !== 1) return new Error(hits.length ? `"${which}" matches ${hits.length} sessions: use more of the id` : `no session "${which}": see aw_agents`);
+    const s = hits[0];
+    if (s.parent !== self) return new Error('you did not start that session, so you cannot end it: ask the user');
+    const r = stepOf(s.id);
+    if (r && r.parent === self) { r.status = 'stopped'; r.note = null; pushRun(r); }
+    const err = await endSession(s);
+    if (err) return new Error(`could not end it: ${err}`);
+    const lead = store.sessions.get(self);
+    if (lead) { store.log(lead, `Ended ${label(s)}`); store.push(lead); }
+    return `Ended ${label(s)}.`;
   }
   // Runs: one task through steps on different agents (see runs.ts).
   const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
@@ -990,10 +1061,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const first = r.dir === null;
       const task = stepPrompt(r, i);
       // A worktree's branch is named after the run, not after the step's long first message.
-      const c = await createSession({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
-      if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
-      step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
-      await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: step.direct, dir: c.dir, task: `${STEP_KINDS[step.kind].label}: ${r.task}`, agent: step.agent });
+      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null }, async (c) => {
+        if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
+        step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
+      });
     } catch (e) {
       step.status = 'pending';
       // Stopped while it was starting: stopped it stays

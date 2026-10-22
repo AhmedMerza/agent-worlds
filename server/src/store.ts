@@ -63,6 +63,8 @@ export type Session = {
   direct: string | null;
   /** Your name for it, shown on its name tag. */
   label: string | null;
+  /** The session that started this one with aw_spawn (its lead), if one did. */
+  parent: string | null;
   /** The model provider and model a Qwen session was started on ("OpenRouter · openrouter/free"). */
   via: string | null;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
@@ -119,6 +121,8 @@ export type Deps = {
   placements?: { get(id: string): string | undefined; set(id: string, worldId: string | null): void };
   /** Names you gave sessions, by conversation id. */
   labels?: { get(id: string): string | undefined; set(id: string, label: string | null): void };
+  /** Which session started which (aw_spawn), kept across restarts in <home>/parents.json. */
+  parents?: { get(id: string): string | undefined; set(id: string, parent: string | null): void };
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
@@ -297,10 +301,15 @@ export class Store {
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
-  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null }): Promise<string> {
+  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null; parent?: string | null }): Promise<string> {
     // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
     const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
-    if (live) { if (o.task && !live.task) live.task = oneLine(o.task, 200); live.via ??= o.via ?? null; this.push(live); return live.id; }
+    if (live) {
+      if (o.task && !live.task) live.task = oneLine(o.task, 200);
+      live.via ??= o.via ?? null;
+      if (o.parent && !live.parent) { live.parent = o.parent; this.deps.parents?.set(live.id, o.parent); }
+      this.push(live); return live.id;
+    }
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir, null, null, o.agent);
     s.state = 'starting';
@@ -308,6 +317,7 @@ export class Store {
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
     s.via = o.via ?? null;
+    s.parent = o.parent ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
       : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask for your API key and to trust this folder in the terminal'
       : s.agent === 'agy' ? 'Starting… Antigravity CLI may ask you to sign in with Google or to trust this folder in the terminal'
@@ -337,6 +347,8 @@ export class Store {
     const s: Session = {
       id, agent, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null, direct, label: this.deps.labels?.get(id) ?? null, via: null,
+      // A started worker, or a new conversation in a worker's pane (/clear), stays on its lead's team
+      parent: this.deps.parents?.get(id) ?? prior?.parent ?? null,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
@@ -348,6 +360,7 @@ export class Store {
       s.tmux = starting.tmux;
       s.via = starting.via;
     }
+    if (s.parent && !id.startsWith('starting:') && !this.deps.parents?.get(id)) this.deps.parents?.set(id, s.parent);
     if (prior) this.remove(prior);
     this.sessions.set(id, s);
     return s;
