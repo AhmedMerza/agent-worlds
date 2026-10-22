@@ -624,6 +624,12 @@ test('a Qwen permission is answered at once so its own prompt shows; the card st
   await store.handle({ ...qw, hook_event_name: 'PostToolUse', tool_name: 'read_file', tool_input: { file_path: '/home/u/.qwen/memories/MEMORY.md' } }, null, undefined, null, 'qwen');
   assert.equal(view().state, 'done');
   assert.equal(view().card.kind, 'done');
+  // a request from that pass, dismissed at the terminal, leaves it done
+  await store.handle({ ...qw, hook_event_name: 'PermissionRequest', tool_name: 'write_file', tool_input: { file_path: '/home/u/.qwen/memories/x.md' } }, null, undefined, null, 'qwen');
+  assert.equal(view().state, 'waiting');
+  await store.handle({ ...qw, hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Qwen Code is waiting for your input' }, null, undefined, null, 'qwen');
+  assert.equal(view().state, 'done');
+  assert.equal(view().card.kind, 'done');
 });
 
 test('a Codex permission appears in Needs you without blocking its native terminal prompt', async () => {

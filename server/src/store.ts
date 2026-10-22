@@ -544,7 +544,7 @@ export class Store {
         // Qwen sends only this when its permission prompt is denied or dismissed with Esc: it is back at its prompt.
         if (type === 'idle_prompt' && s.agent === 'qwen' && s.pending.length) {
           for (const x of [...s.pending]) this.settle(s, x, null);
-          this.afterPending(s, 'idle');
+          this.afterPending(s, this.ended(s) ?? 'idle');
         }
         // Claude sits at its prompt (~60s): a turn interrupted with Esc that checkInterrupts missed.
         if (type === 'idle_prompt' && s.state === 'working' && !this.awaited(s)) this.afterPending(s, 'idle');
