@@ -31,6 +31,8 @@ export type Run = {
   /** waiting: a checkpoint, or a step that ended without a handoff, needs you. */
   status: 'running' | 'waiting' | 'done' | 'stopped' | 'failed';
   note: string | null; startedAt: number;
+  /** The session that started the run with aw_spawn: every step's session is on its team. */
+  parent?: string | null;
 };
 
 export const STEP_KINDS: Record<StepKind, { label: string; brief: (files: string) => string }> = {
@@ -62,8 +64,9 @@ export function stepPrompt(run: Run, i: number): string {
   ].filter(Boolean).join('\n\n');
 }
 
-export function newRun(o: { task: string; worldId: string; repo: string; worktree: boolean; steps: { kind: StepKind; agent: AgentId; checkpoint: boolean }[]; now: number }): Run {
+export function newRun(o: { task: string; worldId: string; repo: string; worktree: boolean; steps: { kind: StepKind; agent: AgentId; checkpoint: boolean }[]; now: number; parent?: string | null }): Run {
   return {
+    ...(o.parent ? { parent: o.parent } : {}),
     id: randomBytes(3).toString('hex'), task: o.task, worldId: o.worldId, repo: o.repo, worktree: o.worktree, dir: null, handoff: null,
     steps: o.steps.map((s) => ({ ...s, status: 'pending', pane: null, direct: null, sessionId: null, summary: null })),
     current: 0, rounds: 0, earlier: [], status: 'running', note: null, startedAt: o.now,

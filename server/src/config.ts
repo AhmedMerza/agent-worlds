@@ -3,7 +3,15 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-export type World = { id: string; name: string; color: string; repos: string[] };
+export type World = {
+  id: string; name: string; color: string; repos: string[];
+  /** Sessions in this world may start and stop their own worker sessions (aw_spawn, aw_stop). Off unless set. */
+  leadSpawn?: boolean;
+  /** At most this many sessions started by other sessions live in this world at once (default MAX_SPAWNED). */
+  maxSpawned?: number;
+};
+/** The default cap on live sessions started by other sessions, per world. */
+export const MAX_SPAWNED = 6;
 export type Config = {
   port: number; host: string; listen: string[]; extraHosts: string[]; worlds: World[];
   userSettingsPath: string; claudeBin: string; contextLimit: number; claudeProjectsDir: string;
@@ -71,11 +79,16 @@ export function parseConfig(raw: unknown): Config {
       if (ids.has(w.id)) throw new Error(`duplicate world id: ${w.id}`);
       ids.add(w.id);
       if (!Array.isArray(w.repos) || w.repos.some((p) => typeof p !== 'string')) throw new Error(`world ${w.id}: repos must be an array of paths`);
+      if (w.leadSpawn !== undefined && typeof w.leadSpawn !== 'boolean') throw new Error(`world ${w.id}: leadSpawn must be true or false`);
+      if (w.maxSpawned !== undefined && (!Number.isInteger(w.maxSpawned) || (w.maxSpawned as number) < 0)) throw new Error(`world ${w.id}: maxSpawned must be an integer >= 0`);
       cfg.worlds.push({
         id: w.id,
         name: typeof w.name === 'string' ? w.name : w.id,
         color: typeof w.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(w.color) ? w.color : '#888888',
         repos: (w.repos as string[]).map(realOrSelf),
+        // Only when set: worlds are written back to config.json as they are
+        ...(w.leadSpawn !== undefined ? { leadSpawn: w.leadSpawn as boolean } : {}),
+        ...(w.maxSpawned !== undefined ? { maxSpawned: w.maxSpawned as number } : {}),
       });
     }
   }

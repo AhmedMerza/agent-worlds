@@ -63,6 +63,8 @@ export type Session = {
   direct: string | null;
   /** Your name for it, shown on its name tag. */
   label: string | null;
+  /** The session that started this one with aw_spawn (its lead), if one did. */
+  parent: string | null;
   /** The model provider and model a Qwen session was started on ("OpenRouter · openrouter/free"). */
   via: string | null;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
@@ -119,6 +121,10 @@ export type Deps = {
   placements?: { get(id: string): string | undefined; set(id: string, worldId: string | null): void };
   /** Names you gave sessions, by conversation id. */
   labels?: { get(id: string): string | undefined; set(id: string, label: string | null): void };
+  /** Which session started which (aw_spawn), kept across restarts in <home>/parents.json. */
+  parents?: { get(id: string): string | undefined; set(id: string, parent: string | null): void; replaceValue(from: string, to: string): void };
+  /** A session got a new id in the same pane (its first hook after 'starting', /clear, /resume): its workers and runs follow. */
+  onRenamed?: (from: string, to: string) => void;
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
@@ -135,6 +141,8 @@ const interruptMark = (e: { type?: unknown; message?: { content?: unknown } }) =
 };
 const LOG_MAX = 20;
 const LABEL_MAX = 40;
+/** How long a conversation ended by /clear or /resume waits for the next one in its terminal to take over from it. */
+const CLEAR_GRACE_MS = 10_000;
 
 export const oneLine = (s: unknown, max = 160): string | null => {
   if (typeof s !== 'string') return null;
@@ -297,10 +305,15 @@ export class Store {
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
-  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null }): Promise<string> {
+  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null; parent?: string | null }): Promise<string> {
     // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
     const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
-    if (live) { if (o.task && !live.task) live.task = oneLine(o.task, 200); live.via ??= o.via ?? null; this.push(live); return live.id; }
+    if (live) {
+      if (o.task && !live.task) live.task = oneLine(o.task, 200);
+      live.via ??= o.via ?? null;
+      if (o.parent && !live.parent) { live.parent = o.parent; this.deps.parents?.set(live.id, o.parent); }
+      this.push(live); return live.id;
+    }
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir, null, null, o.agent);
     s.state = 'starting';
@@ -308,6 +321,7 @@ export class Store {
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;
     s.direct = o.direct ?? null;
     s.via = o.via ?? null;
+    s.parent = o.parent ?? null;
     s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
       : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask for your API key and to trust this folder in the terminal'
       : s.agent === 'agy' ? 'Starting… Antigravity CLI may ask you to sign in with Google or to trust this folder in the terminal'
@@ -337,6 +351,8 @@ export class Store {
     const s: Session = {
       id, agent, worldId: this.worldFor(id, info.repo, cwd), repo: info.repo, repoName: basename(info.repo), cwd,
       branch: info.branch, worktree: info.worktree, tmux: null, direct, label: this.deps.labels?.get(id) ?? null, via: null,
+      // A started worker, or a new conversation in a worker's pane (/clear), stays on its lead's team
+      parent: this.deps.parents?.get(id) ?? prior?.parent ?? null,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
       startedAt: t, updatedAt: t,
@@ -348,7 +364,14 @@ export class Store {
       s.tmux = starting.tmux;
       s.via = starting.via;
     }
-    if (prior) this.remove(prior);
+    if (s.parent && !id.startsWith('starting:') && !this.deps.parents?.get(id)) this.deps.parents?.set(id, s.parent);
+    if (prior) {
+      // A lead that /clears (or was still a 'starting' card) keeps its workers
+      for (const x of this.sessions.values()) if (x.parent === prior.id) { x.parent = id; this.push(x); }
+      this.deps.parents?.replaceValue(prior.id, id);
+      this.deps.onRenamed?.(prior.id, id);
+      this.remove(prior);
+    }
     this.sessions.set(id, s);
     return s;
   }
@@ -386,6 +409,14 @@ export class Store {
     if (typeof id !== 'string' || !id || typeof ev !== 'string') throw new Error('session_id and hook_event_name are required');
     if (ev === 'SessionEnd') {
       const s = this.sessions.get(id);
+      // Claude ends the old conversation (reason clear/resume) before it starts the new one in the same terminal.
+      // Kept a moment, the new one finds it as `prior` and takes over its world, name, lead and workers.
+      if (s && (p.reason === 'clear' || p.reason === 'resume') && (s.tmux || s.direct)) {
+        setTimeout(() => { if (this.sessions.get(id) === s) this.remove(s); }, CLEAR_GRACE_MS).unref();
+        return '';
+      }
+      // Quit for good: forget its lead. Not on other ends: a restart ends the process and resumes the same id.
+      if (p.reason === 'prompt_input_exit' || p.reason === 'logout') this.deps.parents?.set(id, null);
       if (s) this.remove(s);
       return '';
     }

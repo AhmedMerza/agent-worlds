@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho, teamOf } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -435,4 +435,11 @@ describe('openHttp', () => {
     for (const a of ['http://172.32.0.1/v1', 'http://172.15.0.1/v1', 'http://100.63.0.1/v1', 'http://100.128.0.1/v1']) expect(openHttp(a)).toBe(true)
     for (const a of ['http://172.16.0.1/v1', 'http://172.31.0.1/v1', 'http://100.64.0.1/v1', 'http://100.127.0.1/v1']) expect(openHttp(a)).toBe(false)
   })
+})
+
+it('teamOf names the lead that started a session, or none', () => {
+  const sessions = { lead: { label: 'Manager', repoName: 'ops' } }
+  expect(teamOf({ parent: null }, sessions)).toBe(null)
+  expect(teamOf({ parent: 'lead' }, sessions)).toBe('team of Manager')
+  expect(teamOf({ parent: 'gone' }, sessions)).toBe('team of a lead that ended')
 })
