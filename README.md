@@ -325,7 +325,7 @@ Messages not yet read are kept in `<home>/mailbox.json`, so a restart (for examp
 doesn't lose them. A recipient that hasn't been seen since the restart gets its notice when its next
 hook arrives. If it doesn't come back within a day, its messages are dropped.
 
-Two sessions can trade 12 messages without a prompt from you. After that, sending is refused and
+Two sessions can trade 40 messages without a prompt from you (set `AW_PING_PONG` on the server to change it). After that, sending is refused and
 the agent is told to ask you. Any prompt you type into either session starts the count again.
 
 How it connects: each CLI starts `bin/aw-mcp`, a small stdio bridge like `aw-hook`. It forwards
