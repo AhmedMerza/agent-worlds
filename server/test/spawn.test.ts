@@ -116,10 +116,16 @@ test('a lead that /clears keeps its workers: it still lists and ends them', asyn
   const r = await tool('%4', 'aw_spawn', { folder: 'repo-b', task: 'worker of a lead that clears' });
   assert.equal(r.isError, undefined, r.content[0].text);
   await hook(ev.start, 'ffff6666-0000', `%${10 + launched.length}`, '/work/repo-b');
-  await hook(ev.start, 'eeee5555-1111', '%4', '/work/repo-a'); // the lead's /clear: a new id in the same pane
+  // The lead's /clear: Claude ends the old conversation first, then starts a new id in the same pane
+  await hook({ ...ev.end, reason: 'clear' }, 'eeee5555-0000', '%4', '/work/repo-a');
+  await hook({ ...ev.start, source: 'clear' }, 'eeee5555-1111', '%4', '/work/repo-a');
   const peers = JSON.parse((await tool('%4', 'aw_agents')).content[0].text);
   assert.equal(peers.find((p: any) => p.id === 'ffff6666-0000')?.parent, 'eeee5555-1111');
   assert.equal(JSON.parse(readFileSync(join(home, 'parents.json'), 'utf8'))['ffff6666-0000'], 'eeee5555-1111');
+  // A restart ends the worker's process and resumes the same id: still on the team
+  await hook({ ...ev.end, reason: 'other' }, 'ffff6666-0000', `%${10 + launched.length}`, '/work/repo-b');
+  await hook({ ...ev.start, source: 'resume' }, 'ffff6666-0000', `%${10 + launched.length}`, '/work/repo-b');
+  assert.equal((await state()).sessions.find((x: any) => x.id === 'ffff6666-0000')?.parent, 'eeee5555-1111');
   const ok = await tool('%4', 'aw_stop', { session: 'ffff' });
   assert.equal(ok.isError, undefined, ok.content[0].text);
   assert.equal(JSON.parse(readFileSync(join(home, 'parents.json'), 'utf8'))['ffff6666-0000'], undefined, 'forgotten once it ended');

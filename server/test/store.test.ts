@@ -528,8 +528,10 @@ test('moving one session to another world: its repo stays, /clear keeps the move
   assert.deepEqual(store.place('sess-1', 'nope'), [400, 'no such world']);
   assert.deepEqual(store.place('ghost', 'pos'), [404, 'no such session']);
 
-  // /clear in that terminal: a new conversation id, still in POS
+  // /clear in that terminal: Claude ends the old conversation, then starts a new id, still in POS
+  await store.handle({ ...ev.end, reason: 'clear' }, '%5');
   await store.handle({ ...ev.start, session_id: 'sess-1b', source: 'clear' }, '%5');
+  assert.equal(get('sess-1'), undefined, 'the new conversation replaced it');
   assert.equal(get('sess-1b').worldId, 'pos');
   // worlds edited (a repo moved, say): the hand move still wins
   store.recomputeWorlds();

@@ -141,6 +141,8 @@ const interruptMark = (e: { type?: unknown; message?: { content?: unknown } }) =
 };
 const LOG_MAX = 20;
 const LABEL_MAX = 40;
+/** How long a conversation ended by /clear or /resume waits for the next one in its terminal to take over from it. */
+const CLEAR_GRACE_MS = 10_000;
 
 export const oneLine = (s: unknown, max = 160): string | null => {
   if (typeof s !== 'string') return null;
@@ -407,6 +409,14 @@ export class Store {
     if (typeof id !== 'string' || !id || typeof ev !== 'string') throw new Error('session_id and hook_event_name are required');
     if (ev === 'SessionEnd') {
       const s = this.sessions.get(id);
+      // Claude ends the old conversation (reason clear/resume) before it starts the new one in the same terminal.
+      // Kept a moment, the new one finds it as `prior` and takes over its world, name, lead and workers.
+      if (s && (p.reason === 'clear' || p.reason === 'resume') && (s.tmux || s.direct)) {
+        setTimeout(() => { if (this.sessions.get(id) === s) this.remove(s); }, CLEAR_GRACE_MS).unref();
+        return '';
+      }
+      // Quit for good: forget its lead. Not on other ends: a restart ends the process and resumes the same id.
+      if (p.reason === 'prompt_input_exit' || p.reason === 'logout') this.deps.parents?.set(id, null);
       if (s) this.remove(s);
       return '';
     }

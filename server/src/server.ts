@@ -215,7 +215,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); parents.set(msg.id, null); }
+    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -1137,6 +1137,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
+    parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
     if (s.direct) { direct.kill(s.direct); return null; } // its exit removes the card
     if (!s.tmux) return 'it does not run in tmux or under this server';
     const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
