@@ -444,7 +444,8 @@ export class Store {
     let reply: Promise<string> | string = '';
     // Tool events from a subagent carry its agent_id. A background one runs on after the turn ended,
     // and must not move the session back to the desks or drop its card.
-    const rest = typeof p.agent_id === 'string' ? this.ended(s) : null;
+    // Qwen's memory pass after a turn reports its tool calls with no agent_id and no Stop after them.
+    const rest = typeof p.agent_id === 'string' || s.agent === 'qwen' ? this.ended(s) : null;
 
     switch (ev) {
       case 'SessionStart':
@@ -460,7 +461,8 @@ export class Store {
         s.lastPrompt = oneLine(prompt, 200) ?? s.lastPrompt;
         s.state = 'working'; s.waitingSince = null; s.card = null; s.now = 'Thinking';
         s.busy = null; s.busyEnd = null; s.launched = false; s.promptAt = this.now();
-        this.log(s, `You: ${prompt}`);
+        // Qwen sends an empty prompt when its permission prompt is answered
+        if (prompt) this.log(s, `You: ${prompt}`);
         this.refreshBranch(s);
         break;
       }
@@ -569,6 +571,11 @@ export class Store {
         if ((type === 'permission_prompt' || type === 'elicitation_dialog' || type === 'agent_needs_input') && s.state !== 'waiting') {
           s.state = 'waiting'; s.waitingSince = this.now();
           if (typeof p.message === 'string') s.now = oneLine(p.message, 120) ?? s.now;
+        }
+        // Qwen sends only this when its permission prompt is denied or dismissed with Esc: it is back at its prompt.
+        if (type === 'idle_prompt' && s.agent === 'qwen' && s.pending.length) {
+          for (const x of [...s.pending]) this.settle(s, x, null);
+          this.afterPending(s, this.ended(s) ?? 'idle');
         }
         // Claude sits at its prompt (~60s): a turn interrupted with Esc that checkInterrupts missed.
         if (type === 'idle_prompt' && s.state === 'working' && !this.awaited(s)) this.afterPending(s, 'idle');
