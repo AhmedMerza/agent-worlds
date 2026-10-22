@@ -201,7 +201,7 @@ watch(() => [...restartQueued].map((id) => [id, state.sessions[id]?.state] as co
     if (st === 'working' || st === 'waiting') continue // waiting: a question for you would be lost
     restartQueued.delete(id)
     const s = state.sessions[id]
-    if (!s) continue
+    if (!s) { showToast('A queued restart was dropped: that conversation ended or was cleared before its turn did.'); continue }
     const r = await restartSession(id)
     showToast(r.ok ? `Restarting ${s.repoName} now that its turn ended.` : `Could not restart ${s.repoName}: ${r.error}`)
   }

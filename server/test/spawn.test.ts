@@ -159,3 +159,28 @@ test('config: leadSpawn and maxSpawned are checked, and kept only when set', () 
   assert.throws(() => w({ leadSpawn: 'yes' }), /leadSpawn must be true or false/);
   assert.throws(() => w({ maxSpawned: -1 }), /maxSpawned must be an integer/);
 });
+
+test('a worker still coming up takes one place under the cap, not two', async () => {
+  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 2 }] }), port: 0 };
+  let n = 0;
+  const two = startServer(cfg, TOKEN, {
+    home: tmp('aw-spawn-cap-'), spawnIdMs: 600,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    createSession: (async (o: any) => ({ tmuxSession: `awtest-cap-${++n}`, dir: o.repo, branch: null, pane: `%${50 + n}` })) as any,
+    typeInto: async () => true, endPane: async () => null,
+  });
+  await two.listen();
+  const url = `http://127.0.0.1:${(two.server.address() as { port: number }).port}`;
+  const call = async (name: string, args: object) => ((await (await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': '%49' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()) as any).result;
+  try {
+    await fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': '%49' }, body: JSON.stringify({ ...ev.start, session_id: 'lead-0000', cwd: '/work/x' }) });
+    const first = call('aw_spawn', { folder: 'x', task: 'one' }); // its agent never comes up: it waits for its id
+    for (let i = 0; i < 40 && n < 1; i++) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 50)); // its card is in the store now
+    const second = await call('aw_spawn', { folder: 'x', task: 'two' });
+    assert.equal(second.isError, undefined, second.content[0].text);
+    assert.match((await first).content[0].text, /not up yet.*aw_stop takes awtest-cap-1/);
+    const third = await call('aw_spawn', { folder: 'x', task: 'three' });
+    assert.equal(third.isError, true, 'the cap still holds');
+  } finally { two.close(); }
+});

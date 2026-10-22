@@ -358,7 +358,7 @@ that was already running when you updated Agent Worlds sees the new tools only a
   does: in `folder` (one of the lead's own world's folders, by path or by name), on `agent` (your
   default when left out), in a new worktree unless `worktree` is false, with `task` as its first
   message. With `steps` it starts a [run](#runs-one-task-several-agents) instead. It answers with
-  the new session's id once its agent is up (up to 30 s); an agent still asking to trust the
+  the new session's id once its agent is up (up to 20 s); an agent still asking to trust the
   folder gets its tmux name instead, which `aw_stop` also takes.
 - The new session is on the lead's team: its panel and its Needs you card say "team of <lead>",
   and `aw_agents` shows the lead as its `parent`. This survives a restart (`<home>/parents.json`).
