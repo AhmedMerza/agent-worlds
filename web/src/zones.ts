@@ -15,11 +15,19 @@ export const WALK_MS = 1000
 export const zoneOf = (state: SessionState): Zone => (state === 'working' ? 'desks' : state === 'idle' || state === 'starting' ? 'lounge' : 'help')
 export const capacity = (zone: Zone): number => MAX_COLS[zone] * MAX_ROWS[zone]
 
-/** Sessions per zone, in a stable order (start time, then id) so slots never shuffle when states change. */
-export function assignZones(sessions: Session[]): Record<Zone, Session[]> {
+/** Sessions per zone, in a stable order (start time, then id) so slots never shuffle when states change.
+ *  With `arrivals` (kept between frames, updated here) the desks go in arrival order instead: whoever comes back takes the last desk. */
+export function assignZones(sessions: Session[], arrivals?: Set<string>): Record<Zone, Session[]> {
   const out: Record<Zone, Session[]> = { lounge: [], desks: [], help: [] }
   const sorted = [...sessions].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
   for (const s of sorted) out[zoneOf(s.state)].push(s)
+  if (arrivals) {
+    const at = new Set(out.desks.map((s) => s.id))
+    for (const id of arrivals) if (!at.has(id)) arrivals.delete(id)
+    for (const s of out.desks) arrivals.add(s.id)
+    const rank = new Map([...arrivals].map((id, i) => [id, i]))
+    out.desks.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
+  }
   return out
 }
 

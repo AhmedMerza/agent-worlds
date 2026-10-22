@@ -27,6 +27,7 @@ const idle = computed(() => count((st) => st === 'idle'))
 
 const h = computed(() => roomHeight(scene.value.sessions))
 const walkers = new Map<string, Walker>()
+const arrivals = new Set<string>()
 let hits: Hit[] = []
 let raf = 0
 let k = 1
@@ -66,7 +67,7 @@ function frame(t: number) {
   }
   const dt = lastT ? Math.min(100, t - lastT) : 0
   lastT = t
-  hits = drawRoom(ctx, { group: scene.value, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
+  hits = drawRoom(ctx, { group: scene.value, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
 }
 let ro: ResizeObserver | null = null
 let io: IntersectionObserver | null = null
