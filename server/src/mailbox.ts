@@ -6,8 +6,9 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
  */
 export type Message = { id: number; from: string; to: string; text: string; at: number; notified: boolean; read: boolean };
 
-/** Messages two sessions may trade with no human prompt to either of them before sending is refused. */
-export const PING_PONG = 12;
+/** Messages two sessions may trade with no human prompt to either of them before sending is refused.
+ *  A manager session driving several workers needs more headroom than a peer pair; override with AW_PING_PONG. */
+export const PING_PONG = Number(process.env.AW_PING_PONG) || 40;
 const KEEP = 500;
 
 export class Mailbox {
