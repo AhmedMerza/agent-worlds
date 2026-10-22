@@ -6,7 +6,7 @@ export const W = ROOM_W
 const WALL_H = 48
 
 export interface Hit { id: string; x: number; y: number; w: number; h: number }
-export interface DrawOpts { group: RoomGroup; selectedId: string | null; /** Run step tags by session id, shown in place of the branch. */ steps?: Record<string, string>; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; k: number; h: number
+export interface DrawOpts { group: RoomGroup; selectedId: string | null; /** Run step tags by session id, shown in place of the branch. */ steps?: Record<string, string>; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; /** Desk arrival order, kept between frames. */ arrivals?: Set<string>; k: number; h: number
   /** Session under the pointer: its walk is held still. */
   hoverId?: string | null
   /** ms since the previous frame (used to hold a walk). */
@@ -411,7 +411,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.imageSmoothingEnabled = true
   ts = Math.min(1.6, Math.max(1, 10 / (7 * o.k / (globalThis.devicePixelRatio || 1))))
   ctx.clearRect(0, 0, W, o.h)
-  const zones = assignZones(o.group.sessions)
+  const zones = assignZones(o.group.sessions, o.arrivals)
   const f: Frame = { tt: o.reduced ? 0 : o.t, steps: o.steps ?? {}, zx: zoneBounds(countZones(zones)), focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
   drawScenery(ctx, o.group.world.color, o.h, f)
 

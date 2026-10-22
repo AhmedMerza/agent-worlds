@@ -20,6 +20,16 @@ describe('zones', () => {
   it('ties break by id', () => {
     expect(assignZones([mk('z'), mk('m')]).desks.map((s) => s.id)).toEqual(['m', 'z'])
   })
+  it('a session back from the help desk takes the last desk and nobody else moves', () => {
+    const arrivals = new Set<string>()
+    const b = mk('b', { startedAt: 2 }), c = mk('c', { startedAt: 3 })
+    // first frame: desks already occupied keep start-time order
+    expect(assignZones([mk('a', { startedAt: 1 }), b, c], arrivals).desks.map((s) => s.id)).toEqual(['a', 'b', 'c'])
+    expect(assignZones([mk('a', { startedAt: 1, state: 'waiting', card: perm }), b, c], arrivals).desks.map((s) => s.id)).toEqual(['b', 'c'])
+    const back = assignZones([mk('a', { startedAt: 1 }), b, c], arrivals)
+    expect(back.desks.map((s) => s.id)).toEqual(['b', 'c', 'a'])
+    expect(back.help).toEqual([])
+  })
   it('slots stay inside their zone for 0-8 sessions and spacing shrinks', () => {
     for (const zone of ['lounge', 'desks', 'help'] as const) {
       for (let n = 1; n <= 8; n++) {
