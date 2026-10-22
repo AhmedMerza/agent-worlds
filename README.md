@@ -358,7 +358,8 @@ to ask you.
 - `aw_stop { session }` ends one of the lead's own workers, as **End** does (a run it is a step of
   stops too). A lead cannot end sessions it did not start.
 - At most `maxSpawned` (default 6) sessions started this way are open in a world at once; past that
-  `aw_spawn` refuses until one ends.
+  `aw_spawn` refuses until one ends. A run counts once, however many step sessions it opens.
+- A lead keeps its workers when it `/clear`s; a worker moved with **Continue in** stays on the team.
 - Each start and stop shows in the lead's recent steps.
 
 ## Runs: one task, several agents
@@ -526,7 +527,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
 | `worlds[].leadSpawn` | `false` | let sessions in this world start and end their own worker sessions (`aw_spawn`, `aw_stop`; see [Leads that start their own workers](#leads-that-start-their-own-workers)). Set it by hand |
-| `worlds[].maxSpawned` | `6` | the most sessions started by `aw_spawn` open in this world at once |
+| `worlds[].maxSpawned` | `6` | the most sessions (a run counts as one) started by `aw_spawn` open in this world at once |
 
 Rules written by "Always allow" use Claude Code's permission syntax: "In `<repo>`" goes to
 `<repo>/.claude/settings.local.json`, "In the `<world>` world" to every repo of that world,

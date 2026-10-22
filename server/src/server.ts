@@ -215,10 +215,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
-    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); }
+    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); parents.set(msg.id, null); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
+  const parents = new Placements(join(opts.home ?? homeDir(), 'parents.json'));
   const store = new Store(cfg, {
     repoInfo: sys.repoInfo, branchOf: sys.branchOf, tmuxSessionOf: sys.tmuxSessionOf,
     clientsConnected: () => wss.clients.size > 0,
@@ -226,7 +227,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
     labels: new Placements(join(opts.home ?? homeDir(), 'labels.json')),
-    parents: new Placements(join(opts.home ?? homeDir(), 'parents.json')),
+    parents,
+    onRenamed: (from, to) => { for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); } },
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
       // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
@@ -770,8 +772,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (over && !ending) return send(res, 409, { error: `the run is already ${r.status}` });
         if (!over) { r.status = 'stopped'; r.note = null; pushRun(r); }
         if (ending) {
-          const ofRun = [...store.sessions.values()].filter((s) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id
-            || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct)));
+          const ofRun = [...store.sessions.values()].filter((s) => inRun(r, s));
           const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
           if (failed.length) return send(res, 502, { error: `could not end ${failed.join('; ')}`, run: r });
         }
@@ -832,7 +833,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       try {
         const handoff = await writeHandoff(s, home);
         const task = `Read "${handoff}" and carry on from there.`;
-        const r = await launch({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}) });
+        const r = await launch({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), parent: s.parent });
         return send(res, 201, { tmuxSession: r.tmuxSession, handoff });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -1009,8 +1010,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);
     const max = world.maxSpawned ?? MAX_SPAWNED;
-    const live = [...store.sessions.values()].filter((s) => s.parent && s.worldId === world.id).length + (spawning.get(world.id) ?? 0);
-    if (live >= max) return new Error(`the ${world.name} world already has ${live} sessions started by leads, its limit (maxSpawned ${max}): end one with aw_stop first, or ask the user to raise maxSpawned`);
+    // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
+    const places = new Set<string>();
+    for (const s of store.sessions.values()) {
+      if (!s.parent || s.worldId !== world.id) continue;
+      const r = [...runs.values()].find((x) => x.parent && inRun(x, s));
+      places.add(r ? `run:${r.id}` : s.id);
+    }
+    for (const r of runs.values()) if (r.parent && r.worldId === world.id && (r.status === 'running' || r.status === 'waiting')) places.add(`run:${r.id}`);
+    const live = places.size + (spawning.get(world.id) ?? 0);
+    if (live >= max) return new Error(`the ${world.name} world already has ${live} sessions or runs started by leads, its limit (maxSpawned ${max}): end one with aw_stop first, or ask the user to raise maxSpawned`);
     spawning.set(world.id, (spawning.get(world.id) ?? 0) + 1);
     const task = a.task.trim(), worktree = a.worktree !== false;
     try {
@@ -1032,8 +1041,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (hits.length !== 1) return new Error(hits.length ? `"${which}" matches ${hits.length} sessions: use more of the id` : `no session "${which}": see aw_agents`);
     const s = hits[0];
     if (s.parent !== self) return new Error('you did not start that session, so you cannot end it: ask the user');
-    const r = stepOf(s.id);
-    if (r && r.parent === self) { r.status = 'stopped'; r.note = null; pushRun(r); }
+    // Its run stops too, also while the step is still starting (no session id yet)
+    const r = [...runs.values()].find((x) => x.parent === self && (x.status === 'running' || x.status === 'waiting') && inRun(x, s));
+    if (r) { r.status = 'stopped'; r.note = null; pushRun(r); }
     const err = await endSession(s);
     if (err) return new Error(`could not end it: ${err}`);
     const lead = store.sessions.get(self);
@@ -1041,6 +1051,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     return `Ended ${label(s)}.`;
   }
   // Runs: one task through steps on different agents (see runs.ts).
+  /** Whether a session is one of a run's steps, this round or an earlier one (by id, or by its pane before its first hook). */
+  const inRun = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id
+    || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct));
   const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
   /** Runs with a handoff or a step start in flight: a second "next" or handoff meanwhile would skip a step. */
   const moving = new Set<string>();

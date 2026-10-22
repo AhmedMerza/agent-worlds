@@ -111,6 +111,39 @@ test('aw_stop ends only the caller\'s own workers, which frees a place under the
   assert.equal(s.sessions.find((x: any) => x.id === `starting:awtest-spawn-${launched.length}`).parent, LEAD);
 });
 
+test('a lead that /clears keeps its workers: it still lists and ends them', async () => {
+  await hook(ev.start, 'eeee5555-0000', '%4', '/work/repo-a');
+  const r = await tool('%4', 'aw_spawn', { folder: 'repo-b', task: 'worker of a lead that clears' });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  await hook(ev.start, 'ffff6666-0000', `%${10 + launched.length}`, '/work/repo-b');
+  await hook(ev.start, 'eeee5555-1111', '%4', '/work/repo-a'); // the lead's /clear: a new id in the same pane
+  const peers = JSON.parse((await tool('%4', 'aw_agents')).content[0].text);
+  assert.equal(peers.find((p: any) => p.id === 'ffff6666-0000')?.parent, 'eeee5555-1111');
+  assert.equal(JSON.parse(readFileSync(join(home, 'parents.json'), 'utf8'))['ffff6666-0000'], 'eeee5555-1111');
+  const ok = await tool('%4', 'aw_stop', { session: 'ffff' });
+  assert.equal(ok.isError, undefined, ok.content[0].text);
+  assert.equal(JSON.parse(readFileSync(join(home, 'parents.json'), 'utf8'))['ffff6666-0000'], undefined, 'forgotten once it ended');
+});
+
+test('a run takes one place under maxSpawned however many step sessions it opens, and the cap still holds', async () => {
+  // One place is taken already: the run started above
+  const run = await tool('%1', 'aw_spawn', { folder: 'repo-a', task: 'two steps', steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'build', agent: 'claude' }] });
+  assert.equal(run.isError, undefined, run.content[0].text);
+  const pane = `%${10 + launched.length}`;
+  await hook(ev.start, '99997777-0000', pane, '/work/repo-a');
+  const h = await tool(pane, 'aw_handoff', { summary: 'planned' });
+  assert.match(h.content[0].text, /next step has started/);
+  const s = await state();
+  assert.ok(s.sessions.filter((x: any) => x.parent === LEAD).length >= 3, 'three step sessions are open');
+  const over = await tool('%1', 'aw_spawn', { folder: 'repo-b', task: 'one too many' });
+  assert.equal(over.isError, true);
+  assert.match(over.content[0].text, /2 sessions or runs.*maxSpawned 2/);
+  // Ending its step while it still starts (no session id yet) stops the run too
+  const runId = s.runs.at(-1).id;
+  assert.equal((await tool('%1', 'aw_stop', { session: `awtest-spawn-${launched.length}` })).isError, undefined);
+  assert.equal((await state()).runs.find((x: any) => x.id === runId).status, 'stopped');
+});
+
 test('config: leadSpawn and maxSpawned are checked, and kept only when set', () => {
   const w = (extra: object) => parseConfig({ worlds: [{ id: 'w', repos: [], ...extra }] }).worlds[0];
   assert.deepEqual(Object.keys(w({})), ['id', 'name', 'color', 'repos'], 'not written back to config.json unless set');

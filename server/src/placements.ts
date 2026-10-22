@@ -12,6 +12,15 @@ export class Placements {
   get(id: string): string | undefined { return Object.hasOwn(this.data, id) ? this.data[id] : undefined; }
   set(id: string, worldId: string | null) {
     if (worldId) this.data[id] = worldId; else delete this.data[id];
+    this.save();
+  }
+  /** Every entry whose value is `from` now holds `to` (a lead's new id after /clear, in parents.json). */
+  replaceValue(from: string, to: string) {
+    let n = 0;
+    for (const [k, v] of Object.entries(this.data)) if (v === from) { this.data[k] = to; n++; }
+    if (n) this.save();
+  }
+  private save() {
     try {
       mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = this.file + '.tmp';

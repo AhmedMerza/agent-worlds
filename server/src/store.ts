@@ -122,7 +122,9 @@ export type Deps = {
   /** Names you gave sessions, by conversation id. */
   labels?: { get(id: string): string | undefined; set(id: string, label: string | null): void };
   /** Which session started which (aw_spawn), kept across restarts in <home>/parents.json. */
-  parents?: { get(id: string): string | undefined; set(id: string, parent: string | null): void };
+  parents?: { get(id: string): string | undefined; set(id: string, parent: string | null): void; replaceValue(from: string, to: string): void };
+  /** A session got a new id in the same pane (its first hook after 'starting', /clear, /resume): its workers and runs follow. */
+  onRenamed?: (from: string, to: string) => void;
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
@@ -361,7 +363,13 @@ export class Store {
       s.via = starting.via;
     }
     if (s.parent && !id.startsWith('starting:') && !this.deps.parents?.get(id)) this.deps.parents?.set(id, s.parent);
-    if (prior) this.remove(prior);
+    if (prior) {
+      // A lead that /clears (or was still a 'starting' card) keeps its workers
+      for (const x of this.sessions.values()) if (x.parent === prior.id) { x.parent = id; this.push(x); }
+      this.deps.parents?.replaceValue(prior.id, id);
+      this.deps.onRenamed?.(prior.id, id);
+      this.remove(prior);
+    }
     this.sessions.set(id, s);
     return s;
   }
