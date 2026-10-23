@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
-import { basename, extname, join, normalize, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, MAX_SPAWNED, type Config } from './config.ts';
@@ -20,7 +20,8 @@ import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installClou
 import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, findTranscript, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, midTurn } from './transcript.ts';
-import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { watchCode, prepareRestart } from './update.ts';
 import { Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
@@ -140,10 +141,27 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 export function spawnTmuxPty(session: string, cols: number, rows: number) {
   // Loaded lazily so the rest of the server (and its tests) work without the native module.
   return import('node-pty').then((pty) => {
+    ensureMacPtyHelper();
     const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
     delete env.TMUX; delete env.TMUX_PANE;
     return pty.spawn('tmux', ['attach-session', '-t', '=' + session], { name: 'xterm-256color', cols, rows, env, cwd: process.env.HOME });
   });
+}
+
+/** node-pty 1.1.0's npm tarball loses the executable bit on its macOS helper. */
+function ensureMacPtyHelper() {
+  if (process.platform !== 'darwin') return;
+  const require = createRequire(import.meta.url);
+  const packageRoot = dirname(dirname(require.resolve('node-pty')));
+  const helpers = [
+    join(packageRoot, 'build/Release/spawn-helper'),
+    join(packageRoot, 'build/Debug/spawn-helper'),
+    join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+  ];
+  const helper = helpers.find(existsSync);
+  if (!helper) return;
+  const mode = statSync(helper).mode;
+  if (!(mode & 0o111)) chmodSync(helper, mode | 0o111);
 }
 
 export function startServer(cfg: Config, token: string, opts: Opts = {}) {
