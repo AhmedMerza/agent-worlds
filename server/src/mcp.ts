@@ -24,12 +24,12 @@ export type McpContext = {
 const TOOLS = [
   {
     name: 'aw_agents',
-    description: 'List the other coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, repo, branch, task, state, and parent (the session that started it with aw_spawn).',
+    description: 'List the other coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, repo, branch, task, state, and parent (the session that started it with aw_spawn). Use the `id` field with aw_send, not the branch, repo@branch label, or tmux session name.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'aw_send',
-    description: 'Send a message to another Agent Worlds session (ids from aw_agents). It is told it has mail as soon as it is free. A reply reaches you the same way: you will be prompted to call aw_inbox, so do not wait or poll for it — finish your turn.',
+    description: 'Send a message to another Agent Worlds session (the `id` field from aw_agents). Do not use its branch, repo@branch label, or tmux session name. It is told it has mail as soon as it is free; while it is working, the message stays queued. A reply reaches you the same way: you will be prompted to call aw_inbox, so do not wait or poll for it — finish your turn.',
     inputSchema: {
       type: 'object',
       properties: { to: { type: 'string', description: 'Session id (or a unique start of one) from aw_agents' }, text: { type: 'string', description: 'The message' } },

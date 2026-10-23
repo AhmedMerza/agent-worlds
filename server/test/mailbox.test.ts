@@ -91,6 +91,24 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
   assert.ok(state.sessions.find((s: any) => s.id === B).log.some((l: any) => l.text.startsWith('Message from Claude Code aaaa1111')));
 });
 
+test('/mcp: queued mail and peer registration survive a starting id becoming real', async () => {
+  const real = 'ffff6666-0000';
+  const starting = await app.store.addStarting({ tmuxSession: 'aw-starting-mail', pane: '%6', dir: '/work/repo-a', task: null, agent: 'codex' });
+  assert.equal(starting, 'starting:aw-starting-mail');
+
+  await rpc('%6', 'initialize', {}); // the CLI connects while only the placeholder exists
+  assert.equal((await tool('%1', 'aw_send', { to: starting, text: 'keep this through startup' })).isError, undefined);
+  await hook(ev.start, real, '%6'); // the first hook gives the pane its real session id
+
+  const peers = JSON.parse((await tool('%1', 'aw_agents')).content[0].text);
+  assert.ok(peers.some((p: any) => p.id === real), 'the real id remains a messageable peer');
+  const inbox = await tool('%6', 'aw_inbox');
+  assert.match(inbox.content[0].text, /keep this through startup/);
+  const mailboxed = JSON.parse(readFileSync(join(home, 'mailboxed.json'), 'utf8'));
+  assert.ok(mailboxed.includes(real));
+  assert.ok(!mailboxed.includes(starting));
+});
+
 test('/mcp: our own mail notice is not a human prompt, so it does not reset a long exchange', async () => {
   for (let i = 1; i < PING_PONG; i++) await tool(i % 2 ? '%2' : '%1', 'aw_send', { to: i % 2 ? 'aaaa' : 'bbbb', text: `m${i}` });
   await hook({ ...ev.prompt, prompt: '[Agent Worlds] A new message from …' }, A, '%1');
@@ -183,6 +201,21 @@ test('Mailbox with a file: unread messages come back after a restart, read and f
   assert.ok((again.send('a', 'b', 'next') as any).id > told.id, 'ids go on from the saved ones');
   writeFileSync(file, '{not json');
   assert.deepEqual([...new Mailbox(Date.now, file).waiting()], [], 'a corrupt file is ignored');
+});
+
+test('renaming a starting session carries queued mail and the pair exchange limit to its real id', () => {
+  const box = new Mailbox();
+  const starting = 'starting:aw-worker';
+  const real = 'worker-session-id';
+  const peer = 'lead-session-id';
+  box.send(peer, starting, 'arrived before the first hook');
+  for (let i = 0; i < PING_PONG - 2; i++) box.send(starting, peer, `reply ${i}`);
+
+  box.rename(starting, real);
+
+  assert.equal(box.take(real)[0]?.text, 'arrived before the first hook');
+  assert.equal(typeof box.send(real, peer, 'last allowed message'), 'object');
+  assert.match(box.send(peer, real, 'over the limit') as string, /traded 40 messages/);
 });
 
 test('mail not yet delivered when the server restarts is delivered once its recipient is back', async () => {

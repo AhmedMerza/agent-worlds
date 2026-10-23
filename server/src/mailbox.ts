@@ -73,6 +73,24 @@ export class Mailbox {
     if (ms.length) this.save();
   }
 
+  /** A launch placeholder became a real session; carry its mail and exchange limits over. */
+  rename(from: string, to: string) {
+    if (from === to) return;
+    let changed = false;
+    for (const m of this.messages) {
+      if (m.from === from) { m.from = to; changed = true; }
+      if (m.to === from) { m.to = to; changed = true; }
+    }
+    for (const [key, count] of [...this.streak]) {
+      const pair = key.split('|');
+      if (!pair.includes(from)) continue;
+      this.streak.delete(key);
+      const next = pair.map((id) => id === from ? to : id).sort().join('|');
+      this.streak.set(next, (this.streak.get(next) ?? 0) + count);
+    }
+    if (changed) this.save();
+  }
+
   /** Recipients with mail they have not been told about. */
   waiting(): Set<string> {
     return new Set(this.messages.filter((m) => !m.read && !m.notified).map((m) => m.to));

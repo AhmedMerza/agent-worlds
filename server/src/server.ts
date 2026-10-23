@@ -246,7 +246,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
     labels: new Placements(join(opts.home ?? homeDir(), 'labels.json')),
     parents,
-    onRenamed: (from, to) => { for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); } },
+    onRenamed: (from, to) => {
+      // A CLI may connect to the mailbox before its first hook replaces the launch placeholder.
+      // Preserve messages and peer registration across that identity change.
+      if (from.startsWith('starting:')) {
+        mailbox.rename(from, to);
+        if (mailboxed.delete(from)) { mailboxed.add(to); saveMailboxed(); }
+      }
+      for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); }
+    },
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
       // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
