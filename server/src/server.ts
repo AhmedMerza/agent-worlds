@@ -713,8 +713,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.agent !== undefined && !isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
       const agent: AgentId = isAgent(b.agent) ? b.agent : 'claude';
       const kimi = agent === 'kimi', codex = agent === 'codex';
-      if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       if (b.permissionMode !== undefined && (agent !== 'claude' || !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode))) return send(res, 400, { error: agent !== 'claude' ? 'permissionMode is Claude-only' : `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       let cwd: string | undefined;
       if (kimi) {
         const dir = await kimiSessionDir(b.sessionId, opts.home ?? homeDir());

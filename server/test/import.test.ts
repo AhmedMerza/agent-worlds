@@ -159,6 +159,7 @@ test('codex history endpoint lists and resumes a Codex conversation', async () =
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: join(root, 'none') }), port: 0 };
   const app = startServer(cfg, 'c'.repeat(64), {
     home: root, procRoot: join(root, 'no-proc'), homes: f.homes,
+    installed: () => true,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
     createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-a-codex', dir: o.repo, branch: null, pane: '%42' }; },
   });
@@ -524,6 +525,7 @@ test('kimi: recent sessions list Kimi sessions with their last prompt; resume st
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: join(root, 'none') }), port: 0 };
   const app = startServer(cfg, 'i'.repeat(64), {
     home: root,
+    installed: () => true,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
     createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-k-1', dir: o.repo, branch: null, pane: '%40' }; },
   });
