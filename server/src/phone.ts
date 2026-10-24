@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 
 export type Address = { address: string; kind: 'tailscale' | 'lan'; iface: string };
 

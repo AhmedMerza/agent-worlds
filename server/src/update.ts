@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 import { readdirSync, statSync, watch } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
-import { execFile, spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from './child.ts';
 import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type Config } from './config.ts';

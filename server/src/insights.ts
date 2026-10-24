@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn } from './child.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

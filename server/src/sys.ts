@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { statSync } from 'node:fs';

@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 
 export type Review = { dir: string; branch: string | null; elsewhere: boolean; baseSha: string | null; files: { path: string; added: number; deleted: number }[]; commits: { sha: string; subject: string }[]; uncommitted: { path: string; added: number; deleted: number }[]; diff: string; tests: { command: string; ok: boolean; line: string } | null };
 

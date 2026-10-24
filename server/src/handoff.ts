@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Session } from './store.ts';
