@@ -146,3 +146,16 @@ test('cli: open runs the platform opener with the URL; prints it when there is n
   assert.equal(none.code, 0);
   assert.match(none.out, /^http:\/\/127\.0\.0\.1:4317\/\?token=[0-9a-f]{64}\n/);
 });
+
+test('launcher restarts after a crash, then stops a fast crash loop', async () => {
+  const home = tmp(), fakeBin = tmp(), calls = join(tmp(), 'calls');
+  writeFileSync(join(fakeBin, 'node'), `#!/bin/sh\nn=0\n[ ! -f '${calls}' ] || n=$(cat '${calls}')\nn=$((n + 1))\necho "$n" > '${calls}'\nexit 1\n`, { mode: 0o755 });
+  const result = await new Promise<{ code: number; out: string }>((ok) =>
+    execFile(join(BIN, 'agent-worlds'), ['start'], {
+      env: { ...process.env, AGENT_WORLDS_HOME: home, PATH: `${fakeBin}:${process.env.PATH}` },
+    }, (err, out, errOut) => ok({ code: err ? (err.code as number) : 0, out: String(out) + String(errOut) })));
+  assert.equal(result.code, 1);
+  assert.equal(readFileSync(calls, 'utf8').trim(), '4');
+  assert.equal(result.out.match(/restarting in 1 second/g)?.length, 3);
+  assert.match(result.out, /stopped after 4 crashes in under 30 seconds/);
+});

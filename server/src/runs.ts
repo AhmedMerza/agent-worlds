@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';

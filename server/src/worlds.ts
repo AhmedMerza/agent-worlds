@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from './child.ts';
 import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
