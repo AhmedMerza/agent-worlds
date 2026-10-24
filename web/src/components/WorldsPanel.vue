@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import type { World } from '../types'
 import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast } from '../store'
-import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName } from '../logic'
+import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 
 const emit = defineEmits<{ close: [] }>()
@@ -26,8 +26,8 @@ const draft = ref<{ id: string; text: string } | null>(null)
 const recolor = (w: World, color: string) => run(updateWorld(w.id, { color }))
 const allowSpawn = (w: World, on: boolean) => run(updateWorld(w.id, { leadSpawn: on }))
 function capSpawn(w: World, raw: string) {
-  const n = Number(raw)
-  if (Number.isInteger(n) && n >= 0) return run(updateWorld(w.id, { maxSpawned: n }))
+  const n = maxSpawnedOf(raw)
+  if (n !== null) return run(updateWorld(w.id, { maxSpawned: n }))
   error.value = 'The limit must be a whole number, 0 or more.'
 }
 const removeRepo = (w: World, repo: string) => run(updateWorld(w.id, { repos: w.repos.filter((r) => r !== repo) }))

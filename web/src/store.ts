@@ -199,7 +199,7 @@ export const restartQueued = reactive(new Set<string>())
 watch(() => [...restartQueued].map((id) => [id, state.sessions[id]?.state] as const), async (list) => {
   for (const [id, st] of list) {
     if (st === 'working' || st === 'waiting') continue // waiting: a question for you would be lost
-    restartQueued.delete(id)
+    if (!restartQueued.delete(id)) continue // another watcher run already claimed it while this one awaited
     const s = state.sessions[id]
     if (!s) { showToast('A queued restart was dropped: that conversation ended or was cleared before its turn did.'); continue }
     const r = await restartSession(id)
