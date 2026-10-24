@@ -23,7 +23,7 @@ import { readHead, readTail, conversation, midTurn } from './transcript.ts';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { watchCode, prepareRestart } from './update.ts';
-import { Direct, type PtyLike } from './direct.ts';
+import { containPtyErrors, Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
 import { handleMcp, type Peer, type SpawnArgs } from './mcp.ts';
 import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, reviewVerdict, STEP_KINDS, RUN_FILES, MAX_ROUNDS, type Run, type StepKind } from './runs.ts';
@@ -146,7 +146,7 @@ export function spawnTmuxPty(session: string, cols: number, rows: number) {
     ensureMacPtyHelper();
     const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
     delete env.TMUX; delete env.TMUX_PANE;
-    return pty.spawn('tmux', ['attach-session', '-t', '=' + session], { name: 'xterm-256color', cols, rows, env, cwd: process.env.HOME });
+    return containPtyErrors(pty.spawn('tmux', ['attach-session', '-t', '=' + session], { name: 'xterm-256color', cols, rows, env, cwd: process.env.HOME }));
   });
 }
 
