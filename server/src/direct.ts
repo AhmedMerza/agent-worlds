@@ -4,6 +4,15 @@ import { ENTER_DELAY_MS } from './sys.ts';
 /** What a browser terminal drives: a `tmux attach` process, or a view onto a direct session. */
 export type PtyLike = { write(d: string): void; resize(cols: number, rows: number): void; onData(f: (d: string) => void): unknown; onExit(f: () => void): unknown; kill(): void };
 
+/** node-pty throws non-EIO socket errors unless its host subscribes to them. */
+export function containPtyErrors<T extends IPty>(pty: T): T {
+  // Its public IPty type omits the EventEmitter API that the runtime object inherits.
+  (pty as T & { on(event: 'error', f: (error: NodeJS.ErrnoException) => void): void }).on('error', (error) => {
+    if (!['EBADF', 'ECONNRESET', 'EIO', 'EPIPE'].includes(error.code ?? '')) console.error('[agent-worlds] pty error', error);
+  });
+  return pty;
+}
+
 const SCROLLBACK = 256 * 1024;
 type Entry = { pty: IPty; out: string; data: Set<(d: string) => void>; exit: Set<() => void> };
 
@@ -21,7 +30,7 @@ export class Direct {
 
   async spawn(name: string, file: string, args: string[], cwd: string, env: Record<string, string>): Promise<void> {
     const { spawn } = await import('node-pty'); // lazily, like spawnTmuxPty
-    const pty = spawn(file, args, { name: 'xterm-256color', cols: 120, rows: 32, cwd, env: { ...process.env, TERM: 'xterm-256color', ...env } as Record<string, string> });
+    const pty = containPtyErrors(spawn(file, args, { name: 'xterm-256color', cols: 120, rows: 32, cwd, env: { ...process.env, TERM: 'xterm-256color', ...env } as Record<string, string> }));
     const e: Entry = { pty, out: '', data: new Set(), exit: new Set() };
     pty.onData((d) => { e.out = (e.out + d).slice(-SCROLLBACK); for (const f of e.data) f(d); });
     pty.onExit(() => { this.map.delete(name); for (const f of e.exit) f(); this.onExit(name); });
