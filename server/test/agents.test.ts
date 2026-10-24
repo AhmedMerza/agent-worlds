@@ -18,6 +18,10 @@ test('codex gets its hooks as -c overrides, with a permission hook timeout', () 
   assert.ok(mcp.includes('mcp_servers.aw.env_vars=["TMUX_PANE","AGENT_WORLDS_PTY","AGENT_WORLDS_HOME"]'), 'the bridge learns its pane');
   assert.ok(mcp.includes('mcp_servers.aw.default_tools_approval_mode="approve"'));
   assert.deepEqual(launchArgs('codex', { task: '' }).args, [], 'no home, no hooks');
+  const resumed = launchArgs('codex', { home: '/h', task: '', resume: '33333333-cccc-4ccc-8ccc-cccccccccccc' }).args;
+  assert.equal(resumed[0], 'resume');
+  assert.equal(resumed.at(-1), '33333333-cccc-4ccc-8ccc-cccccccccccc');
+  assert.ok(resumed.some((a) => a.startsWith('hooks.SessionStart=')), 'resumed sessions keep reporting through hooks');
 });
 
 test('qwen reads the hooks from a settings file named in its env', () => {
@@ -81,6 +85,18 @@ test('kimi home: the user\'s own [[hooks]] stay, ours follow after a blank line'
 test('claude keeps its own flags', () => {
   assert.deepEqual(launchArgs('claude', { home: '/h', resume: 'abc', permissionMode: 'plan', task: 'x' }).args,
     ['--resume', 'abc', '--permission-mode', 'plan', '--settings', '/h/hooks.json', '--mcp-config', '/h/claude-mcp.json', '--', 'x']);
+});
+
+test('every agent uses its native conversation resume flag', () => {
+  const o = { task: '', resume: 'session-1234' };
+  assert.deepEqual(launchArgs('codex', o).args.slice(0, 2), ['resume', 'session-1234']);
+  assert.deepEqual(launchArgs('qwen', o).args, ['--resume', 'session-1234']);
+  assert.deepEqual(launchArgs('kimi', o).args, ['--session', 'session-1234']);
+  const pair = (args: string[], flag: string) => args.slice(args.indexOf(flag), args.indexOf(flag) + 2);
+  const home = tmp();
+  assert.deepEqual(pair(launchArgs('gemini', { ...o, home }).args, '--resume'), ['--resume', 'session-1234']);
+  assert.deepEqual(pair(launchArgs('agy', { ...o, home }).args, '--conversation'), ['--conversation', 'session-1234']);
+  assert.deepEqual(launchArgs('claude', o).args.slice(0, 2), ['--resume', 'session-1234']);
 });
 
 test('the default falls back to claude when unset, unknown or not installed', () => {

@@ -102,11 +102,11 @@ no live terminal (see [Sessions started outside tmux](#sessions-started-outside-
 
 ### Existing sessions and Resume
 
-Agent Worlds also knows about Claude sessions you started before it, or outside it.
+Agent Worlds also knows about Claude, Codex and Kimi sessions you started before it, or outside it.
 
-- **Recent sessions** (header button or `R`) lists sessions from `~/.claude/projects`, newest
-  first, with the repo, your last prompt and how long ago. Search narrows the list.
-- **Resume here** runs `claude --resume <id>` in a new session, in the session's original
+- **Recent sessions** (header button or `R`) lists resumable sessions, newest first, with the
+  agent, repo, your last prompt and how long ago. Search narrows the list.
+- **Resume here** runs the agent's native resume command in a new session, in the original
   folder, with its full conversation. If that session is still open in another terminal, you are
   asked first; **Stop it and resume here** quits that copy (it keeps the conversation) and then
   resumes, so two copies never write to one conversation.
@@ -170,8 +170,8 @@ answer cards one-handed.
 Each row shows what the session is doing or asking. Open one to read the conversation as messages
 (each run of tool calls folds into one "6 steps" line), answer its card, and type to it. On a phone
 the chat takes the whole screen and Back returns to the list; on a wide screen, **World / Chats**
-switches the left side and **Chat / Terminal** switches the session's panel. The chat reads Claude's
-conversation; other agents open in their terminal.
+switches the left side and **Chat / Terminal** switches the session's panel. The chat reads Claude
+Code and Codex conversations; other agents open in their terminal.
 
 <img src="docs/media/chats-phone.png" alt="Chats on a phone: sessions needing you first, each with its request" width="280"> <img src="docs/media/chat-phone.png" alt="A chat on a phone: the conversation, its request with Allow once and Deny, and Skip to the next" width="280">
 
@@ -227,10 +227,13 @@ work the same. Codex, Qwen Code and Kimi show permission requests under **Needs 
 their own terminal. These features are Claude-only for now:
 
 - "Always allow" rules, permission modes, and questions answered from the inbox
-- Catch-up summaries, the context %, Recent sessions, and resume
+- Catch-up summaries and the context %
 
 After a server restart, sessions of every agent are picked up again (Claude's with the most
 detail — Qwen's come back without their last prompt, which its files don't record).
+After a computer restart, Agent Worlds remembers every conversation it was managing in
+`<home>/recovery.json`. An interrupted-session banner offers **Resume all**, while **Recent
+sessions** offers individual resume controls. Explicitly ended sessions are not brought back.
 
 On its first start, Codex asks you in the terminal to review the new hooks. Choose "Trust all
 and continue". It remembers that choice, so later sessions don't ask again. Codex sends no
@@ -559,8 +562,11 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
   and restart to rotate. The PWA manifest and icons are the only files served without it.
 - Requests that carry an `Origin` header, and the `Host` of every request, must be the server's
   own host:port or an `extraHosts` entry (otherwise 421 "unknown host").
-- Session state is in memory only. After a restart, a session reappears on its next hook event;
-  one the app started is taken back at once, at its desk if its transcript shows it mid-turn.
+- Live state is in memory, while the identities needed to recover managed conversations are saved
+  in `<home>/recovery.json`. A server restart re-adopts agents still running; after a computer
+  restart, the page offers to resume the interrupted conversations.
+If a conversation no longer belongs in the recovery list (for example, its folder was removed),
+**Dismiss** removes the reminder without deleting the CLI's saved conversation.
 
 ## Troubleshooting
 

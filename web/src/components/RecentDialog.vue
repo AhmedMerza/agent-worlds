@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { HistorySession } from '../types'
-import { fetchHistory, select, state, ui } from '../store'
-import { ageText, baseName, filterHistory, groupByFolder } from '../logic'
+import { dismissRecovery, fetchHistory, select, state, ui } from '../store'
+import { ageText, agentName, baseName, filterHistory, groupByFolder } from '../logic'
 import { type ModeChoice } from '../logic'
 import ResumeButton from './ResumeButton.vue'
 import PermissionSelect from './PermissionSelect.vue'
@@ -32,6 +32,9 @@ watch(() => ui.recentRepo, load)
 function show(id: string) {
   if (state.sessions[id]) { select(id); emit('close') }
 }
+async function dismiss(id: string) {
+  if (await dismissRecovery(id)) await load()
+}
 </script>
 
 <template>
@@ -39,9 +42,9 @@ function show(id: string) {
     <div class="dialog recent" role="dialog" aria-modal="true" aria-label="Recent sessions">
       <h2>{{ ui.recentRepo ? `Past sessions in ${baseName(ui.recentRepo)}` : 'Recent sessions' }}</h2>
       <p v-if="ui.recentRepo" class="why">Every folder of {{ ui.recentRepo }}, its worktrees included. <button class="linkbtn" @click="ui.recentRepo = null">Show all folders</button></p>
-      <p v-else class="why">Claude Code and Kimi Code sessions on this computer by folder, including ones started before Agent Worlds. Resuming keeps the whole conversation.</p>
+      <p v-else class="why">Agent conversations on this computer by folder, including ones started before Agent Worlds and ones interrupted by a restart. Resuming keeps the whole conversation.</p>
       <input ref="search" v-model="q" type="text" class="search" placeholder="Search by folder or last prompt" aria-label="Search recent sessions" autocomplete="off">
-      <div class="form"><PermissionSelect v-model="mode" /></div>
+      <div class="form"><PermissionSelect v-model="mode" label="Claude Code permissions" /><p class="why">Only affects Claude Code rows below.</p></div>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
       <p v-else-if="!list" class="why">Loading…</p>
       <p v-else-if="!shown.length" class="why">{{ list.length ? 'No session matches.' : 'No past sessions found.' }}</p>
@@ -55,13 +58,15 @@ function show(id: string) {
             <li v-for="h in g.items" :key="h.sessionId">
               <div class="r-main">
                 <span class="r-age">{{ ageText(h.lastActivity, state.now) }}</span>
-                <span v-if="h.agent" class="badge">Kimi</span>
+                <span v-if="h.agent" class="badge">{{ agentName(h) }}</span>
                 <span v-if="h.running" class="badge run">running</span>
                 <span v-if="h.managed" class="badge mgd">in Agent Worlds</span>
+                <span v-if="h.interrupted" class="badge">interrupted</span>
                 <p class="r-prompt">{{ h.lastPrompt ?? 'No prompt recorded' }}</p>
               </div>
               <button v-if="h.managed && state.sessions[h.sessionId]" class="btn" @click="show(h.sessionId)">Show</button>
               <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" :agent="h.agent" @started="emit('close')" />
+              <button v-if="h.interrupted" class="btn" title="Remove this restart reminder without deleting the agent's saved conversation" @click="dismiss(h.sessionId)">Dismiss</button>
             </li>
           </ul>
         </section>

@@ -63,7 +63,7 @@ const oneLine = (s: string, max = 200) => {
   return l.length > max ? l.slice(0, max - 1) + '…' : l;
 };
 
-export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: string | null; lastActivity: number; agent?: 'kimi' };
+export type HistoryItem = { sessionId: string; cwd: string | null; lastPrompt: string | null; lastActivity: number; agent?: 'kimi' | 'codex' };
 
 /** A folder that belongs to `repo`: the repo itself, a folder inside it, or one of its `<repo>-worktrees`. */
 export const inRepo = (cwd: string, repo: string) => cwd === repo || cwd.startsWith(repo + '/') || cwd.startsWith(repo + '-worktrees/');
@@ -259,22 +259,56 @@ function qwenSessionFor(pid: number, cwd: string, qwenHome: string): string | nu
   return id && SESSION_ID_RE.test(id) ? id : null;
 }
 
-/** A running Codex's session: the newest rollout log whose session_meta names its cwd. */
-function codexSessionFor(cwd: string, codexHome: string): { id: string; path: string } | null {
+/** Codex rollout logs, newest first. */
+function codexRollouts(codexHome: string): { name: string; path: string; mtime: number }[] {
   const root = join(codexHome, 'sessions');
-  const files = byMtimeDesc(root, (n) => /^\d{4}$/.test(n))
+  return byMtimeDesc(root, (n) => /^\d{4}$/.test(n))
     .flatMap((y) => byMtimeDesc(y.path, (n) => /^\d{2}$/.test(n)))
     .flatMap((m) => byMtimeDesc(m.path, (n) => /^\d{2}$/.test(n)))
     .flatMap((d) => byMtimeDesc(d.path, (n) => n.startsWith('rollout-') && n.endsWith('.jsonl')))
     .sort((a, b) => b.mtime - a.mtime);
+}
+
+function codexMeta(path: string): { id: string; cwd: string } | null {
+  const meta = firstEntry(path);
+  if (meta?.type !== 'session_meta') return null;
+  const p = meta.payload ?? {};
+  const id = typeof p.id === 'string' ? p.id : p.session_id;
+  return typeof id === 'string' && SESSION_ID_RE.test(id) && typeof p.cwd === 'string' ? { id, cwd: p.cwd } : null;
+}
+
+/** A Codex session's newest rollout, by its resumable id. */
+export function codexSession(codexHome: string, sessionId: string): { path: string; cwd: string } | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null;
+  for (const f of codexRollouts(codexHome)) {
+    const meta = codexMeta(f.path);
+    if (meta?.id === sessionId) return { path: f.path, cwd: meta.cwd };
+  }
+  return null;
+}
+
+/** Most recent Codex sessions, newest first; `repo` keeps that repo's. */
+export async function codexHistory(codexHome: string, limit: number, repo?: string): Promise<HistoryItem[]> {
+  const found = new Map<string, { path: string; cwd: string; mtime: number }>();
+  for (const f of codexRollouts(codexHome)) {
+    const meta = codexMeta(f.path);
+    if (!meta || found.has(meta.id) || (repo && !inRepo(meta.cwd, repo))) continue;
+    found.set(meta.id, { path: f.path, cwd: meta.cwd, mtime: f.mtime });
+    if (found.size >= limit) break;
+  }
+  return Promise.all([...found].map(async ([sessionId, f]) => ({
+    sessionId, cwd: f.cwd, lastPrompt: (await codexTurn(f.path)).lastPrompt,
+    lastActivity: Math.round(f.mtime), agent: 'codex' as const,
+  })));
+}
+
+/** A running Codex's session: the newest rollout log whose session_meta names its cwd. */
+function codexSessionFor(cwd: string, codexHome: string): { id: string; path: string } | null {
+  const files = codexRollouts(codexHome);
   // A live process's log is appended to, but an idle one can sit for weeks: look a year back, newest first.
   for (const f of files.filter((f) => f.mtime > Date.now() - 366 * 86400_000).slice(0, 200)) {
-    const meta = firstEntry(f.path);
-    if (meta?.type !== 'session_meta') continue;
-    const p = meta.payload ?? {};
-    if (p.cwd !== cwd) continue;
-    const id = typeof p.id === 'string' ? p.id : p.session_id;
-    if (typeof id === 'string' && SESSION_ID_RE.test(id)) return { id, path: f.path };
+    const meta = codexMeta(f.path);
+    if (meta?.cwd === cwd) return { id: meta.id, path: f.path };
   }
   return null;
 }

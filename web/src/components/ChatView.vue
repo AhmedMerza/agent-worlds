@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Turn } from '../types'
-import { NEEDS_YOU, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
+import { NEEDS_YOU, agentLabel, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
 import { state, selected as s, groups, needsYou, sessionConversation, sendInput, focusTerminal, openChat, skipped, chatRun, showToast } from '../store'
 import { renderMarkdown } from '../markdown'
 import CardActions from './CardActions.vue'
@@ -17,7 +17,7 @@ const err = ref('')
 const noTranscript = ref(false)
 const box = ref<HTMLElement | null>(null)
 const items = computed(() => chatItems(turns.value ?? []))
-/** Claude's messages as HTML, rendered once per fetched transcript (not on every keystroke in the message box). */
+/** Agent messages as HTML, rendered once per fetched transcript (not on every keystroke in the message box). */
 const html = computed(() => items.value.map((it) => (it.who === 'claude' ? renderMarkdown(it.text) : '')))
 const card = computed(() => (s.value?.card && NEEDS_YOU.includes(s.value.state) ? s.value.card : null))
 const holdsInput = computed(() => typingWaits(card.value))
@@ -133,7 +133,7 @@ function onKey(e: KeyboardEvent) {
     <div class="term-head">
       <button v-if="back" class="hdr-btn chat-back" aria-label="Back to chats" @click="emit('back')">←</button>
       <template v-if="s">
-        <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b> <span class="chat-world">{{ world?.name }} ·</span> {{ stateLabel(s, state.now) }}
+        <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b><span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span> <span class="chat-world">{{ world?.name }} ·</span> {{ stateLabel(s, state.now) }}
         <span v-if="s.branch" class="tag">{{ s.branch }}</span>
         <button v-if="!s.ghost" class="hdr-btn chat-term" @click="focusTerminal()">Terminal</button>
       </template>
@@ -143,7 +143,7 @@ function onKey(e: KeyboardEvent) {
     <p v-if="!s" class="term-view">Pick a session to see its chat.</p>
     <template v-else>
       <div v-if="!hasChat(s)" class="chat-body">
-        <p class="why">The chat view reads Claude's conversation. {{ agentName(s) }}'s shows in its terminal.</p>
+        <p class="why">{{ agentName(s) }}'s conversation shows in its terminal.</p>
         <button v-if="!s.ghost" class="btn" @click="focusTerminal()">Open its terminal</button>
       </div>
       <div v-else ref="box" class="chat-body">

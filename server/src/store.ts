@@ -93,7 +93,7 @@ export type Session = {
   branchTimer: NodeJS.Timeout | null;
   model: string | null;
   transcriptPath: string | null;
-  /** Another agent's transcript, only named in a handoff (never read here: it is outside claudeProjectsDir). */
+  /** Another agent's transcript; Codex's is also read for its conversation, outside claudeProjectsDir. */
   logPath: string | null;
   tests: Review['tests'];
   testing: Set<string>;
@@ -125,6 +125,8 @@ export type Deps = {
   parents?: { get(id: string): string | undefined; set(id: string, parent: string | null): void; replaceValue(from: string, to: string): void };
   /** A session got a new id in the same pane (its first hook after 'starting', /clear, /resume): its workers and runs follow. */
   onRenamed?: (from: string, to: string) => void;
+  /** A CLI explicitly ended a conversation. Process disappearance alone does not call this. */
+  onEnded?: (id: string, reason: unknown) => void;
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
   now?: () => number;
@@ -305,7 +307,7 @@ export class Store {
    * trust the folder (in the terminal) and sends no hook event until then. Replaced by the real
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
-  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null; parent?: string | null }): Promise<string> {
+  async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null; parent?: string | null; resuming?: boolean }): Promise<string> {
     const liveInTerminal = () => [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
     const adopt = (live: Session) => {
       if (o.task && !live.task) live.task = oneLine(o.task, 200);
@@ -327,7 +329,8 @@ export class Store {
     s.direct = o.direct ?? null;
     s.via = o.via ?? null;
     s.parent = o.parent ?? null;
-    s.now = s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
+    s.now = o.resuming ? `Restoring saved ${AGENTS[s.agent].name} conversation…`
+      : s.agent === 'codex' ? 'Starting… Codex may ask you to trust this folder and its hooks in the terminal'
       : s.agent === 'gemini' ? 'Starting… Gemini CLI may ask for your API key and to trust this folder in the terminal'
       : s.agent === 'agy' ? 'Starting… Antigravity CLI may ask you to sign in with Google or to trust this folder in the terminal'
       : s.agent === 'kimi' && !o.task ? 'Starting… Kimi Code may ask you to trust this folder, then waits for your first message in the terminal'
@@ -420,6 +423,7 @@ export class Store {
         setTimeout(() => { if (this.sessions.get(id) === s) this.remove(s); }, CLEAR_GRACE_MS).unref();
         return '';
       }
+      this.deps.onEnded?.(id, p.reason);
       // Quit for good: forget its lead. Not on other ends: a restart ends the process and resumes the same id.
       if (p.reason === 'prompt_input_exit' || p.reason === 'logout') this.deps.parents?.set(id, null);
       if (s) this.remove(s);
@@ -439,10 +443,10 @@ export class Store {
         if (s.tmux?.pane === pane && name) { s.tmux.session = name; if (this.sessions.has(s.id)) this.push(s); }
       });
     }
-    // Only Claude's own transcripts: the catch-up summariser reads this file. Other agents' transcript
-    // paths are only kept to be named in a handoff, so they are never confined to claudeProjectsDir.
+    // Only Claude's own transcripts feed its catch-up summariser. Other agents' paths stay separate and
+    // unconstrained by claudeProjectsDir; Codex's rollout also feeds its conversation view.
     const tp = p.transcript_path;
-    if (typeof tp === 'string' && tp.endsWith('.jsonl') && resolve(tp).startsWith(this.cfg.claudeProjectsDir + '/')) s.transcriptPath = tp;
+    if (agent === 'claude' && typeof tp === 'string' && tp.endsWith('.jsonl') && resolve(tp).startsWith(this.cfg.claudeProjectsDir + '/')) s.transcriptPath = tp;
     else if (typeof tp === 'string' && tp.startsWith('/')) s.logPath = tp;
     const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
     const input = (p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {}) as Record<string, unknown>;

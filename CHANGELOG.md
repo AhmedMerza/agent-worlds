@@ -2,6 +2,10 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-24
+- **Codex in Chats:** Codex conversations now open as messages alongside Claude Code, including folded command, edit and MCP-tool steps. The terminal remains available for Codex's native permission prompts.
+- **Recover after a computer restart:** Agent Worlds remembers conversations it was managing and, after their processes disappear, shows an interrupted-session banner with **Resume all** plus individual controls in Recent sessions. Explicitly ended sessions stay ended. Recovery uses each CLI's native resume command for Claude, Codex, Qwen, Kimi, Gemini and Antigravity.
+
 ## 2026-10-22
 - **Manage worlds** (`W`) turns lead-started workers on and off per world and sets their limit (`leadSpawn`, `maxSpawned`), without editing config.json or restarting; a room where it is on shows a "leads start workers" badge.
 - `aw_spawn` answers with the new session's real id once its agent is up (up to 20 s), instead of a `starting:<tmux>` placeholder the lead had to swap for the id later.

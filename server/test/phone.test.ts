@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { request } from 'node:http';
 import { parseConfig } from '../src/config.ts';
 import { startServer } from '../src/server.ts';
@@ -73,7 +73,7 @@ test('server: allow a phone address, pair once over it, stop allowing; config re
   } finally { await app.close(); }
 });
 
-test('history: the conversation from the transcript; 404 unknown, 409 without a transcript', async () => {
+test('history: Claude and Codex conversations; 404 unknown, 409 without a transcript', async () => {
   const home = tmp();
   const { ev } = await import('./fixtures.ts');
   const tp = join(home, 'proj', 'sess.jsonl');
@@ -82,11 +82,23 @@ test('history: the conversation from the transcript; 404 unknown, 409 without a 
     { type: 'user', message: { role: 'user', content: 'Fix the login bug' } },
     { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test\nmore' } }, { type: 'text', text: 'Fixed. Tests pass.' }] } },
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const codex = join(home, 'sessions', '2026', '10', '24', 'rollout.jsonl');
+  mkdirSync(dirname(codex), { recursive: true });
+  writeFileSync(codex, [
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'injected setup is not a chat turn' }] } },
+    { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'Review the changes' }] } } },
+    { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'CommandExecution', command: ['/bin/sh', '-lc', 'npm test\nmore'] } } },
+    { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'FileChange', changes: [{ type: 'update' }] } } },
+    { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'McpToolCall', server: 'aw', tool: 'aw_inbox' } } },
+    { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text: 'Everything looks good.' }] } } },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
   const app = startServer({ ...parseConfig({ claudeProjectsDir: home }), port: 0 }, TOKEN, {
-    home, procRoot: join(home, 'none'), cloudflared: null, detectFirewall: async () => null,
+    home, procRoot: join(home, 'none'), homes: { codex: home }, cloudflared: null, detectFirewall: async () => null,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
   });
   await app.store.handle({ ...ev.start, session_id: 'with', transcript_path: tp }, '%7');
+  await app.store.handle({ ...ev.start, session_id: 'codex', transcript_path: codex }, '%8', undefined, null, 'codex');
+  await app.store.handle({ ...ev.start, session_id: 'codex-outside', transcript_path: '/etc/passwd' }, '%9', undefined, null, 'codex');
   await app.store.handle({ ...ev.start, session_id: 'without', transcript_path: undefined }, null);
   await app.listen();
   const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
@@ -95,6 +107,14 @@ test('history: the conversation from the transcript; 404 unknown, 409 without a 
     assert.deepEqual(await get('with'), { status: 200, body: { turns: [
       { who: 'you', text: 'Fix the login bug' }, { who: 'step', text: 'Bash: npm test' }, { who: 'claude', text: 'Fixed. Tests pass.' },
     ] } });
+    assert.deepEqual(await get('codex'), { status: 200, body: { turns: [
+      { who: 'you', text: 'Review the changes' },
+      { who: 'step', text: 'Command: npm test' },
+      { who: 'step', text: 'Edit: 1 file change' },
+      { who: 'step', text: 'aw.aw_inbox' },
+      { who: 'claude', text: 'Everything looks good.' },
+    ] } });
+    assert.equal((await get('codex-outside')).status, 409, 'Codex conversations stay inside its sessions folder');
     assert.equal((await get('without')).status, 409);
     assert.equal((await get('nope')).status, 404);
   } finally { await app.close(); }

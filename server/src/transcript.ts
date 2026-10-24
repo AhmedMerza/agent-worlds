@@ -91,6 +91,56 @@ export function contextOf(entries: Entry[], model: string | null, limit = DEFAUL
 
 export type Turn = { who: 'you' | 'claude' | 'step'; text: string };
 
+const codexText = (content: unknown): string => Array.isArray(content)
+  ? content.filter((c) => (c?.type === 'text' || c?.type === 'Text' || c?.type === 'input_text' || c?.type === 'output_text') && typeof c.text === 'string')
+    .map((c) => c.text).join('\n').trim()
+  : '';
+
+const codexCommand = (command: unknown): string => {
+  if (Array.isArray(command)) return String(command.at(-1) ?? '');
+  if (typeof command === 'string') {
+    try { const v = JSON.parse(command); if (Array.isArray(v)) return String(v.at(-1) ?? ''); } catch { /* already plain text */ }
+    return command;
+  }
+  return '';
+};
+
+/** Codex's rollout as visible turns. Newer rollouts have completed UI items; older ones have response items. */
+export function codexConversation(entries: Entry[]): Turn[] {
+  const turns: Turn[] = [];
+  const completed = entries.some((e) => e.type === 'event_msg' && e.payload?.type === 'item_completed');
+  const userEvents = entries.some((e) => e.type === 'event_msg' && e.payload?.type === 'user_message');
+  for (const e of entries) {
+    const p = e.payload ?? {};
+    if (completed) {
+      if (e.type !== 'event_msg' || p.type !== 'item_completed') continue;
+      const i = p.item ?? {};
+      const text = codexText(i.content);
+      if (i.type === 'UserMessage' && text) turns.push({ who: 'you', text });
+      else if (i.type === 'AgentMessage' && text) turns.push({ who: 'claude', text });
+      else if (i.type === 'CommandExecution') turns.push({ who: 'step', text: `Command: ${codexCommand(i.command).split('\n')[0].slice(0, 200)}` });
+      else if (i.type === 'FileChange') {
+        const n = Array.isArray(i.changes) ? i.changes.length : 1;
+        turns.push({ who: 'step', text: `Edit: ${n} file change${n === 1 ? '' : 's'}` });
+      }
+      else if (i.type === 'McpToolCall') turns.push({ who: 'step', text: `${i.server ?? 'MCP'}.${i.tool ?? 'tool'}` });
+      continue;
+    }
+    if (e.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string' && p.message.trim()) {
+      turns.push({ who: 'you', text: p.message.trim() });
+      continue;
+    }
+    if (e.type !== 'response_item') continue;
+    if (p.type === 'message' && (p.role === 'assistant' || (p.role === 'user' && !userEvents))) {
+      const text = codexText(p.content);
+      if (text) turns.push({ who: p.role === 'user' ? 'you' : 'claude', text });
+    } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+      turns.push({ who: 'step', text: `${p.name ?? 'Tool'}: ${codexCommand(p.arguments ?? p.input).split('\n')[0].slice(0, 200)}` });
+    }
+  }
+  return turns;
+}
+
 /** A slash command you sent, as you typed it: "/name args". Claude records it as markup, `<command-name>` first or after
  *  `<command-message>` (skills and custom commands). */
 export function slashCommand(e: Entry): string | null {

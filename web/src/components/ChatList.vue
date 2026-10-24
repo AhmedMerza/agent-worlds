@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Session } from '../types'
-import { chatBadge, chatRows, chatTime, inboxOrder, nameOf, stateLabel } from '../logic'
+import { agentLabel, chatBadge, chatRows, chatTime, inboxOrder, nameOf, stateLabel } from '../logic'
 import { state, groups, needsYou, runsNeedingYou, openChat } from '../store'
 import RunCard from './RunCard.vue'
 
@@ -39,7 +39,7 @@ const emit = defineEmits<{ 'new-task': [] }>()
         <button :class="['chat-row', { current: state.selectedId === r.s.id, needs: r.needs }]" :style="{ '--tint': worldOf(r.s)?.color ?? 'var(--idle)' }" @click="openChat(r.s.id)">
           <span :class="['dot', r.s.state]" />
           <span class="chat-main">
-            <span class="chat-top"><b>{{ nameOf(r.s) }}</b><span v-if="state.filter === 'all' && worldOf(r.s)" class="chat-wname">{{ worldOf(r.s)!.name }}</span><span v-if="r.s.branch" class="tag">{{ r.s.branch }}</span><span class="chat-time">{{ chatTime(r.at, state.now) }}</span></span>
+            <span class="chat-top"><b>{{ nameOf(r.s) }}</b><span v-if="agentLabel(r.s)" class="tag">{{ agentLabel(r.s) }}</span><span v-if="state.filter === 'all' && worldOf(r.s)" class="chat-wname">{{ worldOf(r.s)!.name }}</span><span v-if="r.s.branch" class="tag">{{ r.s.branch }}</span><span class="chat-time">{{ chatTime(r.at, state.now) }}</span></span>
             <span class="chat-sub"><span v-if="r.s.card && r.needs" :class="['count', 'tone-' + chatBadge(r.s.card).tone]">{{ chatBadge(r.s.card).label }}</span><span v-else :class="['chat-state', { solo: r.preview === stateLabel(r.s, state.now) }]">{{ stateLabel(r.s, state.now) }}</span><span v-if="r.preview !== stateLabel(r.s, state.now)" class="chat-prev">{{ r.preview }}</span></span>
           </span>
         </button>

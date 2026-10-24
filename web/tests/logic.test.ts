@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho, teamOf } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentLabel, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho, resumePermissionMode, teamOf } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -392,6 +392,21 @@ describe('agentName', () => {
     expect(agentName({ agent: 'kimi' })).toBe('Kimi')
     expect(agentName({ agent: 'codex' })).toBe('Codex')
     expect(agentName({})).toBe('Claude')
+  })
+  it('labels non-default agents where users choose a session', () => {
+    expect(agentLabel({ agent: 'codex' })).toBe('Codex')
+    expect(agentLabel({ agent: 'kimi' })).toBe('Kimi')
+    expect(agentLabel({ agent: 'claude' })).toBeNull()
+    expect(agentLabel({})).toBeNull()
+  })
+})
+
+describe('resumePermissionMode', () => {
+  it('keeps the selected mode for explicit and implicit Claude rows only', () => {
+    expect(resumePermissionMode(undefined, 'plan')).toBe('plan')
+    expect(resumePermissionMode('claude', 'plan')).toBe('plan')
+    expect(resumePermissionMode('codex', 'plan')).toBeUndefined()
+    expect(resumePermissionMode('claude', 'claude')).toBeUndefined()
   })
 })
 
