@@ -17,7 +17,7 @@ const MIN = 60000
 const now = () => Date.now()
 
 let worlds = process.env.MOCK_EMPTY ? [] : [
-  { id: 'web', name: 'Web', color: '#47b4a7', repos: ['/work/repo-a', '/work/repo-b', '/work/repo-c', '/work/repo-d'] },
+  { id: 'web', name: 'Web', color: '#47b4a7', repos: ['/work/repo-a', '/work/repo-b', '/work/repo-c', '/work/repo-d'], leadSpawn: true, maxSpawned: 3 },
   { id: 'mobile', name: 'Mobile', color: '#e07aa8', repos: ['/work/repo-e', '/work/repo-f', '/work/repo-g'] },
   { id: 'tools', name: 'Tools', color: '#9c88df', repos: ['/work/repo-h', '/work/repo-j'] },
 ]
@@ -293,6 +293,8 @@ const server = http.createServer(async (req, res) => {
     if (b.name !== undefined) { if (!String(b.name).trim()) return json(400, { error: 'A world needs a name.' }); w.name = String(b.name).trim() }
     if (b.color) w.color = b.color
     if (Array.isArray(b.repos)) w.repos = b.repos
+    if (typeof b.leadSpawn === 'boolean') w.leadSpawn = b.leadSpawn
+    if (Number.isInteger(b.maxSpawned) && b.maxSpawned >= 0) w.maxSpawned = b.maxSpawned
     pushWorlds(); return json(200, { world: w })
   }
   const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(permission|answer|input|ack|catchup)$/)

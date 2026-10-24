@@ -45,6 +45,8 @@ type Opts = {
   home?: string; summarise?: Summarise; procRoot?: string; homes?: AgentHomes; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
   restartClaude?: typeof sys.restartClaude;
+  /** How long aw_spawn waits for a started agent to come up and report its real id (default 30 s); tests shorten it. */
+  spawnIdMs?: number;
   /** Closes a tmux pane (End session); tests stub it. */
   endPane?: typeof sys.endPane;
   /** Types into a tmux pane (the mail notice); tests stub it. */
@@ -1010,6 +1012,18 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     await startStep(r, 0);
     return r;
   }
+  /**
+   * A spawned session's real id once its agent is up (its first hook replaces the 'starting' card); null if it is not up
+   * in time, 'gone' if it ended first. 20 s keeps the whole call well inside Codex's 60 s MCP tool timeout.
+   */
+  async function realId(starting: string, pane: string | null, direct: string | null): Promise<string | 'gone' | null> {
+    if (!starting.startsWith('starting:')) return starting; // its agent was up before the card was made
+    for (const end = Date.now() + (opts.spawnIdMs ?? 20_000); Date.now() < end; await new Promise((r) => setTimeout(r, 250))) {
+      if (store.sessions.has(starting)) continue;
+      return [...store.sessions.values()].find((s) => (pane && s.tmux?.pane === pane) || (direct && s.direct === direct))?.id ?? 'gone';
+    }
+    return null;
+  }
   /** aw_spawn calls still starting, per world: the cap counts them, or two at once could both slip under it. */
   const spawning = new Map<string, number>();
   /** aw_spawn: a lead starts a worker session (or a run) in one of its world's folders, if that world allows it. */
@@ -1017,7 +1031,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const lead = store.sessions.get(self);
     const world = cfg.worlds.find((w) => w.id === lead?.worldId);
     if (!lead || !world) return new Error('this session is not in a world, so it cannot start sessions: ask the user to start them');
-    if (!world.leadSpawn) return new Error(`starting sessions is off for the ${world.name} world. Ask the user to start the session for you, or to allow it by setting "leadSpawn": true on the ${world.name} world in Agent Worlds' config.json.`);
+    if (!world.leadSpawn) return new Error(`starting sessions is off for the ${world.name} world. Ask the user to start the session for you, or to allow it: in Agent Worlds, Manage worlds (W), "Sessions here may start and end their own workers" on ${world.name} (or "leadSpawn": true in config.json).`);
     const path = resolve(lead.cwd, a.folder);
     const byName = world.repos.filter((r) => basename(r) === a.folder);
     const folder = world.repos.includes(path) ? path : byName.length === 1 ? byName[0] : null;
@@ -1040,6 +1054,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (live >= max) return new Error(`the ${world.name} world already has ${live} sessions or runs started by leads, its limit (maxSpawned ${max}): end one with aw_stop first, or ask the user to raise maxSpawned`);
     spawning.set(world.id, (spawning.get(world.id) ?? 0) + 1);
     const task = a.task.trim(), worktree = a.worktree !== false;
+    let released = false;
     try {
       if (steps) {
         const r = await beginRun({ task, worldId: world.id, repo: folder, worktree, steps, parent: self });
@@ -1048,10 +1063,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         return `Started run ${r.id} in ${folder} (${r.steps.map((x) => `${STEP_KINDS[x.kind].label} on ${AGENTS[x.agent].name}`).join(', ')}). Each step's session shows in aw_agents with you as its parent; end one with aw_stop.`;
       }
       const c = await launch({ agent, repo: folder, task, worktree, parent: self });
+      // Its card counts under the cap from here on: release the place now, not after the wait for its id
+      spawning.set(world.id, spawning.get(world.id)! - 1); released = true;
       store.log(lead, `Started ${AGENTS[agent].name} in ${basename(folder)}: ${task}`); store.push(lead);
-      return `Started ${AGENTS[agent].name} in ${c.dir} (tmux session ${c.tmuxSession}, id ${c.id} until its agent is up). It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`;
+      const id = await realId(c.id, c.pane ?? null, c.direct ? c.tmuxSession : null);
+      if (id === 'gone') return new Error(`${AGENTS[agent].name} in ${c.dir} exited before it came up: look at its terminal, or ask the user`);
+      return id
+        ? `Started ${AGENTS[agent].name} in ${c.dir}: session id ${id}. It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`
+        : `Started ${AGENTS[agent].name} in ${c.dir} (tmux session ${c.tmuxSession}), but its agent is not up yet: it may be asking to trust the folder in its terminal. It shows in aw_agents with you as its parent once it is; until then, aw_stop takes ${c.tmuxSession}.`;
     } catch (e) { return new Error(`could not start it: ${(e as Error).message}`); }
-    finally { spawning.set(world.id, spawning.get(world.id)! - 1); }
+    finally { if (!released) spawning.set(world.id, spawning.get(world.id)! - 1); }
   }
   /** aw_stop: a lead ends one of its own workers, the way End does (a run it is a step of stops too). */
   async function stopWorker(self: string, which: string): Promise<string | Error> {

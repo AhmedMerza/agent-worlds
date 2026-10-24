@@ -87,7 +87,10 @@ The panel under the rooms is the session's real terminal (xterm.js attached to t
 Press `T` or `Enter` (or click) to type into it; the panel is outlined and says "Typing into
 Claude" while it has the keyboard. The catch-up box above it tells you where it stands.
 If the screen looks wrecked (garbled text, the cursor in the wrong place), **Restart** quits that
-Claude and resumes the same conversation in a fresh one, in the same pane; mid-turn it asks first.
+Claude and resumes the same conversation in a fresh one, in the same pane. It is also how a
+session picks up MCP tools added by an update. Mid-turn, the first click queues the restart for
+when the turn ends (it waits while the session waits on you); click again to restart at once and
+stop the turn.
 
 Copying works from the terminal: what Claude Code or tmux copies reaches your clipboard, and
 `Shift`+drag (`Option`+drag on a Mac) selects text past tmux's mouse mode and copies it on release.
@@ -345,14 +348,18 @@ The mailbox tools run without asking for permission, because they only talk to A
 ### Leads that start their own workers
 
 A lead session (one you ask to manage the work) can start its workers itself, instead of you
-opening New session for each. It is off until you turn it on per world: set `"leadSpawn": true` on
-the world in `config.json` and restart the server. Until then `aw_spawn` refuses and tells the agent
-to ask you.
+opening New session for each. It is off until you turn it on per world: in **Manage worlds**
+(`W`), tick "Sessions here may start and end their own workers" and set the limit, or set
+`"leadSpawn": true` on the world in `config.json` and restart the server. The room then shows a
+"leads start workers" badge. Until then `aw_spawn` refuses and tells the agent to ask you. A session
+that was already running when you updated Agent Worlds sees the new tools only after **Restart**.
 
 - `aw_spawn { folder, task, agent?, worktree?, steps? }` starts a session the same way New session
   does: in `folder` (one of the lead's own world's folders, by path or by name), on `agent` (your
   default when left out), in a new worktree unless `worktree` is false, with `task` as its first
-  message. With `steps` it starts a [run](#runs-one-task-several-agents) instead.
+  message. With `steps` it starts a [run](#runs-one-task-several-agents) instead. It answers with
+  the new session's id once its agent is up (up to 20 s); an agent still asking to trust the
+  folder gets its tmux name instead, which `aw_stop` also takes.
 - The new session is on the lead's team: its panel and its Needs you card say "team of <lead>",
   and `aw_agents` shows the lead as its `parent`. This survives a restart (`<home>/parents.json`).
 - `aw_stop { session }` ends one of the lead's own workers, as **End** does (a run it is a step of
@@ -526,7 +533,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen`, `kimi`, `gemini` or `agy`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
-| `worlds[].leadSpawn` | `false` | let sessions in this world start and end their own worker sessions (`aw_spawn`, `aw_stop`; see [Leads that start their own workers](#leads-that-start-their-own-workers)). Set it by hand |
+| `worlds[].leadSpawn` | `false` | let sessions in this world start and end their own worker sessions (`aw_spawn`, `aw_stop`; see [Leads that start their own workers](#leads-that-start-their-own-workers)). Set it in Manage worlds or by hand |
 | `worlds[].maxSpawned` | `6` | the most sessions (a run counts as one) started by `aw_spawn` open in this world at once |
 
 Rules written by "Always allow" use Claude Code's permission syntax: "In `<repo>`" goes to

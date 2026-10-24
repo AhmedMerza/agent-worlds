@@ -181,7 +181,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<Api
   } catch { return { ok: false, error: 'Could not reach the server.' } }
 }
 export const createWorld = (name: string, color: string, repos: string[] = []) => api<{ world: World }>('POST', '/api/worlds', { name, color, repos })
-export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'color' | 'repos'>>) => api<{ world: World }>('PATCH', `/api/worlds/${encodeURIComponent(id)}`, patch)
+export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'color' | 'repos' | 'leadSpawn' | 'maxSpawned'>>) => api<{ world: World }>('PATCH', `/api/worlds/${encodeURIComponent(id)}`, patch)
 /** Moves one session to world `worldId` (its repo stays put); the server clears the move when that is its folder's world. */
 export const moveSession = (id: string, worldId: string | null) => api<unknown>('POST', `/api/sessions/${encodeURIComponent(id)}/world`, { worldId })
 export const deleteWorld = (id: string) => api<unknown>('DELETE', `/api/worlds/${encodeURIComponent(id)}`)
@@ -194,6 +194,18 @@ export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST',
 export const endSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/end`, { force })
 export const renameSession = (id: string, label: string) => api<unknown>('POST', `${base(id)}/label`, { label })
 export const restartSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/restart`, { force })
+/** Sessions to restart once their turn ends. Kept here, not in the panel, so closing the panel keeps them. */
+export const restartQueued = reactive(new Set<string>())
+watch(() => [...restartQueued].map((id) => [id, state.sessions[id]?.state] as const), async (list) => {
+  for (const [id, st] of list) {
+    if (st === 'working' || st === 'waiting') continue // waiting: a question for you would be lost
+    restartQueued.delete(id)
+    const s = state.sessions[id]
+    if (!s) { showToast('A queued restart was dropped: that conversation ended or was cleared before its turn did.'); continue }
+    const r = await restartSession(id)
+    showToast(r.ok ? `Restarting ${s.repoName} now that its turn ended.` : `Could not restart ${s.repoName}: ${r.error}`)
+  }
+})
 /** Starts another agent in the session's folder with a handoff as its first message; follows the new session. */
 export async function continueIn(id: string, agent: string): Promise<string | null> {
   const r = await api<{ tmuxSession: string; handoff: string }>('POST', `${base(id)}/continue`, { agent })

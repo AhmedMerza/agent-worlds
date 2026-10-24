@@ -65,6 +65,8 @@ export class Worlds {
       if (typeof b.name !== 'string' || !b.name.trim() || b.name.trim().length > 40) return bad('name must be 1-40 characters');
     }
     if (b.color !== undefined && (typeof b.color !== 'string' || !COLOR_RE.test(b.color))) return bad('color must be #rrggbb');
+    if (b.leadSpawn !== undefined && typeof b.leadSpawn !== 'boolean') return bad('leadSpawn must be true or false');
+    if (b.maxSpawned !== undefined && (!Number.isInteger(b.maxSpawned) || (b.maxSpawned as number) < 0)) return bad('maxSpawned must be a whole number, 0 or more');
     return null;
   }
 
@@ -103,6 +105,8 @@ export class Worlds {
       const world: World = { ...cur };
       if (b.name !== undefined) world.name = (b.name as string).trim();
       if (b.color !== undefined) world.color = b.color as string;
+      if (b.leadSpawn !== undefined) world.leadSpawn = b.leadSpawn as boolean;
+      if (b.maxSpawned !== undefined) world.maxSpawned = b.maxSpawned as number;
       if (b.repos !== undefined) {
         const r = await this.repos(b.repos, id, this.cfg.worlds);
         if ('err' in r) return r.err;

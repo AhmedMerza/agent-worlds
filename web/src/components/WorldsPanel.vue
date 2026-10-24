@@ -24,6 +24,12 @@ const rename = (w: World, name: string) => { const n = name.trim(); if (n && n !
 /** The name being typed: kept while the box has focus, so a worlds update from another tab or phone can't reset it. */
 const draft = ref<{ id: string; text: string } | null>(null)
 const recolor = (w: World, color: string) => run(updateWorld(w.id, { color }))
+const allowSpawn = (w: World, on: boolean) => run(updateWorld(w.id, { leadSpawn: on }))
+function capSpawn(w: World, raw: string) {
+  const n = Number(raw)
+  if (Number.isInteger(n) && n >= 0) return run(updateWorld(w.id, { maxSpawned: n }))
+  error.value = 'The limit must be a whole number, 0 or more.'
+}
 const removeRepo = (w: World, repo: string) => run(updateWorld(w.id, { repos: w.repos.filter((r) => r !== repo) }))
 const move = (id: string, dir: -1 | 1) => run(reorderWorlds(moveId(ids.value, id, dir)))
 async function addWorld() {
@@ -60,7 +66,7 @@ defineExpose({ escape })
   <div class="overlay" @click.self="emit('close')">
     <div ref="box" class="dialog worlds" role="dialog" aria-modal="true" aria-label="Worlds" tabindex="-1">
       <h2>Manage worlds</h2>
-      <p class="why">A world is a named group of repos. Sessions in those repos show up in its room. Rename, recolour, reorder or delete each one here.</p>
+      <p class="why">A world is a named group of repos. Sessions in those repos show up in its room. Rename, recolour, reorder or delete each one here. Where sessions may start their own workers, a lead session builds its own team instead of asking you to start each one.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
 
       <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
@@ -77,6 +83,10 @@ defineExpose({ escape })
             </div>
             <div class="swatches" role="group" :aria-label="`Colour of ${w.name}`">
               <button v-for="c in PALETTE" :key="c" class="swatch" :style="{ background: c }" :aria-label="c" :aria-pressed="w.color.toLowerCase() === c" @click="recolor(w, c)" />
+            </div>
+            <div class="spawn">
+              <label><input type="checkbox" :checked="!!w.leadSpawn" @change="allowSpawn(w, ($event.target as HTMLInputElement).checked)"> Sessions here may start and end their own workers</label>
+              <label v-if="w.leadSpawn">at most <input class="reply-in num" type="number" min="0" :value="w.maxSpawned ?? 6 /* the server's MAX_SPAWNED */" :aria-label="`Most worker sessions in ${w.name} may start at once`" @change="capSpawn(w, ($event.target as HTMLInputElement).value)"> at once</label>
             </div>
             <ul class="repos">
               <li v-for="r in w.repos" :key="r"><span class="path" :title="r">{{ baseName(r) }} <small>{{ r }}</small></span><button class="linkbtn" :aria-label="`Remove ${r} from ${w.name}`" @click="removeRepo(w, r)">Remove</button></li>
