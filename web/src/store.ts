@@ -1,5 +1,5 @@
 import { reactive, computed, ref, watch } from 'vue'
-import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode } from './types'
+import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey } from './logic'
@@ -7,6 +7,7 @@ import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, gro
 export interface StoreState {
   worlds: World[]
   sessions: Record<string, Session>
+  recoverable: RecoverableSession[]
   /** Insertion order of session ids (stable on-screen order). */
   order: string[]
   loaded: boolean
@@ -29,7 +30,7 @@ export interface StoreState {
 }
 
 export const newState = (): StoreState => ({
-  worlds: [], sessions: {}, order: [], loaded: false, connected: false,
+  worlds: [], sessions: {}, recoverable: [], order: [], loaded: false, connected: false,
   selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true, runs: {},
 })
 
@@ -52,6 +53,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.sessions = {}
       st.order = []
       for (const s of msg.sessions) { st.sessions[s.id] = s; st.order.push(s.id) }
+      st.recoverable = msg.recoverable ?? []
       st.unmanaged = msg.unmanaged ?? []
       st.update = msg.update ?? false
       st.tmux = msg.tmux ?? true
@@ -65,10 +67,14 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.unmanaged = msg.unmanaged
       break
     case 'session':
+      st.recoverable = st.recoverable.filter((s) => s.id !== msg.session.id)
       if (claimPending(st, msg.session)) { st.selectedId = msg.session.id; st.autoSelected = false }
       if (startsNeedingYou(st.sessions[msg.session.id], msg.session)) alert = msg.session
       if (!st.sessions[msg.session.id]) st.order.push(msg.session.id)
       st.sessions[msg.session.id] = msg.session
+      break
+    case 'recoverable':
+      st.recoverable = msg.sessions
       break
     case 'session-removed': {
       // The selected session's terminal gets a new session: a 'starting:<tmux>' placeholder's first hook, or /clear
@@ -281,7 +287,7 @@ function followNew(name: unknown): void {
   if (known) { state.pending = null; showFollowed(known.id) } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */
-export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: 'kimi'): Promise<ResumeResult> {
+export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: AgentId): Promise<ResumeResult> {
   try {
     const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(agent ? { agent } : {}), ...(stop ? { stop: true } : {}), ...(permissionMode ? { permissionMode } : {}) }) })
     let body: unknown = null
@@ -290,6 +296,18 @@ export async function resumeSession(sessionId: string, stop = false, permissionM
     if (res.kind === 'ok') followNew(res.tmuxSession)
     return res
   } catch { return { kind: 'error', message: 'Could not reach the server.' } }
+}
+export async function resumeAll(): Promise<{ started: string[]; failed: { id: string; error: string }[] } | null> {
+  const r = await api<{ started: string[]; failed: { id: string; error: string }[] }>('POST', '/api/sessions/resume-all')
+  if (!r.ok) { showToast(r.error); return null }
+  state.recoverable = state.recoverable.filter((s) => !r.data.started.includes(s.id))
+  return r.data
+}
+export async function dismissRecovery(id: string): Promise<boolean> {
+  const r = await api<{ ok: true }>('DELETE', `/api/recovery/${encodeURIComponent(id)}`)
+  if (!r.ok) { showToast(r.error); return false }
+  state.recoverable = state.recoverable.filter((s) => s.id !== id)
+  return true
 }
 export const fetchHistory = (repo?: string) => api<{ sessions: HistorySession[] }>('GET', `/api/history?limit=200${repo ? `&repo=${encodeURIComponent(repo)}` : ''}`)
 

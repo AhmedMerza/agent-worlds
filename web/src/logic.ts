@@ -1,4 +1,4 @@
-import type { Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep, Turn } from './types'
+import type { AgentId, Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep, Turn } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
@@ -15,7 +15,6 @@ export const maxSpawnedOf = (raw: string): number | null => {
   return Number.isInteger(n) && n >= 0 ? n : null
 }
 
-/** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 /** What each kind of run step does, in the order a run usually has them. */
 export const STEP_LABEL: Record<StepKind, string> = { plan: 'Plan', 'review-plan': 'Review plan', build: 'Build', 'review-code': 'Review code' }
 /** Whether a session is (or was) a step's: by id, or by its terminal before its first hook names it (Claude asks to trust a new worktree first). */
@@ -38,7 +37,10 @@ export const nameOf = (s: { label?: string | null; repoName: string }): string =
 /** "team of <lead>" for a session a lead started with aw_spawn, else null. */
 export const teamOf = (s: { parent?: string | null }, sessions: Record<string, { label?: string | null; repoName: string }>): string | null =>
   s.parent ? `team of ${sessions[s.parent] ? nameOf(sessions[s.parent]) : 'a lead that ended'}` : null
+/** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi', gemini: 'Gemini', agy: 'Antigravity' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
+/** The chooser badge for non-default sessions; Claude stays visually quiet. */
+export const agentLabel = (s: Pick<Session, 'agent'>): string | null => s.agent && s.agent !== 'claude' ? agentName(s) : null
 
 /** The state label, with the busy-but-not-you variants of 'working'. */
 export function stateLabel(s: Session, now: number): string {
@@ -258,6 +260,9 @@ export function modeOptions(claudeDefault: string | null): { value: ModeChoice; 
 }
 /** The request field: nothing at all for "Your Claude default". */
 export const modeField = (c: ModeChoice): { permissionMode?: PermissionMode } => (c === 'claude' ? {} : { permissionMode: c })
+/** Permission modes belong to Claude, including recovery rows that explicitly name it. */
+export const resumePermissionMode = (agent: AgentId | undefined, c: ModeChoice): PermissionMode | undefined =>
+  agent && agent !== 'claude' ? undefined : modeField(c).permissionMode
 
 // ---- touch ----
 export const isTouch = (): boolean => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
@@ -500,8 +505,8 @@ export function chatRows(sessions: Session[]): ChatRow[] {
     preview: (s.card ? chatPreview(s.card) : '') || s.now || s.lastPrompt || s.task || '',
   }))
 }
-/** The chat view reads Claude's transcript; other agents' conversations only show in their terminal. */
-export const hasChat = (s: Pick<Session, 'agent' | 'ghost'>): boolean => (s.agent ?? 'claude') === 'claude' && !s.ghost
+/** The agents whose native transcript format the chat view understands. */
+export const hasChat = (s: Pick<Session, 'agent' | 'ghost'>): boolean => ['claude', 'codex'].includes(s.agent ?? 'claude') && !s.ghost
 
 export type ChatItem = { who: 'you' | 'claude'; text: string } | { who: 'steps'; lines: string[] }
 /** Folds each run of tool steps into one item, so a chat reads as messages with "6 steps" between them. */

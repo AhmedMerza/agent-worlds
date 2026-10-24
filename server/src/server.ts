@@ -3,6 +3,7 @@ import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, MAX_SPAWNED, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
@@ -17,9 +18,9 @@ import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
-import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, findTranscript, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
+import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
-import { readHead, readTail, conversation, midTurn } from './transcript.ts';
+import { readHead, readTail, conversation, codexConversation, midTurn } from './transcript.ts';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { watchCode, prepareRestart } from './update.ts';
@@ -27,6 +28,7 @@ import { containPtyErrors, Direct, type PtyLike } from './direct.ts';
 import { Mailbox } from './mailbox.ts';
 import { handleMcp, type Peer, type SpawnArgs } from './mcp.ts';
 import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, reviewVerdict, STEP_KINDS, RUN_FILES, MAX_ROUNDS, type Run, type StepKind } from './runs.ts';
+import { Recovery, type RecoverableSession } from './recovery.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -43,6 +45,7 @@ const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.
 type Opts = {
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
   home?: string; summarise?: Summarise; procRoot?: string; homes?: AgentHomes; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
+  installed?: (bin: string) => boolean;
   phoneAddresses?: () => Address[]; stopProcess?: (pid: number) => Promise<boolean>;
   restartClaude?: typeof sys.restartClaude;
   /** How long aw_spawn waits for a started agent to come up and report its real id (default 30 s); tests shorten it. */
@@ -167,14 +170,19 @@ function ensureMacPtyHelper() {
 }
 
 export function startServer(cfg: Config, token: string, opts: Opts = {}) {
+  const home = opts.home ?? homeDir();
+  const hasBin = opts.installed ?? onPath;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const ptys = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   // Heartbeat: a socket that misses a ping round is dropped, so half-open connections don't keep tmux clients around.
   const alive = new WeakSet<WebSocket>();
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
-  const mailbox = new Mailbox(Date.now, join(opts.home ?? homeDir(), 'mailbox.json'));
-  const runsFile = join(opts.home ?? homeDir(), 'runs.json');
+  const mailbox = new Mailbox(Date.now, join(home, 'mailbox.json'));
+  const recovery = new Recovery(join(home, 'recovery.json'));
+  const codexHome = opts.homes?.codex ?? process.env.CODEX_HOME ?? join(homedir(), '.codex');
+  const codexSessions = resolve(codexHome, 'sessions') + sep;
+  const runsFile = join(home, 'runs.json');
   const runs = new Map<string, Run>(loadRuns(runsFile).map((r) => [r.id, r]));
   // The server stopped between starting a step and its session being made: nothing will ever link it
   for (const r of runs.values()) {
@@ -207,6 +215,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    */
   const agyChildren = new Map<string, { parent: string; log: unknown }>();
   const agyPending = new Map<string, number>();
+  /** Conversation id → terminal being started for it; null only while createSession is in flight. */
+  const resuming = new Map<string, string | null>();
   const agyParent = (id: string, log: unknown, pane: unknown, pty: unknown): string | null | undefined => {
     const known = agyChildren.get(id);
     if (known) return store.sessions.has(known.parent) ? known.parent : null;
@@ -235,20 +245,33 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
+    if (msg.type === 'session' && msg.session && typeof msg.session === 'object') {
+      const s = msg.session as Partial<RecoverableSession>;
+      if (typeof s.id === 'string' && isAgent(s.agent) && typeof s.cwd === 'string') recovery.upsert({
+        id: s.id, agent: s.agent, cwd: s.cwd, task: typeof s.task === 'string' ? s.task : null,
+        lastPrompt: typeof s.lastPrompt === 'string' ? s.lastPrompt : null, updatedAt: Number(s.updatedAt) || Date.now(),
+      });
+      if (typeof s.id === 'string') resuming.delete(s.id);
+    }
+    if (msg.type === 'session-removed' && msg.id?.startsWith('starting:')) {
+      const terminal = msg.id.slice('starting:'.length);
+      for (const [id, restoring] of resuming) if (restoring === terminal) resuming.delete(id);
+    }
     if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
-  const parents = new Placements(join(opts.home ?? homeDir(), 'parents.json'));
+  const parents = new Placements(join(home, 'parents.json'));
   const store = new Store(cfg, {
     repoInfo: sys.repoInfo, branchOf: sys.branchOf, tmuxSessionOf: sys.tmuxSessionOf,
     clientsConnected: () => wss.clients.size > 0,
     holdMs: opts.holdMs ?? HOLD_MS,
-    stats: new Stats(join(opts.home ?? homeDir(), 'stats.json')),
-    placements: new Placements(join(opts.home ?? homeDir(), 'placements.json')),
-    labels: new Placements(join(opts.home ?? homeDir(), 'labels.json')),
+    stats: new Stats(join(home, 'stats.json')),
+    placements: new Placements(join(home, 'placements.json')),
+    labels: new Placements(join(home, 'labels.json')),
     parents,
-    onRenamed: (from, to) => { for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); } },
+    onRenamed: (from, to) => { recovery.rename(from, to); for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); } },
+    onEnded: (id) => { if (!closing) recovery.delete(id); },
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
       // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
@@ -278,6 +301,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   // Running agent processes (Linux /proc), refreshed every 10 s.
   let procs: AgentProc[] = [];
   let unmanaged: Record<string, unknown>[] = [];
+  let recoveryReady = false;
+  const recoverable = () => {
+    if (!recoveryReady) return [];
+    const live = new Set([...store.sessions.keys(), ...procs.map((p) => p.sessionId).filter((id): id is string => !!id)]);
+    const terminals = new Set([...store.sessions.values()].map((s) => s.tmux?.session ?? s.direct).filter(Boolean));
+    for (const [id, terminal] of resuming) if (!terminal || terminals.has(terminal)) live.add(id);
+    return recovery.list().filter((s) => !live.has(s.id));
+  };
+  const pushRecoverable = () => broadcast({ type: 'recoverable', sessions: recoverable() });
   const repoCache = new Map<string, Promise<sys.RepoInfo>>();
   const repoOf = (cwd: string) => {
     if (!repoCache.has(cwd)) repoCache.set(cwd, (store.deps.repoInfo)(cwd));
@@ -341,6 +373,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       unmanaged = next;
       broadcast({ type: 'unmanaged', unmanaged });
     }
+    recoveryReady = true; pushRecoverable();
   }
   // One scan at a time: a second call (the 10 s timer, a test's own scan) waits for the run in flight
   // instead of racing its adoptions and reading half-created sessions.
@@ -531,7 +564,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return send(res, 200, out);
     }
     if (method === 'GET' && url.pathname === '/api/agents') {
-      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || onPath(a.bin), modes: a.modes, decides: a.decides, task: a.task })), default: defaultAgent(cfg.defaultAgent) });
+      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || hasBin(a.bin), modes: a.modes, decides: a.decides, task: a.task })), default: defaultAgent(cfg.defaultAgent, (id) => id === 'claude' || hasBin(AGENTS[id].bin)) });
     }
     if (method === 'POST' && url.pathname === '/api/agents/default') {
       const b = await readBody(req);
@@ -624,7 +657,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       setTimeout(opts.onRestart, 200);
       return;
     }
-    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), unmanaged, runs: [...runs.values()] });
+    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, runs: [...runs.values()] });
     if (method === 'GET' && url.pathname === '/api/history') {
       const n = Number(url.searchParams.get('limit') ?? 50);
       const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
@@ -632,51 +665,98 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const repo = url.searchParams.get('repo');
       if (repo !== null && !repo.startsWith('/')) return send(res, 400, { error: 'repo must be an absolute path' });
       const only = repo ? normalize(repo).replace(/\/+$/, '') : undefined;
-      const all = [...await history(cfg.claudeProjectsDir, limit, only), ...await kimiHistory(opts.home ?? homeDir(), limit, only)];
+      const interrupted = recoverable();
+      const interruptedIds = new Set(interrupted.map((s) => s.id));
+      const remembered = interrupted.filter((s) => !only || inRepo(s.cwd, only)).map((s) => ({ sessionId: s.id, cwd: s.cwd, lastPrompt: s.lastPrompt ?? s.task, lastActivity: s.updatedAt, agent: s.agent }));
+      const native = [...await history(cfg.claudeProjectsDir, limit, only), ...await kimiHistory(home, limit, only), ...await codexHistory(codexHome, limit, only)];
+      const all = [...new Map([...remembered, ...native].map((s) => [s.sessionId, s])).values()];
       const items = await Promise.all(all.sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit).map(async (h) => {
         const info = h.cwd ? await repoOf(h.cwd) : null;
         return {
           ...h, repo: info?.repo ?? null, worldId: info ? store.worldFor(h.sessionId, info.repo, h.cwd!) : null,
-          running: running.has(h.sessionId), managed: store.sessions.has(h.sessionId),
+          running: running.has(h.sessionId), managed: store.sessions.has(h.sessionId), interrupted: interruptedIds.has(h.sessionId),
         };
       }));
       return send(res, 200, { sessions: items });
+    }
+    if (method === 'POST' && url.pathname === '/api/sessions/resume-all') {
+      await scan();
+      const started: string[] = [], failed: { id: string; error: string }[] = [];
+      for (const s of recoverable()) {
+        if (!sys.isDir(s.cwd)) { failed.push({ id: s.id, error: `folder no longer exists: ${s.cwd}` }); continue; }
+        if (s.agent !== 'claude' && !hasBin(AGENTS[s.agent].bin)) { failed.push({ id: s.id, error: `${AGENTS[s.agent].name} is not installed` }); continue; }
+        if (resuming.has(s.id)) { failed.push({ id: s.id, error: 'already being restored' }); continue; }
+        resuming.set(s.id, null);
+        try {
+          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+          resuming.set(s.id, r.tmuxSession);
+          await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: s.lastPrompt ?? s.task, agent: s.agent, resuming: true });
+          started.push(s.id);
+        } catch (e) { resuming.delete(s.id); failed.push({ id: s.id, error: (e as Error).message }); }
+      }
+      pushRecoverable();
+      return send(res, 200, { started, failed });
+    }
+    const recoveryMatch = url.pathname.match(/^\/api\/recovery\/([^/]+)$/);
+    if (method === 'DELETE' && recoveryMatch) {
+      const id = decodeURIComponent(recoveryMatch[1]);
+      if (!recovery.get(id)) return send(res, 404, { error: 'no such interrupted session' });
+      if (resuming.has(id) || !recoverable().some((s) => s.id === id)) return send(res, 409, { error: 'that conversation is not currently interrupted' });
+      recovery.delete(id); pushRecoverable();
+      return send(res, 200, { ok: true });
     }
     if (method === 'POST' && url.pathname === '/api/sessions/resume') {
       const b = await readBody(req);
       if (typeof b.sessionId !== 'string' || !SESSION_ID_RE.test(b.sessionId)) return send(res, 400, { error: 'sessionId is required' });
       if (b.worldId !== undefined && b.worldId !== null && !cfg.worlds.some((w) => w.id === b.worldId)) return send(res, 400, { error: 'unknown worldId' });
       if (b.worktree === true) return send(res, 400, { error: 'resume in a worktree is not supported' });
-      if (b.agent !== undefined && b.agent !== 'claude' && b.agent !== 'kimi') return send(res, 400, { error: 'only Claude Code and Kimi Code sessions can be resumed' });
-      const kimi = b.agent === 'kimi';
-      if (b.permissionMode !== undefined && (kimi || !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode))) return send(res, 400, { error: kimi ? 'permissionMode is Claude-only' : `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      if (b.agent !== undefined && !isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
+      const agent: AgentId = isAgent(b.agent) ? b.agent : 'claude';
+      const kimi = agent === 'kimi', codex = agent === 'codex';
+      if (b.permissionMode !== undefined && (agent !== 'claude' || !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode))) return send(res, 400, { error: agent !== 'claude' ? 'permissionMode is Claude-only' : `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       let cwd: string | undefined;
       if (kimi) {
         const dir = await kimiSessionDir(b.sessionId, opts.home ?? homeDir());
         const st = dir ? await kimiState(dir) : null;
         if (!st) return send(res, 404, { error: 'no Kimi Code session with that id' });
         cwd = st.cwd;
-      } else {
+      } else if (codex) {
+        const session = codexSession(codexHome, b.sessionId);
+        if (!session) return send(res, 404, { error: 'no Codex session with that id' });
+        cwd = session.cwd;
+      } else if (agent === 'claude') {
         const file = findTranscript(cfg.claudeProjectsDir, b.sessionId);
         if (!file) return send(res, 404, { error: 'no transcript for that session' });
         cwd = (await readHead(file, 256 * 1024)).find((e) => typeof e.cwd === 'string')?.cwd as string | undefined;
+      } else {
+        const saved = recovery.get(b.sessionId);
+        if (!saved || saved.agent !== agent) return send(res, 404, { error: `no interrupted ${AGENTS[agent].name} session with that id` });
+        cwd = saved.cwd;
       }
       if (!cwd || !sys.isDir(cwd)) return send(res, 422, { error: `the session's folder no longer exists: ${cwd ?? 'unknown'}` });
       if (b.force !== true) {
         // A Kimi copy is only seen through its hooks: no process scan finds one running in another terminal.
-        if (!kimi) procs = scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir);
+        if (!kimi) procs = agent === 'claude'
+          ? scanClaude(opts.procRoot ?? '/proc', cfg.claudeProjectsDir)
+          : scanAgents(opts.procRoot ?? '/proc', cfg.claudeProjectsDir, { home, homes: opts.homes });
         const live = store.sessions.get(b.sessionId);
-        const proc = kimi ? undefined : procs.find((p) => p.agent === 'claude' && (p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane)));
+        const proc = kimi ? undefined : procs.find((p) => p.agent === agent && (p.sessionId === b.sessionId || (live?.tmux && p.pane === live.tmux.pane)));
         // stop: quit the copy running in another terminal first (only ours: scanClaude keeps this user's processes).
         if (b.stop === true && proc && !live) {
           if (!(await (opts.stopProcess ?? stopProcess)(proc.pid))) return send(res, 409, { error: `it did not quit (pid ${proc.pid}); close it in its terminal`, pid: proc.pid, stopFailed: true });
         } else if (live || proc) return send(res, 409, { error: 'that session is still running', pid: proc?.pid ?? null });
       }
+      if (resuming.has(b.sessionId)) return send(res, 409, { error: 'that conversation is already being restored', stopFailed: true });
       try {
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(kimi ? { agent: 'kimi' as const } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
-        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: null, ...(kimi ? { agent: 'kimi' as const } : {}) });
+        resuming.set(b.sessionId, null);
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(agent !== 'claude' ? { agent } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+        resuming.set(b.sessionId, r.tmuxSession);
+        const saved = recovery.get(b.sessionId);
+        await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: saved?.lastPrompt ?? saved?.task ?? null, ...(agent !== 'claude' ? { agent } : {}), resuming: true });
+        pushRecoverable();
         return send(res, 201, { tmuxSession: r.tmuxSession });
-      } catch (e) { return send(res, 422, { error: (e as Error).message }); }
+      } catch (e) { resuming.delete(b.sessionId); return send(res, 422, { error: (e as Error).message }); }
     }
     if (url.pathname === '/api/phone' && method === 'GET') {
       return send(res, 200, { port: port(), addresses: addresses().map((a) => ({ ...a, allowed: cfg.listen.includes(a.address) })), firewall: await (opts.detectFirewall ?? detectFirewall)(), lanReached: access.entries.some((e) => e.route === 'network'), passwordSet: password.isSet(), cloudflared: !!cloudflared(), canInstall: !!opts.installCloudflared || !!cloudflaredAsset(), tunnel: tunnel.url });
@@ -749,7 +829,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       if (b.agent !== undefined && !isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
       const agent = isAgent(b.agent) ? b.agent : defaultAgent(cfg.defaultAgent);
-      if (agent !== 'claude' && !onPath(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
+      if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       let provider, via = null;
       if (b.provider !== undefined) {
         if (agent !== 'qwen') return send(res, 400, { error: 'provider is only for Qwen Code sessions' });
@@ -847,7 +927,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const b = await readBody(req);
       if (!isAgent(b.agent)) return send(res, 422, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
       if (b.agent === s.agent) return send(res, 409, { error: `this session already runs ${AGENTS[s.agent].name}` });
-      if (b.agent !== 'claude' && !onPath(AGENTS[b.agent].bin)) return send(res, 422, { error: `${AGENTS[b.agent].name} is not installed (no ${AGENTS[b.agent].bin} on PATH)` });
+      if (b.agent !== 'claude' && !hasBin(AGENTS[b.agent].bin)) return send(res, 422, { error: `${AGENTS[b.agent].name} is not installed (no ${AGENTS[b.agent].bin} on PATH)` });
       if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       const home = opts.home ?? homeDir();
       try {
@@ -881,9 +961,14 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (hm && method === 'GET') {
       const s = store.sessions.get(decodeURIComponent(hm[1]));
       if (!s) return send(res, 404, { error: 'no such session' });
-      // Claude's full-screen view keeps no terminal scrollback, so read the conversation from its transcript.
-      if (!s.transcriptPath) return send(res, 409, { error: 'no transcript yet for this session' });
-      try { return send(res, 200, { turns: conversation(await readTail(s.transcriptPath, 2 * 1024 * 1024)).slice(-400) }); }
+      const path = s.agent === 'codex'
+        ? s.logPath?.endsWith('.jsonl') && resolve(s.logPath).startsWith(codexSessions) ? s.logPath : null
+        : s.agent === 'claude' ? s.transcriptPath : null;
+      if (!path) return send(res, 409, { error: 'no transcript yet for this session' });
+      try {
+        const entries = await readTail(path, 2 * 1024 * 1024);
+        return send(res, 200, { turns: (s.agent === 'codex' ? codexConversation(entries) : conversation(entries)).slice(-400) });
+      }
       catch { return send(res, 502, { error: 'cannot read the transcript' }); }
     }
     const wm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/world$/);
@@ -941,7 +1026,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
-        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), unmanaged, update, tmux, runs: [...runs.values()] }));
+        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()] }));
       });
     }
     if (url.pathname === '/pty') {
@@ -1002,7 +1087,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     for (const st of steps) {
       if (!st || !isStepKind(st.kind)) return { err: [400, `each step needs a kind: ${Object.keys(STEP_KINDS).join(', ')}`] };
       if (!isAgent(st.agent)) return { err: [400, `each step needs an agent: ${Object.keys(AGENTS).join(', ')}`] };
-      if (st.agent !== 'claude' && !onPath(AGENTS[st.agent].bin)) return { err: [422, `${AGENTS[st.agent].name} is not installed (no ${AGENTS[st.agent].bin} on PATH)`] };
+      if (st.agent !== 'claude' && !hasBin(AGENTS[st.agent].bin)) return { err: [422, `${AGENTS[st.agent].name} is not installed (no ${AGENTS[st.agent].bin} on PATH)`] };
     }
     return steps.map((st) => ({ kind: st.kind as StepKind, agent: st.agent as AgentId, checkpoint: st.checkpoint === true }));
   }
@@ -1038,7 +1123,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the ${world.name} world's folders: ${world.repos.join(', ')}`);
     if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
     const agent = isAgent(a.agent) ? a.agent : defaultAgent(cfg.defaultAgent);
-    if (agent !== 'claude' && !onPath(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
+    if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);
     const max = world.maxSpawned ?? MAX_SPAWNED;
@@ -1177,10 +1262,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
     parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
-    if (s.direct) { direct.kill(s.direct); return null; } // its exit removes the card
+    const forgetRecovery = () => {
+      recovery.delete(s.id);
+      const terminal = s.tmux?.session ?? s.direct;
+      for (const [id, restoring] of resuming) if (restoring === terminal) { recovery.delete(id); resuming.delete(id); parents.set(id, null); }
+      pushRecoverable();
+    };
+    if (s.direct) { forgetRecovery(); direct.kill(s.direct); return null; } // its exit removes the card
     if (!s.tmux) return 'it does not run in tmux or under this server';
     const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
     if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
+    forgetRecovery();
     if (store.sessions.get(s.id) === s) store.remove(s);
     return null;
   }

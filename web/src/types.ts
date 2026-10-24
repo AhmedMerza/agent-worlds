@@ -1,5 +1,6 @@
 // Server contract (see team ledger "Contracts"). Fields marked v2/v3 may be null/empty until later rounds.
 export type SessionState = 'starting' | 'working' | 'waiting' | 'done' | 'error' | 'idle'
+export type AgentId = 'claude' | 'codex' | 'qwen' | 'kimi' | 'gemini' | 'agy'
 
 export interface World {
   id: string; name: string; color: string; repos: string[]
@@ -72,13 +73,15 @@ export interface Session {
 /** A Claude process running outside Agent Worlds. */
 export interface Unmanaged { pid: number; cwd: string; repo: string | null; worldId: string | null; sessionId: string | null; inTmux: boolean; since: number; lastPrompt?: string | null; lastActivity?: number | null }
 
-export interface HistorySession { sessionId: string; agent?: 'kimi'; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean }
+export interface HistorySession { sessionId: string; agent?: AgentId; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean; interrupted?: boolean }
+export interface RecoverableSession { id: string; agent: AgentId; cwd: string; task: string | null; lastPrompt: string | null; updatedAt: number }
 
 export type ServerMessage =
-  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; unmanaged?: Unmanaged[]; update?: boolean; tmux?: boolean; runs?: Run[] }
+  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; recoverable?: RecoverableSession[]; unmanaged?: Unmanaged[]; update?: boolean; tmux?: boolean; runs?: Run[] }
   | { type: 'run'; run: Run }
   | { type: 'update' }
   | { type: 'unmanaged'; unmanaged: Unmanaged[] }
+  | { type: 'recoverable'; sessions: RecoverableSession[] }
   | { type: 'session'; session: Session }
   | { type: 'session-removed'; id: string }
   | { type: 'worlds'; worlds: World[] }

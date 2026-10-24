@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start": "node src/cli.ts",
-    "test": "bash -c 'A=$(mktemp -d); K=$(mktemp -d); G=$(mktemp -d); T=$(mktemp -d); trap \"rm -rf $A $K $G $T\" EXIT; AGENT_WORLDS_HOME=$A KIMI_CODE_HOME=$K GEMINI_CLI_HOME=$G TMUX_TMPDIR=$T TMUX= node --test'",
+    "test": "bash -c 'A=$(mktemp -d); C=$(mktemp -d); K=$(mktemp -d); G=$(mktemp -d); T=$(mktemp -d); trap \"rm -rf $A $C $K $G $T\" EXIT; AGENT_WORLDS_HOME=$A CODEX_HOME=$C KIMI_CODE_HOME=$K GEMINI_CLI_HOME=$G TMUX_TMPDIR=$T TMUX= node --test'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

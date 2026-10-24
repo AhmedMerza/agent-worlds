@@ -39,6 +39,16 @@ describe('applyMessage', () => {
     expect(st.order).toEqual(['a', 'b', 'c'])
     expect(st.sessions.a.state).toBe('idle')
   })
+  it('tracks interrupted sessions and removes one when its live session returns', () => {
+    const st = newState()
+    const interrupted = { id: 'session-one', agent: 'codex' as const, cwd: '/r', task: 'fix it', lastPrompt: null, updatedAt: 1 }
+    applyMessage(st, { type: 'snapshot', worlds, sessions: [], recoverable: [interrupted] })
+    expect(st.recoverable).toEqual([interrupted])
+    applyMessage(st, { type: 'session', session: mk('session-one', { agent: 'codex' }) })
+    expect(st.recoverable).toEqual([])
+    applyMessage(st, { type: 'recoverable', sessions: [interrupted] })
+    expect(st.recoverable).toEqual([interrupted])
+  })
   it('removal reselects when the selected session goes away', () => {
     const st = newState()
     applyMessage(st, { type: 'snapshot', worlds, sessions: [mk('a', { tmux: null }), mk('b', { tmux: null })] })

@@ -49,10 +49,11 @@ describe('chatItems', () => {
 })
 
 describe('hasChat', () => {
-  it('is Claude only, and never a ghost', () => {
+  it('supports Claude and Codex, and never a ghost', () => {
     expect(hasChat({})).toBe(true)
     expect(hasChat({ agent: 'claude' })).toBe(true)
-    expect(hasChat({ agent: 'codex' })).toBe(false)
+    expect(hasChat({ agent: 'codex' })).toBe(true)
+    expect(hasChat({ agent: 'qwen' })).toBe(false)
     expect(hasChat({ ghost: { pid: 1, cwd: '/', repo: null, worldId: null, sessionId: null, inTmux: false, since: 0 } })).toBe(false)
   })
 })

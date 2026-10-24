@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Session, Card } from '../types'
-import { fmtWait, permissionWho, waitMinutes, cardLive, inboxOrder, nameOf, cardKey, teamOf } from '../logic'
+import { agentLabel, fmtWait, permissionWho, waitMinutes, cardLive, inboxOrder, nameOf, cardKey, teamOf } from '../logic'
 import { state, needsYou, runsNeedingYou, groups, select, focusTerminal as focusTerm } from '../store'
 import CardActions from './CardActions.vue'
 import RunCard from './RunCard.vue'
@@ -35,7 +35,7 @@ const who = (c: Card): string => (c.kind === 'permission' ? permissionWho(c) : W
     <TransitionGroup name="card" tag="div" class="cards">
     <article v-for="{ s, c, k } in items" :key="k" :class="['card', { current: state.selectedId === s.id, fresh: fresh.includes(k) }]" :style="{ '--tint': world(s)?.color ?? '#8a92a0' }">
       <div class="who">
-        <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b>
+        <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b><span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span>
         <span v-if="s.branch" class="tag" :title="s.cwd">{{ s.branch }}</span><span v-if="s.worktree" class="tag">worktree</span><span v-if="s.parent" class="tag">{{ teamOf(s, state.sessions) }}</span>
         {{ who(c) }} ·
         <span :class="['wait', { late: waitMinutes(s, state.now) >= 20 }]">{{ fmtWait(waitMinutes(s, state.now), s.state) }}</span>

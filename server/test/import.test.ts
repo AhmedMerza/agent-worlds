@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, symlinkSync, utimesSync, chmodSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { history, inRepo, scanClaude, scanAgents, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
+import { history, codexHistory, codexSession, inRepo, scanClaude, scanAgents, projectDirName, findTranscript, newestTranscript } from '../src/history.ts';
 import { startServer, spawnTmuxPty } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { midTurn } from '../src/transcript.ts';
@@ -138,6 +138,48 @@ function agentHomes(root: string, repo: string, pid: number) {
   return { kimiId, kimiDir, qwenId, codexId, rollout, geminiId, agyId, homes: { qwen, codex, gemini, agy } };
 }
 
+test('codex history: reads resumable rollout metadata and the last user prompt', async () => {
+  const root = tmp();
+  const repo = join(root, 'repo-a');
+  mkdirSync(repo);
+  const f = agentHomes(root, repo, 402);
+  const items = await codexHistory(f.homes.codex, 10, repo);
+  assert.deepEqual(items.map((h) => [h.sessionId, h.agent, h.cwd, h.lastPrompt]), [[f.codexId, 'codex', repo, 'check the diff']]);
+  assert.deepEqual(codexSession(f.homes.codex, f.codexId), { path: f.rollout, cwd: repo });
+  assert.deepEqual(await codexHistory(f.homes.codex, 10, join(root, 'other')), []);
+  assert.equal(codexSession(f.homes.codex, '../../etc'), null);
+});
+
+test('codex history endpoint lists and resumes a Codex conversation', async () => {
+  const root = tmp();
+  const repo = join(root, 'repo-a');
+  mkdirSync(repo);
+  const f = agentHomes(root, repo, 402);
+  const calls: any[] = [];
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: join(root, 'none') }), port: 0 };
+  const app = startServer(cfg, 'c'.repeat(64), {
+    home: root, procRoot: join(root, 'no-proc'), homes: f.homes,
+    installed: () => true,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
+    createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-a-codex', dir: o.repo, branch: null, pane: '%42' }; },
+  });
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  const H = { 'x-aw-token': 'c'.repeat(64), 'content-type': 'application/json' };
+  try {
+    const listed = await (await fetch(`${base}/api/history?repo=${encodeURIComponent(repo)}`, { headers: H })).json() as any;
+    const item = listed.sessions.find((h: any) => h.agent === 'codex');
+    assert.deepEqual([item.sessionId, item.lastPrompt, item.worldId], [f.codexId, 'check the diff', 'web']);
+    const mode = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: f.codexId, agent: 'codex', permissionMode: 'plan' }) });
+    assert.equal(mode.status, 400, 'permission modes stay Claude-only');
+    const resumed = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: f.codexId, agent: 'codex' }) });
+    assert.equal(resumed.status, 201);
+    assert.equal(calls.length, 1);
+    assert.deepEqual({ agent: calls[0].agent, resume: calls[0].resume, repo: calls[0].repo }, { agent: 'codex', resume: f.codexId, repo });
+    assert.equal(app.store.sessions.get('starting:aw-repo-a-codex')?.agent, 'codex');
+  } finally { await app.close(); }
+});
+
 test('process scan: codex, qwen, kimi, gemini and agy too, each session from its own files', () => {
   const root = tmp();
   const repo = join(root, 'repo-a');
@@ -232,9 +274,9 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
   let quits = false;
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: dir }), port: 0 };
   const app = startServer(cfg, 'i'.repeat(64), {
-    home: root, procRoot: proc,
+    home: root, procRoot: proc, homes: { codex: join(root, 'codex-empty') },
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
-    createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-a-1', dir: o.repo, branch: null }; },
+    createSession: async (o) => { calls.push(o); return { tmuxSession: `aw-repo-a-${calls.length}`, dir: o.repo, branch: null, pane: `%${7 + calls.length}` }; },
     stopProcess: async (pid) => { stopped.push(pid); return quits; },
   });
   await app.store.handle({ ...ev.start, session_id: 'managed-1', cwd: root }, '%7');
@@ -276,11 +318,12 @@ test('server: unmanaged list, history flags, resume conflict / force / validatio
     quits = true;
     assert.equal((await post('/api/sessions/resume', { sessionId: a, stop: true })).status, 201, 'stopped, then resumed');
     assert.deepEqual(stopped, [201, 201]);
+    await app.store.handle({ ...ev.start, session_id: a, cwd: repo }, '%8');
     const forced = await post('/api/sessions/resume', { sessionId: a, force: true });
     assert.equal(forced.status, 201);
     const ok = await post('/api/sessions/resume', { sessionId: b });
     assert.equal(ok.status, 201);
-    assert.deepEqual(ok.body, { tmuxSession: 'aw-repo-a-1' });
+    assert.deepEqual(ok.body, { tmuxSession: 'aw-repo-a-3' });
     assert.deepEqual({ ...calls[2], spawnDirect: undefined }, { spawnDirect: undefined, repo, worktree: false, resume: b, claudeBin: 'claude', home: root, prefix: undefined });
   } finally { await app.close(); }
 });
@@ -482,6 +525,7 @@ test('kimi: recent sessions list Kimi sessions with their last prompt; resume st
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }], claudeProjectsDir: join(root, 'none') }), port: 0 };
   const app = startServer(cfg, 'i'.repeat(64), {
     home: root,
+    installed: () => true,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
     createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-repo-k-1', dir: o.repo, branch: null, pane: '%40' }; },
   });

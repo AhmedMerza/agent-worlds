@@ -14,7 +14,7 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, requestCatchup, ui, updateNow, focusTerminal } from './store'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -58,6 +58,7 @@ function openNewTask(worldId?: string, run = false) {
 }
 const menuOpen = ref(false)
 const updating = ref(false)
+const recovering = ref(false)
 const updateError = ref('')
 /** The session the update refusal names: only permission and question cards hold the server's pending requests. */
 const unanswered = computed(() => needsYou.value.find((s) => s.card?.kind === 'permission' || s.card?.kind === 'question'))
@@ -65,6 +66,12 @@ async function onUpdate(force = false) {
   updating.value = true; updateError.value = ''
   const err = await updateNow(force)
   if (err) { updateError.value = err; updating.value = false }
+}
+async function onRecover() {
+  recovering.value = true
+  const r = await resumeAll()
+  recovering.value = false
+  if (r) showToast(r.failed.length ? `Restoring ${r.started.length}; ${r.failed.length} could not be resumed.` : `Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
 }
 watch(phone, () => { menuOpen.value = false })
 async function onNotify() {
@@ -149,6 +156,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       <pre v-if="updateError" class="err">{{ updateError }}</pre>
     </div>
     <div v-else-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
+    <div v-if="state.connected && state.recoverable.length" class="banner recovery" role="status">
+      <span><b>{{ state.recoverable.length }}</b> session{{ state.recoverable.length === 1 ? '' : 's' }} interrupted when this computer or Agent Worlds stopped.</span>
+      <button class="btn primary" :disabled="recovering" @click="onRecover">{{ recovering ? 'Resuming…' : 'Resume all' }}</button>
+      <button class="btn" @click="ui.recentRepo = null; ui.recentOpen = true">Review individually</button>
+    </div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
     <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
       <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'chats' && needsYou.length" class="count">{{ needsYou.length }}</span></button>

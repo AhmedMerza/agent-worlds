@@ -64,7 +64,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     // Codex hands an MCP server only a few env vars unless told: the bridge needs the pane and our home.
     const mcp = o.home ? [`mcp_servers.aw.command=${JSON.stringify(MCP_BRIDGE)}`, 'mcp_servers.aw.args=["codex"]',
       'mcp_servers.aw.env_vars=["TMUX_PANE","AGENT_WORLDS_PTY","AGENT_WORLDS_HOME"]', 'mcp_servers.aw.default_tools_approval_mode="approve"'].flatMap((c) => ['-c', c]) : [];
-    return { args: [...hooks, ...mcp, ...task], env: {} };
+    return { args: o.resume ? ['resume', ...hooks, ...mcp, o.resume] : [...hooks, ...mcp, ...task], env: {} };
   }
   if (agent === 'kimi') {
     // Kimi takes no starting prompt (and drops keys typed before it draws): createSession turns the
@@ -75,7 +75,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   }
   if (agent === 'qwen') {
     // `-i` runs the task and stays interactive (a bare prompt would run once and exit).
-    return { args: o.task ? ['-i', o.task] : [], env: o.home ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: writeQwenSettings(o.home, o.provider) } : {} };
+    return { args: o.resume ? ['--resume', o.resume] : o.task ? ['-i', o.task] : [], env: o.home ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: writeQwenSettings(o.home, o.provider) } : {} };
   }
   if (agent === 'gemini') {
     // yolo only where our hooks are then the one gate on its tools: with them installed, and in a folder with no
@@ -87,7 +87,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     const yolo = o.dir !== undefined && !existsSync(join(o.dir, '.gemini', 'settings.json'));
     const g = writeGeminiHome(o.home);
     // Gemini saves trust by rename, which would replace our link with a copy: it writes the user's file itself.
-    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...task], env: { GEMINI_CLI_HOME: g.root, GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(g.real, 'trustedFolders.json') } };
+    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...(o.resume ? ['--resume', o.resume] : task)], env: { GEMINI_CLI_HOME: g.root, GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(g.real, 'trustedFolders.json') } };
   }
   if (agent === 'agy') {
     // `-i` runs the task and stays interactive, like Qwen's. AGENT_WORLDS_DIR names the project to its hooks:
@@ -99,7 +99,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     if (!o.home) return { args: task, env: {} };
     const dir = writeAgyHooks(o.home);
     const yolo = o.dir !== undefined && !agyHooksAbove(o.dir) && !agyHooksAbove(dirname(dir));
-    return { args: [...(yolo ? ['--dangerously-skip-permissions'] : []), '--add-dir', dir, ...task], env: o.dir ? { AGENT_WORLDS_DIR: o.dir } : {} };
+    return { args: [...(yolo ? ['--dangerously-skip-permissions'] : []), '--add-dir', dir, ...(o.resume ? ['--conversation', o.resume] : task)], env: o.dir ? { AGENT_WORLDS_DIR: o.dir } : {} };
   }
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];

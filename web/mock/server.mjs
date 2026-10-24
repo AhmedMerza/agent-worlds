@@ -41,7 +41,7 @@ const sessions = new Map(Object.entries({
   'repo-f': mkSession('repo-f', 'mobile', { conflicts: [{ withId: 'repo-e', reason: 'both touch sync' }], helpers: [1, 2, 3, 4, 5].map((n) => ({ id: `h${n}`, task: `Helper ${n}`, state: n % 2 ? 'working' : 'done', startedAt: now() })) }),
   'repo-g': mkSession('repo-g', 'mobile', { state: 'idle', now: 'Ready for a new task', context: { used: 5000, limit: 200000, pct: 3 } }),
   'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: { ...perm('npm run lint'), seenCount: 5 } }),
-  'repo-j': mkSession('repo-j', 'tools', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting (terminal only)', card: { ...perm('rm -rf build'), live: false } }),
+  'repo-j': mkSession('repo-j', 'tools', { agent: 'codex', state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting (terminal only)', card: { ...perm('rm -rf build'), live: false } }),
   'repo-t': mkSession('repo-t', 'web', { branch: 'fix/totals', worktree: true, state: 'waiting', waitingSince: now() - 4 * MIN, now: 'Waiting for your reply', card: { kind: 'asking', summary: 'I fixed the rounding. Do you want the same change in the invoice totals as well?' } }),
   'repo-v': mkSession('repo-v', 'tools', { state: 'waiting', waitingSince: now() - 7 * MIN, now: 'AskUserQuestion: Which test runner should I use?', card: { kind: 'question', requestId: crypto.randomUUID(), live: false, questions: [{ question: 'Which test runner should I use?', header: 'Runner', multiSelect: false, options: [{ label: 'Vitest', description: 'Already installed' }, { label: 'Jest', description: '' }] }] } }),
   'repo-w': mkSession('repo-w', 'tools', { state: 'done', waitingSince: now() - 9 * MIN, now: 'Bash', card: { kind: 'done', summary: 'Committed the change.', review: { baseSha: 'c0ffee', files: [{ path: 'src/a.ts', added: 3, deleted: 1 }], commits: [{ sha: 'd00dfeed1234', subject: 'Tighten the parser' }], uncommitted: [], tests: null, diff: '@@ src/a.ts @@\n-old\n+new' } } }),
@@ -59,10 +59,15 @@ let unmanaged = process.env.MOCK_EMPTY ? [] : [
 ]
 const history = [
   { sessionId: 'sess-k', cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', lastPrompt: 'Refactor the checkout form validation', lastActivity: now() - 12 * MIN, running: true, managed: false },
+  { sessionId: 'sess-codex', agent: 'codex', cwd: '/work/repo-j', repo: '/work/repo-j', worldId: 'tools', lastPrompt: 'Review the deployment scripts', lastActivity: now() - 45 * MIN, running: false, managed: false },
   { sessionId: 'sess-n', cwd: '/work/repo-n', repo: '/work/repo-n', worldId: 'mobile', lastPrompt: 'Add dark mode to the settings screen', lastActivity: now() - 3 * 60 * MIN, running: false, managed: false },
   { sessionId: 'sess-p', cwd: '/work/repo-p', repo: '/work/repo-p', worldId: 'tools', lastPrompt: 'Write a script that prunes old build artifacts', lastActivity: now() - 30 * 60 * MIN, running: false, managed: false },
   { sessionId: 'repo-a', cwd: '/work/repo-a', repo: '/work/repo-a', worldId: 'web', lastPrompt: 'Add a filter to the table', lastActivity: now() - 4 * MIN, running: true, managed: true },
 ]
+let recoverable = process.env.MOCK_RECOVERY ? [
+  { id: 'sess-codex', agent: 'codex', cwd: '/work/repo-j', task: 'Review the deployment scripts', lastPrompt: 'Review the deployment scripts', updatedAt: now() - 45 * MIN },
+] : []
+if (recoverable.length) history.find((h) => h.sessionId === 'sess-codex').interrupted = true
 
 // ---- demo mode (MOCK_DEMO=1 | worlds): deterministic data for recording the README media ----
 // 1 = two worlds with five sessions; "worlds" = no worlds yet, same sessions (their repos live in /tmp/demo/*).
@@ -162,7 +167,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
-  if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], unmanaged })
+  if (req.method === 'GET' && url.pathname === '/api/state') return json(200, { worlds, sessions: [...sessions.values()], recoverable, unmanaged })
   if (req.method === 'GET' && url.pathname === '/api/claude-defaults') return json(200, { permissionMode: 'acceptEdits' })
   if (req.method === 'GET' && url.pathname === '/api/agents') return json(200, { agents: [{ id: 'claude', name: 'Claude Code', installed: true, modes: true }, { id: 'codex', name: 'Codex', installed: true, modes: false, decides: false, task: true }, { id: 'qwen', name: 'Qwen Code', installed: true, modes: false, decides: false, task: true }, { id: 'kimi', name: 'Kimi Code', installed: true, modes: false, decides: false, task: true }, { id: 'gemini', name: 'Gemini CLI', installed: true, modes: false, decides: true, task: true }, { id: 'agy', name: 'Antigravity CLI', installed: true, modes: false, decides: false, task: true }], default: 'claude' })
   if (req.method === 'GET' && url.pathname === '/api/providers') return json(200, { providers: [{ id: 'openrouter', name: 'OpenRouter', model: 'openrouter/free', keyUrl: 'https://openrouter.ai/keys', hasKey: false }, { id: 'gemini', name: 'Gemini API', model: 'gemini-2.5-flash', keyUrl: 'https://aistudio.google.com/apikey', hasKey: true }, { id: 'anthropic', name: 'Anthropic', model: 'claude-sonnet-5-5', keyUrl: 'https://console.anthropic.com/settings/keys', hasKey: false }, ...servers], default: defaultProvider })
@@ -172,11 +177,32 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'PUT' && /^\/api\/providers\/[a-z0-9-]+\/key$/.test(url.pathname)) return json(200, { hasKey: (await readBody(req)).key !== null })
   if (req.method === 'POST' && url.pathname === '/api/agents/default') return json(200, { default: 'codex' })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
+  if (req.method === 'POST' && url.pathname === '/api/sessions/resume-all') {
+    const started = recoverable.map((s) => s.id)
+    for (const r of recoverable) {
+      const h = history.find((x) => x.sessionId === r.id)
+      const s = mkSession(r.id, h?.worldId ?? null, { agent: r.agent, repoName: path.basename(r.cwd), repo: h?.repo ?? r.cwd, cwd: r.cwd, task: r.lastPrompt ?? r.task, state: 'idle', now: 'Resumed after restart' })
+      sessions.set(r.id, s); upsert(s)
+      if (h) { h.running = true; h.managed = true; h.interrupted = false }
+    }
+    recoverable = []
+    broadcast({ type: 'recoverable', sessions: [] })
+    return json(200, { started, failed: [] })
+  }
+  const recoveryMatch = url.pathname.match(/^\/api\/recovery\/([^/]+)$/)
+  if (req.method === 'DELETE' && recoveryMatch) {
+    const id = decodeURIComponent(recoveryMatch[1])
+    recoverable = recoverable.filter((s) => s.id !== id)
+    const h = history.find((x) => x.sessionId === id)
+    if (h) h.interrupted = false
+    broadcast({ type: 'recoverable', sessions: recoverable })
+    return json(200, { ok: true })
+  }
   const hm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/)
   if (hm && req.method === 'GET') {
     const s = sessions.get(decodeURIComponent(hm[1]))
     if (!s) return json(404, { error: 'no such session' })
-    if (s.state === 'starting' || (s.agent && s.agent !== 'claude')) return json(409, { error: 'no transcript yet for this session' })
+    if (s.state === 'starting' || (s.agent && !['claude', 'codex'].includes(s.agent))) return json(409, { error: 'no transcript yet for this session' })
     return json(200, { turns: [
       { who: 'you', text: s.task || 'Fix the failing checkout test' },
       { who: 'step', text: 'Read: src/checkout.ts' },
@@ -202,7 +228,8 @@ const server = http.createServer(async (req, res) => {
     unmanaged = unmanaged.filter((u) => u.sessionId !== h.sessionId); pushUnmanaged()
     h.running = true; h.managed = true
     const id = h.sessionId, tmux = `aw-${id}`
-    const s = mkSession(id, h.worldId, { repoName: path.basename(h.repo), repo: h.repo, cwd: h.cwd, task: h.lastPrompt, state: 'starting', now: 'Starting', tmux: { session: tmux, pane: '%9' } })
+    h.interrupted = false
+    const s = mkSession(id, h.worldId, { agent: h.agent, repoName: path.basename(h.repo), repo: h.repo, cwd: h.cwd, task: h.lastPrompt, state: 'starting', now: `Restoring saved ${h.agent === 'codex' ? 'Codex' : 'Claude Code'} conversation…`, tmux: { session: tmux, pane: '%9' } })
     sessions.set(`starting:${tmux}`, { ...s, id: `starting:${tmux}` }); upsert(sessions.get(`starting:${tmux}`))
     setTimeout(() => { sessions.delete(`starting:${tmux}`); broadcast({ type: 'session-removed', id: `starting:${tmux}` }); sessions.set(id, { ...s, state: 'idle', now: 'Resumed' }); upsert(sessions.get(id)) }, 2500)
     return json(201, { tmuxSession: tmux })
@@ -341,10 +368,10 @@ server.on('upgrade', (req, socket) => {
     socket.on('close', () => wsClients.delete(socket))
     socket.on('error', () => wsClients.delete(socket))
     onFrames(socket, () => {})
-    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()], unmanaged, runs: [...runs.values()] })))
+    socket.write(frame(JSON.stringify({ type: 'snapshot', worlds, sessions: [...sessions.values()], recoverable, unmanaged, runs: [...runs.values()] })))
     return
   }
-  // /pty: echo terminal (imitates the Claude prompt with a slash-command menu; MOCK_ECHO=1 for a plain echo)
+  // /pty: demo terminal with each agent's native-looking prompt; MOCK_ECHO=1 for a plain echo.
   const id = url.searchParams.get('session') || '?'
   socket.on('error', () => {})
   if (process.env.MOCK_ECHO) { // plain echo terminal
@@ -357,6 +384,8 @@ server.on('upgrade', (req, socket) => {
     return
   }
   const s = sessions.get(id)
+  const codex = s?.agent === 'codex'
+  const codexPermission = codex && s.card?.kind === 'permission' && s.card.live === false
   const SKILLS = [['checkpoint', 'Is this session still worth keeping?'], ['clear', 'Clear the conversation'], ['commit', 'Commit with a good message'], ['compact', 'Summarise the context'], ['handover-save', 'Save the plan before /clear'], ['mr-create', 'Open a merge request'], ['ship-check', 'Final check before merging']]
   const menu = (buf) => (buf.startsWith('/') && !buf.includes(' ') ? SKILLS.filter(([n]) => n.startsWith(buf.slice(1))) : [])
   const render = (buf) => {
@@ -365,7 +394,12 @@ server.on('upgrade', (req, socket) => {
     return `\r\x1b[J\x1b[1m>\x1b[0m ${buf}` + (items.length ? `\x1b7\r\n${list}\x1b8` : '')
   }
   let buf = ''
-  socket.write(frame(`\x1b[1m✻ Claude Code\x1b[0m \x1b[2m(demo)\x1b[0m\r\n\r\n\x1b[1m>\x1b[0m ${s?.task ?? ''}\r\n\r\n⏺ Reading the project files\r\n  \x1b[2m⎿ Read 4 files\x1b[0m\r\n⏺ ${s?.now ?? 'Working'}\r\n\r\n` + render('')))
+  const intro = codexPermission
+    ? `\x1b[1mCodex CLI\x1b[0m \x1b[2m(demo)\x1b[0m\r\n\r\nWould you like to run the following command?\r\n\r\n\x1b[1m$ ${s.card.command}\x1b[0m\r\n\r\n  1. Yes, proceed\r\n  2. No, and tell Codex what to do differently\r\n\r\n`
+    : codex
+    ? `\x1b[1mCodex CLI\x1b[0m \x1b[2m(demo)\x1b[0m\r\n\r\n\x1b[1m>\x1b[0m ${s?.task ?? ''}\r\n\r\n• ${s?.now ?? 'Working'}\r\n\r\n`
+    : `\x1b[1m✻ Claude Code\x1b[0m \x1b[2m(demo)\x1b[0m\r\n\r\n\x1b[1m>\x1b[0m ${s?.task ?? ''}\r\n\r\n⏺ Reading the project files\r\n  \x1b[2m⎿ Read 4 files\x1b[0m\r\n⏺ ${s?.now ?? 'Working'}\r\n\r\n`
+  socket.write(frame(intro + render('')))
   onFrames(socket, (text) => {
     let m
     try { m = JSON.parse(text) } catch { return }
@@ -375,10 +409,14 @@ server.on('upgrade', (req, socket) => {
         const line = buf; buf = ''
         const question = s?.card?.kind === 'question' && s.card.live === false ? s.card.questions[0] : null
         const choice = question?.options.find((o, i) => line.trim() === String(i + 1) || line.trim().toLowerCase() === o.label.toLowerCase())
-        const reply = question
+        const permissionChoice = codexPermission && ['1', '2'].includes(line.trim()) ? line.trim() : null
+        const reply = permissionChoice
+          ? permissionChoice === '1' ? 'Approved. Continuing.' : 'Denied. Waiting for new instructions.'
+          : codexPermission ? 'Choose 1 or 2.'
+          : question
           ? choice ? `⏺ Answered: ${choice.label}` : `Choose 1–${question.options.length}.`
           : line.startsWith('/') ? `\x1b[2mRunning ${line.split(' ')[0]} ...\x1b[0m` : '⏺ On it. I will check the failing test first.'
-        if (choice) resume(s, 'Continuing with your answer')
+        if (choice || permissionChoice) resume(s, permissionChoice === '2' ? 'Waiting for new instructions' : 'Continuing with your answer')
         socket.write(frame(`\r\x1b[J\x1b[1m>\x1b[0m ${line}\r\n\r\n${reply}\r\n\r\n` + render('')))
       } else if (ch === '\x7f') { buf = buf.slice(0, -1); socket.write(frame(render(buf))) }
       else if (ch === '\t') { const it = menu(buf)[0]; if (it) { buf = `/${it[0]} `; socket.write(frame(render(buf))) } }
