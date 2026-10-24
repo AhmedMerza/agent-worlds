@@ -13,9 +13,11 @@ const urlOf = (cfg: Config, token: string) => {
   return `http://${host.includes(':') ? `[${host}]` : host}:${cfg.port}/?token=${token}`;
 };
 
-function die(msg: string): never {
+const STARTUP_ERROR = 78;
+
+function die(msg: string, code = 1): never {
   process.stderr.write(`agent-worlds: ${msg}\n`);
-  process.exit(1);
+  process.exit(code);
 }
 
 type Row = { name: string; path: string; attached: number; state: string | null };
@@ -76,15 +78,15 @@ config dir: ${homeDir()} (override with AGENT_WORLDS_HOME)`;
 
 async function main(argv: string[]) {
   const [cmd, ...rest] = argv;
-  const load = () => { try { return loadConfig(); } catch (e) { die((e as Error).message); } };
+  const load = (code = 1) => { try { return loadConfig(); } catch (e) { die((e as Error).message, code); } };
   switch (cmd) {
     case 'start': {
-      const cfg = load();
+      const cfg = load(STARTUP_ERROR);
       const token = ensureToken();
       const app = startServer(cfg, token, { onRestart: () => void app.close().then(() => process.exit(RESTART_CODE)) });
       try { await app.listen(); } catch (e) {
-        if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') die(`port ${cfg.port} is busy — another Agent Worlds? change "port" in ${join(homeDir(), 'config.json')}`);
-        die(`cannot listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`);
+        if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') die(`port ${cfg.port} is busy — another Agent Worlds? change "port" in ${join(homeDir(), 'config.json')}`, STARTUP_ERROR);
+        die(`cannot listen on ${cfg.host}:${cfg.port}: ${(e as Error).message}`, STARTUP_ERROR);
       }
       writeEndpoint(cfg);
       writeHooksFile(homeDir());

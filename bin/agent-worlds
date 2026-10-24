@@ -6,11 +6,26 @@ run() { node --disable-warning=ExperimentalWarning "$here/../server/src/cli.ts" 
 # Keep a copy of the server's output, so a server that died can be diagnosed afterwards.
 log="${AGENT_WORLDS_HOME:-$HOME/.config/agent-worlds}/server.log"
 mkdir -p "$(dirname "$log")"
-# "Update now" in the web app exits the server with 75: start it again on the new code.
+# "Update now" exits with 75. Unexpected crashes restart too, but a fast crash loop stops.
+crashes=0
 while :; do
+  started=$SECONDS
   echo "--- $(date '+%F %T') start" >> "$log"
   run "$@" 2>&1 | tee -a "$log"; code=${PIPESTATUS[0]}
   echo "--- $(date '+%F %T') exited $code" >> "$log"
-  [ "$code" = 75 ] || exit "$code"
-  echo "agent-worlds: restarting on the new code"
+  if [ "$code" = 75 ]; then
+    crashes=0
+    echo "agent-worlds: restarting on the new code"
+    continue
+  fi
+  [ "$code" != 78 ] || exit 1 # configuration/listen error: retrying cannot help
+  [ "$code" != 0 ] && [ "$code" != 130 ] && [ "$code" != 143 ] || exit "$code"
+  [ $((SECONDS - started)) -lt 30 ] || crashes=0
+  crashes=$((crashes + 1))
+  if [ "$crashes" -gt 3 ]; then
+    echo "agent-worlds: stopped after 4 crashes in under 30 seconds"
+    exit "$code"
+  fi
+  echo "agent-worlds: crashed (exit $code); restarting in 1 second ($crashes/3)"
+  sleep 1
 done
