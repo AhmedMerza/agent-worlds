@@ -80,6 +80,24 @@ test('a GUI-started session shows at once as starting, then becomes the real ses
   } finally { ws.close(); await app.close(); }
 });
 
+test('a first hook during starting-card setup wins without leaving a duplicate placeholder', async () => {
+  let entered!: () => void, release!: () => void, calls = 0;
+  const blocked = new Promise<void>((r) => { entered = r; });
+  const resume = new Promise<void>((r) => { release = r; });
+  const { app, repo } = await boot({}, { deps: {
+    repoInfo: async (cwd: string) => { if (++calls === 1) { entered(); await resume; } return { repo: cwd, branch: 'main', worktree: false, top: cwd }; },
+    branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-race',
+  } });
+  try {
+    const adding = app.store.addStarting({ tmuxSession: 'aw-race', pane: '%58', dir: repo, task: 'fast worker', parent: 'lead' });
+    await blocked;
+    await app.store.handle({ ...ev.start, session_id: 'sess-race', cwd: repo }, '%58');
+    release();
+    assert.equal(await adding, 'sess-race');
+    assert.deepEqual(app.store.list().map((s: any) => [s.id, s.task, s.parent]), [['sess-race', 'fast worker', 'lead']]);
+  } finally { await app.close(); }
+});
+
 test('/api/agents says which CLIs take a starting task and wait on their permission hook', async () => {
   const { app, base } = await boot();
   try {

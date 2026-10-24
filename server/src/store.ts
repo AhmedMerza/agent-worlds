@@ -306,16 +306,21 @@ export class Store {
    * session on the first event from that pane; swept with the tmux session if it dies.
    */
   async addStarting(o: { tmuxSession: string; pane: string | null; direct?: string | null; dir: string; task: string | null; agent?: AgentId; via?: string | null; parent?: string | null }): Promise<string> {
-    // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
-    const live = [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
-    if (live) {
+    const liveInTerminal = () => [...this.sessions.values()].find((x) => (o.pane && x.tmux?.pane === o.pane) || (o.direct && x.direct === o.direct));
+    const adopt = (live: Session) => {
       if (o.task && !live.task) live.task = oneLine(o.task, 200);
       live.via ??= o.via ?? null;
       if (o.parent && !live.parent) { live.parent = o.parent; this.deps.parents?.set(live.id, o.parent); }
       this.push(live); return live.id;
-    }
+    };
+    // Claude's first hook can beat us here (it is quick to start): then that session already is this one.
+    const live = liveInTerminal();
+    if (live) return adopt(live);
     const id = `starting:${o.tmuxSession}`;
     const s = await this.create(id, o.dir, null, null, o.agent);
+    // Its first hook can also arrive while create() awaits repoInfo.
+    const raced = liveInTerminal();
+    if (raced && raced !== s) { this.sessions.delete(id); return adopt(raced); }
     s.state = 'starting';
     s.task = o.task ? oneLine(o.task, 200) : null;
     s.tmux = o.pane ? { session: o.tmuxSession, pane: o.pane } : null;

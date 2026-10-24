@@ -409,7 +409,7 @@ describe('otherAgents', () => {
   })
 })
 
-import { stepTags } from '../src/logic'
+import { maxSpawnedOf, queueRestart, stepTags } from '../src/logic'
 import type { Run, Session, StepKind } from '../src/types'
 
 describe('stepTags', () => {
@@ -424,6 +424,18 @@ describe('stepTags', () => {
     expect(stepTags([run('running', [{ ...step('plan', null), pane: '%7' }, step('build', null)])], [ses('starting-1', '%7'), ses('other', '%8')]))
       .toEqual({ 'starting-1': 'step 1/2 · Plan' })
   })
+})
+
+it('queues the first restart through active work and questions, but not the second click', () => {
+  expect(queueRestart('working', false)).toBe(true)
+  expect(queueRestart('waiting', false)).toBe(true)
+  expect(queueRestart('waiting', true)).toBe(false)
+  expect(queueRestart('done', false)).toBe(false)
+})
+
+it('accepts only a non-negative whole worker limit, never a blank as zero', () => {
+  expect(['', ' ', '-1', '1.5', 'nope'].map(maxSpawnedOf)).toEqual([null, null, null, null, null])
+  expect(['0', '2'].map(maxSpawnedOf)).toEqual([0, 2])
 })
 
 describe('openHttp', () => {

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive } from '../logic'
+import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive, queueRestart } from '../logic'
 import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession, restartQueued } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import QuestionOptions from './QuestionOptions.vue'
@@ -72,7 +72,7 @@ const restartArmed = computed(() => !!s.value && restartQueued.has(s.value.id))
 async function restart() {
   const cur = s.value
   if (!cur) return
-  if (cur.state === 'working' && !restartQueued.has(cur.id)) {
+  if (queueRestart(cur.state, restartQueued.has(cur.id))) {
     restartQueued.add(cur.id)
     showToast(`${cur.repoName} restarts when this turn ends. Click Restart again to restart now and stop the turn.`)
     return

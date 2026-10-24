@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { modeField, modeOptions, cardKey } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, runsNeedingYou, runOf, skipped } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, runsNeedingYou, runOf, skipped, restartQueued } from '../src/store'
 import type { Run } from '../src/types'
 import { mk, perm } from './helpers'
 
@@ -97,6 +97,18 @@ describe('applyMessage', () => {
 describe('backoffMs', () => {
   it('grows and caps', () => {
     expect([0, 1, 2, 10].map(backoffMs)).toEqual([500, 1000, 2000, 15000])
+  })
+})
+
+describe('queued restarts', () => {
+  afterEach(() => { restartQueued.clear(); vi.unstubAllGlobals() })
+  it('restarts each ready session once when several finish together', async () => {
+    const fn = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    vi.stubGlobal('fetch', fn)
+    applyMessage(state, { type: 'snapshot', worlds, sessions: [mk('a', { state: 'done' }), mk('b', { state: 'done' })] })
+    restartQueued.add('a'); restartQueued.add('b')
+    await nextTick(); await Promise.resolve(); await nextTick(); await Promise.resolve()
+    expect(fn.mock.calls.map(([url]) => url).sort()).toEqual(['/api/sessions/a/restart', '/api/sessions/b/restart'])
   })
 })
 

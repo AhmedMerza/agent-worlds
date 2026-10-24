@@ -8,6 +8,13 @@ export const LABEL: Record<SessionState, string> = {
   starting: 'Starting', working: 'Working', waiting: 'Needs you', done: 'Done', error: 'Error', idle: 'Idle',
 }
 
+/** A first Restart click waits through active work and questions; a second click acts now. */
+export const queueRestart = (state: SessionState, queued: boolean): boolean => !queued && (state === 'working' || state === 'waiting')
+export const maxSpawnedOf = (raw: string): number | null => {
+  const n = raw.trim() ? Number(raw) : NaN
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
 /** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 /** What each kind of run step does, in the order a run usually has them. */
 export const STEP_LABEL: Record<StepKind, string> = { plan: 'Plan', 'review-plan': 'Review plan', build: 'Build', 'review-code': 'Review code' }
