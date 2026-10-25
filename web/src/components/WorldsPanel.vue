@@ -22,12 +22,25 @@ onMounted(async () => {
 const agents = ref<AgentInfo[]>([])
 const spawnAgents = ref<SpawnAgents>(null)
 const spawnOn = (id: string) => !spawnAgents.value || id in spawnAgents.value
-const modelsOf = (id: string) => spawnAgents.value?.[id]?.join(', ') ?? ''
-function setSpawn(id: string, on: boolean, models?: string) {
+/** Models of an agent turned off, so turning it back on doesn't quietly widen it to any model. */
+const kept: Record<string, string[]> = {}
+const modelsOf = (id: string) => (spawnAgents.value?.[id] ?? kept[id])?.join(', ') ?? ''
+const noneOn = computed(() => agents.value.length > 0 && agents.value.every((a) => !spawnOn(a.id)))
+/** What leads may use now, in words, for the saved toast. */
+function spawnSummary(s: SpawnAgents) {
+  if (!s) return 'leads may start workers on any agent and model'
+  const on = agents.value.filter((a) => a.id in s).map((a) => `${a.name}${s[a.id].length ? ` (${s[a.id].join(', ')})` : ''}`)
+  return on.length ? `leads may start workers on ${on.join(', ')}` : 'leads may not start workers on any agent'
+}
+async function setSpawn(el: HTMLInputElement, id: string, on: boolean, models?: string) {
   const next: Record<string, string[]> = spawnAgents.value ? { ...spawnAgents.value } : Object.fromEntries(agents.value.map((a) => [a.id, []]))
-  if (!on) delete next[id]
-  else next[id] = models === undefined ? next[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
-  return run(saveSpawnAgents(next).then((res) => { if (res.ok) spawnAgents.value = res.data.spawn; return res }))
+  if (!on) { kept[id] = next[id] ?? []; delete next[id] }
+  else next[id] = models === undefined ? next[id] ?? kept[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
+  const res = await saveSpawnAgents(next)
+  error.value = res.ok ? '' : (res as { error: string }).error
+  if (!res.ok) { if (el.type === 'checkbox') el.checked = spawnOn(id); else el.value = modelsOf(id); return }
+  spawnAgents.value = res.data.spawn
+  showToast(`Saved: ${spawnSummary(res.data.spawn)}.`)
 }
 
 async function run(r: Promise<{ ok: boolean; error?: string }>) {
@@ -88,12 +101,14 @@ defineExpose({ escape })
 
       <template v-else>
         <fieldset v-if="agents.length" class="spawn-agents">
-          <legend>Agents leads may start workers on, in every world</legend>
-          <p class="why">Turn one off to save its usage, e.g. keep Claude for leads and send workers to Codex. Name the models a lead may pick, or leave the box empty for any.</p>
+          <legend>Which agents leads may give work to (all worlds)</legend>
+          <p class="why">A lead session can start its own worker sessions. Untick an agent to keep leads off it, e.g. to save Claude usage by sending workers to Codex. Name the models a lead may pick (like haiku, sonnet), or leave the box empty for any. Changes save at once.</p>
           <div v-for="a in agents" :key="a.id" class="spawn">
-            <label><input type="checkbox" :checked="spawnOn(a.id)" @change="setSpawn(a.id, ($event.target as HTMLInputElement).checked)"> {{ a.name }}</label>
-            <input v-if="a.models && spawnOn(a.id)" class="reply-in" :value="modelsOf(a.id)" placeholder="any model, or list them: a, b" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn(a.id, true, ($event.target as HTMLInputElement).value)">
+            <label><input type="checkbox" :checked="spawnOn(a.id)" @change="setSpawn($event.target as HTMLInputElement, a.id, ($event.target as HTMLInputElement).checked)"> {{ a.name }}</label>
+            <input v-if="a.models" class="reply-in" :value="modelsOf(a.id)" :disabled="!spawnOn(a.id)" placeholder="any model" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn($event.target as HTMLInputElement, a.id, true, ($event.target as HTMLInputElement).value)">
+            <small v-else class="why">uses its own model</small>
           </div>
+          <p v-if="noneOn" class="err" role="status">With every agent off, leads cannot start any workers.</p>
         </fieldset>
         <p v-if="!state.worlds.length" class="why">No worlds yet. Create one below.</p>
         <ul class="wlist">

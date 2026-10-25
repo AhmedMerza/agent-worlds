@@ -172,7 +172,7 @@ pre.diff{max-height:320px;overflow:auto}
 .winfo{border:1px solid var(--line);border-left:4px solid var(--tint);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .wrow{display:flex;gap:6px}
 .swatches{display:flex;gap:6px;flex-wrap:wrap}
-.spawn-agents{border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin:0 0 12px}.spawn-agents legend{padding:0 4px;font-weight:600}.spawn-agents .spawn{margin:4px 0}.spawn-agents .reply-in{flex:1;min-width:12em}
+.spawn-agents{border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin:0 0 12px}.spawn-agents legend{padding:0 4px;font-weight:600}.spawn-agents .spawn{display:grid;grid-template-columns:minmax(10em,auto) 1fr;margin:2px 0}.spawn-agents .spawn label{padding:6px 0}.spawn-agents .reply-in{min-width:0}.spawn-agents .reply-in:disabled{opacity:.45}
 .spawn{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;margin:8px 0}.spawn label{display:flex;gap:6px;align-items:center}.spawn .num{width:4.5em}
 .swatch{width:22px;height:22px;border-radius:4px;border:2px solid transparent;cursor:pointer;padding:0}
 .swatch[aria-pressed="true"]{border-color:var(--ink)}
