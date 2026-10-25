@@ -32,8 +32,13 @@ export const AGENTS = {
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);
 
-/** The flag that picks a model, for the CLIs whose flag we know (Qwen's model comes from its provider). */
-export const MODEL_FLAG: Partial<Record<AgentId, string>> = { claude: '--model', codex: '-m', gemini: '-m' };
+/**
+ * The flag that picks a model, for the CLIs whose flag we know (Qwen's model comes from its provider). It goes in as
+ * one `--model=<id>` argument: Gemini reads a separate value that starts with `-` as a flag of its own.
+ */
+export const MODEL_FLAG: Partial<Record<AgentId, string>> = { claude: '--model', codex: '--model', gemini: '--model' };
+/** A model id a lead or the user may pick; never one starting with `-`, which a CLI could take for a flag. */
+export const isModelId = (m: unknown): m is string => typeof m === 'string' && MODEL_RE.test(m) && !m.startsWith('-');
 
 /**
  * Which agents (and models) leads may start with aw_spawn: agent id -> its allowed models, [] for any.
@@ -45,7 +50,7 @@ export function parseSpawnAgents(raw: unknown): SpawnAgents {
   const out: SpawnAgents = {};
   for (const [id, models] of Object.entries(raw)) {
     if (!isAgent(id)) throw new Error(`spawnAgents: unknown agent ${id} (one of ${Object.keys(AGENTS).join(', ')})`);
-    if (!Array.isArray(models) || models.some((m) => typeof m !== 'string' || !MODEL_RE.test(m))) throw new Error(`spawnAgents.${id} must be a list of model ids`);
+    if (!Array.isArray(models) || models.some((m) => !isModelId(m))) throw new Error(`spawnAgents.${id} must be a list of model ids`);
     if (models.length && !MODEL_FLAG[id]) throw new Error(`spawnAgents.${id}: Agent Worlds cannot pick a model for ${AGENTS[id].name}, so its list must be empty`);
     out[id] = [...new Set(models as string[])];
   }
@@ -79,7 +84,7 @@ const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Permiss
  */
 export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider; dir?: string; model?: string }): { args: string[]; env: Record<string, string> } {
   const task = o.task ? ['--', o.task] : [];
-  const model = o.model && MODEL_FLAG[agent] ? [MODEL_FLAG[agent]!, o.model] : [];
+  const model = o.model && MODEL_FLAG[agent] ? [`${MODEL_FLAG[agent]}=${o.model}`] : [];
   if (agent === 'codex') {
     const cmd = JSON.stringify(hookCommand('codex'));
     const hooks = o.home ? CODEX_EVENTS.flatMap((ev) => ['-c', `hooks.${ev}=[{hooks=[{type="command",command=${cmd},timeout=${ev === 'PermissionRequest' ? HOLD_TIMEOUT : FAST_TIMEOUT}}]}]`]) : [];

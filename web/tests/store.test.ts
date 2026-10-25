@@ -255,29 +255,68 @@ describe('skipped', () => {
 
 describe('saveSpawnAgents', () => {
   afterEach(() => vi.unstubAllGlobals())
-  it('two quick changes both reach the server, in order, even while the first save is slow', async () => {
-    const { saveSpawnAgents, spawnRules } = await import('../src/store')
-    const { spawnWith } = await import('../src/logic')
-    const sent: unknown[] = []
+  /** A server that answers each POST after `ms` and records how many were in flight at once. */
+  function server(answer: (body: any, n: number) => { status: number; json: unknown }, ms = 20) {
+    const seen: any[] = []; let inFlight = 0, most = 0
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
-      const body = JSON.parse(init.body); sent.push(body.spawn)
-      await new Promise((r) => setTimeout(r, 30))
-      return { ok: true, status: 200, json: async () => body }
+      const body = JSON.parse(init.body); seen.push(body)
+      most = Math.max(most, ++inFlight)
+      await new Promise((r) => setTimeout(r, seen.length === 1 ? ms * 3 : ms)) // the first is the slowest
+      inFlight--
+      const a = answer(body, seen.length)
+      return { ok: a.status < 300, status: a.status, json: async () => a.json }
     }))
+    return { seen, most: () => most }
+  }
+  it('quick changes go one at a time, in order, each built on the one before', async () => {
+    const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
+    const { spawnWith } = await import('../src/logic')
+    const s = server((b) => ({ status: 200, json: { spawn: b.spawn } }))
+    loadSpawnRules(null)
     const ids = ['claude', 'qwen', 'kimi']
-    spawnRules.value = null
-    const a = saveSpawnAgents(spawnWith(spawnRules.value, ids, 'qwen', null)) // the panel builds each change on spawnRules
+    const a = saveSpawnAgents(spawnWith(spawnRules.value, ids, 'qwen', null))
     const b = saveSpawnAgents(spawnWith(spawnRules.value, ids, 'kimi', null))
     await Promise.all([a, b])
-    expect(sent).toEqual([{ claude: [], kimi: [] }, { claude: [] }])
+    expect(s.most(), 'never two saves at once').toBe(1)
+    expect(s.seen.map((x) => x.spawn)).toEqual([{ claude: [], kimi: [] }, { claude: [] }])
+    expect(s.seen.map((x) => x.base), 'each names the rules it was built on').toEqual([null, { claude: [], kimi: [] }])
     expect(spawnRules.value).toEqual({ claude: [] })
   })
-  it('a failed save puts the rules back', async () => {
-    const { saveSpawnAgents, spawnRules } = await import('../src/store')
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'disk full' }) })))
-    spawnRules.value = { claude: [] }
-    const res = await saveSpawnAgents({})
-    expect(res.ok).toBe(false)
+  it('a failed save puts back the last saved rules, not a newer change still on its way', async () => {
+    const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
+    server((b, n) => (n === 1 ? { status: 500, json: { error: 'disk full' } } : { status: 200, json: { spawn: b.spawn } }))
+    loadSpawnRules({ claude: [] })
+    const a = saveSpawnAgents({})
+    const b = saveSpawnAgents({ codex: [] })
+    expect((await a).ok).toBe(false)
+    expect(spawnRules.value, 'the newer change stays while it is saving').toEqual({ codex: [] })
+    expect((await b).ok).toBe(true)
+    expect(spawnRules.value).toEqual({ codex: [] })
+  })
+  it('two failures in a row end on the last saved rules, not the first unsaved one', async () => {
+    const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
+    server(() => ({ status: 500, json: { error: 'disk full' } }))
+    loadSpawnRules({ claude: [] })
+    await Promise.all([saveSpawnAgents({}), saveSpawnAgents({ codex: [] })])
     expect(spawnRules.value).toEqual({ claude: [] })
+  })
+  it('rules changed in another window: the server\'s are shown, and the refused change is not kept', async () => {
+    const { saveSpawnAgents, spawnRules, spawnFailures, loadSpawnRules } = await import('../src/store')
+    server(() => ({ status: 409, json: { error: 'changed in another window', spawn: { codex: [] } } }))
+    loadSpawnRules(null)
+    const failures = spawnFailures.value
+    const res = await saveSpawnAgents({ claude: [] })
+    expect(res.ok).toBe(false)
+    expect(spawnRules.value).toEqual({ codex: [] })
+    expect(spawnFailures.value, 'inputs showing the refused text are redrawn').toBe(failures + 1)
+  })
+  it('opening the panel while a save is on its way does not overwrite it with older rules', async () => {
+    const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
+    server((b) => ({ status: 200, json: { spawn: b.spawn } }))
+    loadSpawnRules(null)
+    const a = saveSpawnAgents({ codex: [] })
+    loadSpawnRules(null) // a fetch that left before the save landed
+    expect(spawnRules.value).toEqual({ codex: [] })
+    await a
   })
 })

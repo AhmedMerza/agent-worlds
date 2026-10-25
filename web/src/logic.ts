@@ -562,7 +562,13 @@ export function spawnWith(rules: Record<string, string[]> | null, ids: string[],
   return next
 }
 
-/** The same rules with agent `id` one place earlier (-1) or later (1) in the preference order. */
-export function spawnMoved(rules: Record<string, string[]>, id: string, dir: -1 | 1): Record<string, string[]> {
-  return Object.fromEntries(moveId(Object.keys(rules), id, dir).map((k) => [k, rules[k]]))
+/**
+ * The same rules with agent `id` swapped with its neighbour earlier (-1) or later (1) among the `shown` agents
+ * (rules can name an agent that is not installed here, which no list shows).
+ */
+export function spawnMoved(rules: Record<string, string[]>, id: string, dir: -1 | 1, shown: string[]): Record<string, string[]> {
+  const keys = Object.keys(rules), seen = keys.filter((k) => shown.includes(k))
+  const other = seen[seen.indexOf(id) + dir]
+  if (!seen.includes(id) || !other) return rules
+  return Object.fromEntries(keys.map((k) => (k === id ? other : k === other ? id : k)).map((k) => [k, rules[k]]))
 }

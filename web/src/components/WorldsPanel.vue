@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { World } from '../types'
-import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, spawnRules, type AgentInfo, type SpawnAgents } from '../store'
+import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, spawnRules, spawnFailures, loadSpawnRules, type AgentInfo, type SpawnAgents } from '../store'
 import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf, spawnWith, spawnMoved } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 
@@ -15,10 +15,11 @@ const ids = computed(() => state.worlds.map((w) => w.id))
 const sessionsIn = (w: World) => sessionList.value.filter((s) => s.worldId === w.id).length
 onMounted(async () => {
   box.value?.focus()
-  const r = await fetchAgents()
+  const r = await fetchAgents(true) // fresh: another window may have changed the rules
   if (!r.ok) { agentsError.value = r.error; return }
-  agents.value = r.data.agents.filter((a) => a.installed)
-  spawnRules.value = r.data.spawn ?? null
+  // Your default first: with no rules set, that is the agent a lead gets when it names none
+  agents.value = r.data.agents.filter((a) => a.installed).sort((x, y) => Number(y.id === r.data.default) - Number(x.id === r.data.default))
+  loadSpawnRules(r.data.spawn ?? null)
 })
 /** Which agents (and models) leads in any world may start their workers on, in order of preference. */
 const agents = ref<AgentInfo[] | null>(null)
@@ -51,7 +52,7 @@ function setSpawn(id: string, on: boolean, models?: string) {
   const list = models === undefined ? spawnRules.value?.[id] ?? kept[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
   return saveSpawn(spawnWith(spawnRules.value, agentIds(), id, on ? list : null))
 }
-const moveSpawn = (id: string, dir: -1 | 1) => saveSpawn(spawnMoved(spawnWith(spawnRules.value, agentIds(), id, spawnRules.value?.[id] ?? []), id, dir))
+const moveSpawn = (id: string, dir: -1 | 1) => saveSpawn(spawnMoved(spawnWith(spawnRules.value, agentIds(), id, spawnRules.value?.[id] ?? []), id, dir, agentIds()))
 
 async function run(r: Promise<{ ok: boolean; error?: string }>) {
   const res = await r
@@ -121,7 +122,7 @@ defineExpose({ escape })
               <button class="btn" :disabled="i === 0" :aria-label="`Prefer ${a.name} over the agent above it`" @click="moveSpawn(a.id, -1)">↑</button>
               <button class="btn" :disabled="!spawnOn(spawnList[i + 1]?.id ?? '') || !spawnList[i + 1]" :aria-label="`Prefer the agent below over ${a.name}`" @click="moveSpawn(a.id, 1)">↓</button>
             </span>
-            <input v-if="a.models" class="reply-in models" :value="modelsOf(a.id)" :disabled="!spawnOn(a.id)" :placeholder="a.id === 'claude' ? 'any model, or e.g. haiku, sonnet' : 'any model'" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn(a.id, true, ($event.target as HTMLInputElement).value)">
+            <input v-if="a.models" :key="`${a.id}-${spawnFailures}`" class="reply-in models" :value="modelsOf(a.id)" :disabled="!spawnOn(a.id)" :placeholder="a.id === 'claude' ? 'any model, or e.g. haiku, sonnet' : 'any model'" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn(a.id, true, ($event.target as HTMLInputElement).value)">
             <small v-else class="why models">uses its own model</small>
           </div>
           <p v-if="noneOn" class="err" role="status">With every agent off, leads cannot start any workers.</p>

@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, MAX_SPAWNED, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
-import { AGENTS, MODEL_FLAG, defaultAgent, installed as onPath, isAgent, parseSpawnAgents, type AgentId, type Provider } from './agents.ts';
+import { AGENTS, MODEL_FLAG, defaultAgent, installed as onPath, isAgent, isModelId, parseSpawnAgents, type AgentId, type Provider, type SpawnAgents } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
 import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
@@ -571,6 +571,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const b = await readBody(req);
       let spawn;
       try { spawn = b.spawn === null ? undefined : parseSpawnAgents(b.spawn); } catch (e) { return send(res, 400, { error: (e as Error).message }); }
+      // Built on rules another tab or phone has changed since: saving the whole list would undo that change
+      if (b.base !== undefined && JSON.stringify(b.base) !== JSON.stringify(cfg.spawnAgents ?? null)) return send(res, 409, { error: 'These rules were changed in another window; showing the saved ones now. Make your change again.', spawn: cfg.spawnAgents ?? null });
       const err = saveConfigKey(join(opts.home ?? homeDir(), 'config.json'), 'spawnAgents', spawn);
       if (err) return send(res, 500, { error: err });
       cfg.spawnAgents = spawn;
@@ -1049,6 +1051,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     reject(404, 'Not Found');
   };
+  /**
+   * The agents leads may start, most preferred first, with their allowed models ([] for any), installed ones only.
+   * With no rules set: every agent, the user's default first.
+   */
+  function spawnRules(): SpawnAgents {
+    const usable = (id: AgentId) => id === 'claude' || hasBin(AGENTS[id].bin);
+    if (cfg.spawnAgents) return Object.fromEntries(Object.entries(cfg.spawnAgents).filter(([id]) => usable(id as AgentId)));
+    const def = defaultAgent(cfg.defaultAgent, usable);
+    return Object.fromEntries([def, ...(Object.keys(AGENTS) as AgentId[]).filter((id) => id !== def && usable(id))].map((id) => [id, []]));
+  }
   const peer = (s: Session): Peer => ({ id: s.id, agent: AGENTS[s.agent].name, model: s.model, context: s.context, repo: s.repoName, branch: s.branch, task: s.task, state: s.state, parent: s.parent });
   const label = (s: { id: string; agent: AgentId; repoName: string; branch: string | null }) => `${AGENTS[s.agent].name} ${s.id.slice(0, 8)} (${s.repoName}${s.branch ? `@${s.branch}` : ''})`;
   function mcpContext(self: string | null) {
@@ -1061,8 +1073,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         return [...(me ? [{ ...peer(me), you: true as const }] : []), ...others.map(peer)];
       },
       spawnable: () => {
-        const allowed = Object.entries(cfg.spawnAgents ?? Object.fromEntries(Object.keys(AGENTS).map((id) => [id, []]))) as [AgentId, string[]][];
-        const usable = allowed.filter(([id]) => id === 'claude' || hasBin(AGENTS[id].bin));
+        const usable = Object.entries(spawnRules()) as [AgentId, string[]][];
         if (!usable.length) return 'The user has allowed no agents for it.';
         return `The user allows, most preferred first: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Use the first that suits each task and a later one only when it does not; within an agent, a cheaper model for simple work.`;
       },
@@ -1143,21 +1154,22 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the ${world.name} world's folders: ${world.repos.join(', ')}`);
     if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
     // Left out: the first agent the user allows (their order is their preference), else their default
-    const first = cfg.spawnAgents && (Object.keys(cfg.spawnAgents) as AgentId[]).find((id) => id === 'claude' || hasBin(AGENTS[id].bin));
-    const agent = isAgent(a.agent) ? a.agent : first || defaultAgent(cfg.defaultAgent);
+    const agent = isAgent(a.agent) ? a.agent : (Object.keys(spawnRules())[0] as AgentId | undefined) ?? defaultAgent(cfg.defaultAgent);
     if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);
-    const allowed = cfg.spawnAgents, model = a.model?.trim() || undefined;
+    const allowed = cfg.spawnAgents, asked = a.model?.trim() || undefined;
     const off = allowed && (steps ? steps.map((st) => st.agent) : [agent]).find((id) => !allowed[id]);
     if (off) return new Error(`the user has not allowed leads to start ${AGENTS[off].name}. ${mcpContext(self).spawnable()}`);
-    if (model) {
+    if (asked) {
       if (steps) return new Error('model is for a single session, not a run: leave it out with steps');
       if (!MODEL_FLAG[agent]) return new Error(`Agent Worlds cannot pick a model for ${AGENTS[agent].name}: leave model out`);
-      if (!MODEL_RE.test(model)) return new Error('model must be a model id like sonnet or gpt-5-codex');
+      if (!isModelId(asked)) return new Error('model must be a model id like sonnet or gpt-5-codex');
       const models = allowed?.[agent] ?? [];
-      if (models.length && !models.includes(model)) return new Error(`the user allows ${AGENTS[agent].name} only on ${models.join(', ')}`);
+      if (models.length && !models.includes(asked)) return new Error(`the user allows ${AGENTS[agent].name} only on ${models.join(', ')}`);
     }
+    // Left out where the user named models: the first of them, not the CLI's own (often the dearest)
+    const model = asked ?? (steps ? undefined : allowed?.[agent]?.[0]);
     const max = world.maxSpawned ?? MAX_SPAWNED;
     // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
     const places = new Set<string>();
@@ -1231,7 +1243,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const first = r.dir === null;
       const task = stepPrompt(r, i);
       // A worktree's branch is named after the run, not after the step's long first message.
-      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null }, async (c) => {
+      // A lead's run keeps to the models the user named for each step's agent
+      const model = r.parent ? cfg.spawnAgents?.[step.agent]?.[0] : undefined;
+      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null }, async (c) => {
         if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
         step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       });

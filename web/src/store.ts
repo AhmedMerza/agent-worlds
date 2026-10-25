@@ -246,7 +246,8 @@ export interface AgentInfo { id: string; name: string; installed: boolean; modes
 export type SpawnAgents = Record<string, string[]> | null
 /** The agent CLIs this server can start, and which one new sessions use by default. Cached (a page asks from several places); failures are not cached, so a later try can succeed. */
 let agentsCache: Promise<ApiResult<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>> | null = null
-export function fetchAgents(): Promise<ApiResult<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>> {
+export function fetchAgents(fresh = false): Promise<ApiResult<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>> {
+  if (fresh) agentsCache = null
   agentsCache ??= api<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>('GET', '/api/agents').then((r) => { if (!r.ok) agentsCache = null; return r })
   return agentsCache
 }
@@ -265,18 +266,37 @@ export const saveDefaultAgent = (agent: string) => {
 
 /** The agents and models leads may start workers on, as Manage worlds shows them: changed at once, saved in click order. */
 export const spawnRules = ref<SpawnAgents>(null)
-let spawnSaving: Promise<unknown> = Promise.resolve(), spawnChanges = 0
+/** Bumped when a save fails, so inputs showing the refused value are drawn again from spawnRules. */
+export const spawnFailures = ref(0)
+/** The rules the server last confirmed, and the ones the next save builds on (what was sent before it). */
+let spawnSaved: SpawnAgents = null, spawnBase: SpawnAgents = null, spawnSaving: Promise<unknown> = Promise.resolve(), spawnChanges = 0, spawnPending = 0
+/** The rules as the server has them, unless a save from here is still on its way. */
+export function loadSpawnRules(spawn: SpawnAgents) {
+  if (spawnPending) return
+  spawnRules.value = spawnSaved = spawnBase = spawn
+}
 /**
  * Shows `spawn` at once and saves it after any save still in flight, so quick clicks each build on the one before
- * instead of on what the server last answered. A failed save puts the rules back unless a newer change came since.
+ * instead of on what the server last answered. Each save names the rules it was built on: if another window changed
+ * them since, the server refuses (409) and sends its own, which are shown. A failed save puts back the last saved
+ * rules unless a newer change came since.
  */
 export function saveSpawnAgents(spawn: SpawnAgents): Promise<ApiResult<{ spawn: SpawnAgents }>> {
-  const before = spawnRules.value, change = ++spawnChanges
-  spawnRules.value = spawn
+  const base = spawnBase, change = ++spawnChanges
+  spawnRules.value = spawnBase = spawn
+  spawnPending++
   agentsCache = null
-  const saved = spawnSaving.then(() => api<{ spawn: SpawnAgents }>('POST', '/api/agents/spawn', { spawn }))
+  const saved = spawnSaving.then(async () => {
+    const r = await fetch('/api/agents/spawn', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spawn, base }) }).catch(() => null)
+    const data = r ? await r.json().catch(() => null) as { spawn?: SpawnAgents; error?: string } | null : null
+    spawnPending--
+    if (r?.ok) { spawnSaved = data?.spawn ?? null; return { ok: true as const, data: { spawn: spawnSaved } } }
+    if (r?.status === 409 && data && 'spawn' in data) spawnSaved = data.spawn ?? null
+    if (change === spawnChanges || r?.status === 409) { spawnRules.value = spawnBase = spawnSaved; spawnFailures.value++ }
+    return { ok: false as const, error: r ? errorText(r.status, data) : 'Could not reach the server.' }
+  })
   spawnSaving = saved
-  return saved.then((res) => { if (!res.ok && change === spawnChanges) spawnRules.value = before; return res })
+  return saved
 }
 
 /** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */
