@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync } from
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { parseSpawnAgents, type SpawnAgents } from './agents.ts';
 
 export type World = {
   id: string; name: string; color: string; repos: string[];
@@ -19,6 +20,8 @@ export type Config = {
   defaultAgent?: string;
   /** The model provider New session picks for Qwen Code (see providers.ts); the user's own Qwen settings when unset. */
   defaultProvider?: string;
+  /** The agents and models leads may start with aw_spawn (see parseSpawnAgents); every agent, any model, when unset. */
+  spawnAgents?: SpawnAgents;
 };
 
 export const DEFAULTS: Config = {
@@ -61,6 +64,7 @@ export function parseConfig(raw: unknown): Config {
   cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
   cfg.defaultAgent = str('defaultAgent');
   cfg.defaultProvider = str('defaultProvider');
+  if (r.spawnAgents !== undefined && r.spawnAgents !== null) cfg.spawnAgents = parseSpawnAgents(r.spawnAgents);
   const cpd = str('claudeProjectsDir');
   if (cpd) cfg.claudeProjectsDir = resolve(cpd.replace(/^~(?=\/)/, homedir()));
   if (r.contextLimit !== undefined) {

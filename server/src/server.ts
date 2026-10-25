@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, MAX_SPAWNED, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
-import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId, type Provider } from './agents.ts';
+import { AGENTS, MODEL_FLAG, defaultAgent, installed as onPath, isAgent, isModelId, parseSpawnAgents, type AgentId, type Provider, type SpawnAgents } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
 import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
@@ -575,7 +575,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return send(res, 200, out);
     }
     if (method === 'GET' && url.pathname === '/api/agents') {
-      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || hasBin(a.bin), modes: a.modes, decides: a.decides, task: a.task })), default: defaultAgent(cfg.defaultAgent, (id) => id === 'claude' || hasBin(AGENTS[id].bin)) });
+      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || hasBin(a.bin), modes: a.modes, decides: a.decides, task: a.task, models: !!MODEL_FLAG[id as AgentId] })), default: defaultAgent(cfg.defaultAgent, (id) => id === 'claude' || hasBin(AGENTS[id].bin)), spawn: cfg.spawnAgents ?? null });
+    }
+    // Which agents and models leads may start with aw_spawn; null lets them use every agent, any model.
+    if (method === 'POST' && url.pathname === '/api/agents/spawn') {
+      const b = await readBody(req);
+      let spawn;
+      try { spawn = b.spawn === null ? undefined : parseSpawnAgents(b.spawn); } catch (e) { return send(res, 400, { error: (e as Error).message }); }
+      // Built on rules another tab or phone has changed since: saving the whole list would undo that change
+      if (b.base !== undefined && JSON.stringify(b.base) !== JSON.stringify(cfg.spawnAgents ?? null)) return send(res, 409, { error: 'These rules were changed in another window; showing the saved ones now. Make your change again.', spawn: cfg.spawnAgents ?? null });
+      const err = saveConfigKey(join(opts.home ?? homeDir(), 'config.json'), 'spawnAgents', spawn);
+      if (err) return send(res, 500, { error: err });
+      cfg.spawnAgents = spawn;
+      return send(res, 200, { spawn: spawn ?? null });
     }
     if (method === 'POST' && url.pathname === '/api/agents/default') {
       const b = await readBody(req);
@@ -1050,13 +1062,32 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     reject(404, 'Not Found');
   };
+  /**
+   * The agents leads may start, most preferred first, with their allowed models ([] for any), installed ones only.
+   * With no rules set: every agent, the user's default first.
+   */
+  function spawnRules(): SpawnAgents {
+    const usable = (id: AgentId) => id === 'claude' || hasBin(AGENTS[id].bin);
+    if (cfg.spawnAgents) return Object.fromEntries(Object.entries(cfg.spawnAgents).filter(([id]) => usable(id as AgentId)));
+    const def = defaultAgent(cfg.defaultAgent, usable);
+    return Object.fromEntries([def, ...(Object.keys(AGENTS) as AgentId[]).filter((id) => id !== def && usable(id))].map((id) => [id, []]));
+  }
+  const peer = (s: Session): Peer => ({ id: s.id, agent: AGENTS[s.agent].name, model: s.model, context: s.context, repo: s.repoName, branch: s.branch, task: s.task, state: s.state, parent: s.parent });
   const label = (s: { id: string; agent: AgentId; repoName: string; branch: string | null }) => `${AGENTS[s.agent].name} ${s.id.slice(0, 8)} (${s.repoName}${s.branch ? `@${s.branch}` : ''})`;
   function mcpContext(self: string | null) {
     return {
       self,
       // Its own workers too while they start (before their CLI reached /mcp)
-      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (self && s.parent === self)))
-        .map((s) => ({ id: s.id, agent: AGENTS[s.agent].name, repo: s.repoName, branch: s.branch, task: s.task, state: s.state, parent: s.parent })),
+      peers: (): Peer[] => {
+        const me = self ? store.sessions.get(self) : undefined;
+        const others = [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (self && s.parent === self)));
+        return [...(me ? [{ ...peer(me), you: true as const }] : []), ...others.map(peer)];
+      },
+      spawnable: () => {
+        const usable = Object.entries(spawnRules()) as [AgentId, string[]][];
+        if (!usable.length) return 'The user has allowed no agents for it.';
+        return `The user allows, most preferred first: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Use the first that suits each task and a later one only when it does not; within an agent, a cheaper model for simple work.`;
+      },
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
         const hits = [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id) && s.id.startsWith(to));
@@ -1084,9 +1115,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    * Starts a session: New session, a run's step and aw_spawn all come here. Its CLI in tmux (or a pty), then its
    * 'starting' card; `made` runs in between. card: the task its card shows, when not the first message.
    */
-  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; via?: string | null; card?: string; parent?: string | null },
+  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
-    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
     return { ...c, id };
@@ -1133,10 +1164,23 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const folder = world.repos.includes(path) ? path : byName.length === 1 ? byName[0] : null;
     if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the ${world.name} world's folders: ${world.repos.join(', ')}`);
     if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
-    const agent = isAgent(a.agent) ? a.agent : defaultAgent(cfg.defaultAgent);
+    // Left out: the first agent the user allows (their order is their preference), else their default
+    const agent = isAgent(a.agent) ? a.agent : (Object.keys(spawnRules())[0] as AgentId | undefined) ?? defaultAgent(cfg.defaultAgent);
     if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);
+    const allowed = cfg.spawnAgents, asked = a.model?.trim() || undefined;
+    const off = allowed && (steps ? steps.map((st) => st.agent) : [agent]).find((id) => !allowed[id]);
+    if (off) return new Error(`the user has not allowed leads to start ${AGENTS[off].name}. ${mcpContext(self).spawnable()}`);
+    if (asked) {
+      if (steps) return new Error('model is for a single session, not a run: leave it out with steps');
+      if (!MODEL_FLAG[agent]) return new Error(`Agent Worlds cannot pick a model for ${AGENTS[agent].name}: leave model out`);
+      if (!isModelId(asked)) return new Error('model must be a model id like sonnet or gpt-5-codex');
+      const models = allowed?.[agent] ?? [];
+      if (models.length && !models.includes(asked)) return new Error(`the user allows ${AGENTS[agent].name} only on ${models.join(', ')}`);
+    }
+    // Left out where the user named models: the first of them, not the CLI's own (often the dearest)
+    const model = asked ?? (steps ? undefined : allowed?.[agent]?.[0]);
     const max = world.maxSpawned ?? MAX_SPAWNED;
     // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
     const places = new Set<string>();
@@ -1158,15 +1202,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         store.log(lead, `Started run ${r.id} in ${basename(folder)}: ${task}`); store.push(lead);
         return `Started run ${r.id} in ${folder} (${r.steps.map((x) => `${STEP_KINDS[x.kind].label} on ${AGENTS[x.agent].name}`).join(', ')}). Each step's session shows in aw_agents with you as its parent; end one with aw_stop.`;
       }
-      const c = await launch({ agent, repo: folder, task, worktree, parent: self });
+      const c = await launch({ agent, repo: folder, task, worktree, parent: self, ...(model ? { model } : {}) });
       // Its card counts under the cap from here on: release the place now, not after the wait for its id
       spawning.set(world.id, spawning.get(world.id)! - 1); released = true;
-      store.log(lead, `Started ${AGENTS[agent].name} in ${basename(folder)}: ${task}`); store.push(lead);
+      const on = `${AGENTS[agent].name}${model ? ` (${model})` : ''}`;
+      store.log(lead, `Started ${on} in ${basename(folder)}: ${task}`); store.push(lead);
       const id = await realId(c.id, c.pane ?? null, c.direct ? c.tmuxSession : null);
-      if (id === 'gone') return new Error(`${AGENTS[agent].name} in ${c.dir} exited before it came up: look at its terminal, or ask the user`);
+      if (id === 'gone') return new Error(`${on} in ${c.dir} exited before it came up: look at its terminal, or ask the user`);
       return id
-        ? `Started ${AGENTS[agent].name} in ${c.dir}: session id ${id}. It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`
-        : `Started ${AGENTS[agent].name} in ${c.dir} (tmux session ${c.tmuxSession}), but its agent is not up yet: it may be asking to trust the folder in its terminal. It shows in aw_agents with you as its parent once it is; until then, aw_stop takes ${c.tmuxSession}.`;
+        ? `Started ${on} in ${c.dir}: session id ${id}. It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`
+        : `Started ${on} in ${c.dir} (tmux session ${c.tmuxSession}), but its agent is not up yet: it may be asking to trust the folder in its terminal. It shows in aw_agents with you as its parent once it is; until then, aw_stop takes ${c.tmuxSession}.`;
     } catch (e) { return new Error(`could not start it: ${(e as Error).message}`); }
     finally { if (!released) spawning.set(world.id, spawning.get(world.id)! - 1); }
   }
@@ -1209,7 +1254,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const first = r.dir === null;
       const task = stepPrompt(r, i);
       // A worktree's branch is named after the run, not after the step's long first message.
-      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null }, async (c) => {
+      // A lead's run keeps to the models the user named for each step's agent
+      const model = r.parent ? cfg.spawnAgents?.[step.agent]?.[0] : undefined;
+      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null }, async (c) => {
         if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
         step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       });

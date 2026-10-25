@@ -241,11 +241,14 @@ export async function askClaude(id: string, repoName: string, command: string): 
   return ok
 }
 export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode; agent?: string; provider?: string; model?: string }
-export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean; decides?: boolean; task?: boolean }
+export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean; decides?: boolean; task?: boolean; models?: boolean }
+/** Agent id -> the models leads may start it on ([] for any); an agent left out is off. null: every agent, any model. */
+export type SpawnAgents = Record<string, string[]> | null
 /** The agent CLIs this server can start, and which one new sessions use by default. Cached (a page asks from several places); failures are not cached, so a later try can succeed. */
-let agentsCache: Promise<ApiResult<{ agents: AgentInfo[]; default: string }>> | null = null
-export function fetchAgents(): Promise<ApiResult<{ agents: AgentInfo[]; default: string }>> {
-  agentsCache ??= api<{ agents: AgentInfo[]; default: string }>('GET', '/api/agents').then((r) => { if (!r.ok) agentsCache = null; return r })
+let agentsCache: Promise<ApiResult<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>> | null = null
+export function fetchAgents(fresh = false): Promise<ApiResult<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>> {
+  if (fresh) agentsCache = null
+  agentsCache ??= api<{ agents: AgentInfo[]; default: string; spawn?: SpawnAgents }>('GET', '/api/agents').then((r) => { if (!r.ok) agentsCache = null; return r })
   return agentsCache
 }
 /** Model providers a Qwen session can use instead of the user's ~/.qwen setup. Keys are never sent back, only whether one is saved. */
@@ -259,6 +262,45 @@ export const saveProviderKey = (id: string, key: string | null) => api<{ hasKey:
 export const saveDefaultAgent = (agent: string) => {
   agentsCache = null // the default (and anything else the server changed) is refetched next time
   return api<{ default: string }>('POST', '/api/agents/default', { agent })
+}
+
+/** The agents and models leads may start workers on, as Manage worlds shows them: changed at once, saved in click order. */
+export const spawnRules = ref<SpawnAgents>(null)
+/** Bumped when a save fails, so inputs showing the refused value are drawn again from spawnRules. */
+export const spawnFailures = ref(0)
+/** The rules as the server last confirmed them (its own, normalised copy): each save says it was built on these. */
+let spawnSaved: SpawnAgents = null, spawnSaving: Promise<unknown> = Promise.resolve(), spawnChanges = 0, spawnPending = 0
+/** The rules as the server has them, unless a save from here is still on its way. */
+export function loadSpawnRules(spawn: SpawnAgents) {
+  if (spawnPending) return
+  spawnRules.value = spawnSaved = spawn
+}
+/**
+ * Shows `spawn` at once and saves it after any save still in flight, so quick clicks each build on the one before
+ * instead of on what the server last answered. Each save names, as it goes out, the rules the server last confirmed:
+ * if another window changed them since, the server refuses (409) and sends its own, which are shown. A failed save
+ * puts back the last saved rules unless a newer change came since.
+ */
+export function saveSpawnAgents(spawn: SpawnAgents): Promise<ApiResult<{ spawn: SpawnAgents }>> {
+  const change = ++spawnChanges
+  spawnRules.value = spawn
+  spawnPending++
+  agentsCache = null
+  const saved = spawnSaving.then(async () => {
+    const r = await fetch('/api/agents/spawn', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spawn, base: spawnSaved }) }).catch(() => null)
+    const data = r ? await r.json().catch(() => null) as { spawn?: SpawnAgents; error?: string } | null : null
+    spawnPending--
+    if (r?.ok) {
+      spawnSaved = data?.spawn ?? null
+      if (change === spawnChanges) spawnRules.value = spawnSaved // the server's copy (models deduplicated)
+      return { ok: true as const, data: { spawn: spawnSaved } }
+    }
+    if (r?.status === 409 && data && 'spawn' in data) spawnSaved = data.spawn ?? null
+    if (change === spawnChanges || r?.status === 409) { spawnRules.value = spawnSaved; spawnFailures.value++ }
+    return { ok: false as const, error: r ? errorText(r.status, data) : 'Could not reach the server.' }
+  })
+  spawnSaving = saved
+  return saved
 }
 
 /** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */

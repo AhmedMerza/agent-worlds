@@ -470,3 +470,29 @@ it('teamOf names the lead that started a session, or none', () => {
   expect(teamOf({ parent: 'lead' }, sessions)).toBe('team of Manager')
   expect(teamOf({ parent: 'gone' }, sessions)).toBe('team of a lead that ended')
 })
+
+describe('lead spawn rules', () => {
+  const ids = ['claude', 'codex', 'qwen']
+  it('spells out "everything" on the first change and puts an agent turned back on last', async () => {
+    const { spawnWith } = await import('../src/logic')
+    expect(spawnWith(null, ids, 'qwen', null)).toEqual({ claude: [], codex: [] })
+    expect(spawnWith(null, ids, 'claude', ['haiku'])).toEqual({ claude: ['haiku'], codex: [], qwen: [] })
+    const haiku = spawnWith({ claude: [], codex: [] }, ids, 'claude', ['haiku'])
+    expect(Object.keys(haiku), 'changing models keeps its place').toEqual(['claude', 'codex'])
+    expect(Object.keys(spawnWith(haiku, ids, 'qwen', []))).toEqual(['claude', 'codex', 'qwen'])
+  })
+  it('moves an agent up or down among the shown ones, and stops at the ends', async () => {
+    const { spawnMoved } = await import('../src/logic')
+    const r = { claude: ['haiku'], codex: [] }
+    expect(Object.entries(spawnMoved(r, 'codex', -1, ids))).toEqual([['codex', []], ['claude', ['haiku']]])
+    expect(Object.keys(spawnMoved(r, 'claude', 1, ids))).toEqual(['codex', 'claude'])
+    expect(spawnMoved(r, 'claude', -1, ids)).toEqual(r)
+    expect(spawnMoved(r, 'codex', 1, ids)).toEqual(r)
+    expect(spawnMoved(r, 'qwen', -1, ids)).toEqual(r)
+  })
+  it('skips an agent no list shows (not installed here), so every click visibly moves', async () => {
+    const { spawnMoved } = await import('../src/logic')
+    const r = { claude: [], agy: [], codex: [] } // agy is not installed: the panel shows claude, codex
+    expect(Object.keys(spawnMoved(r, 'codex', -1, ['claude', 'codex']))).toEqual(['codex', 'agy', 'claude'])
+  })
+})

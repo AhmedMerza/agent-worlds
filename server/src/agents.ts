@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { GEMINI_EVENTS } from './gemini.ts';
+import { MODEL_RE } from './providers.ts';
 import { AGY_EVENTS, agyHooksDir } from './agy.ts';
 import { hookCommand, hooksBlock, HOOK_EVENTS, HOLD_TIMEOUT, FAST_TIMEOUT, MCP_BRIDGE } from './hooks.ts';
 
@@ -31,6 +32,31 @@ export const AGENTS = {
 export type AgentId = keyof typeof AGENTS;
 export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Object.hasOwn(AGENTS, a);
 
+/**
+ * The flag that picks a model, for the CLIs whose flag we know (Qwen's model comes from its provider). It goes in as
+ * one `--model=<id>` argument: Gemini reads a separate value that starts with `-` as a flag of its own.
+ */
+export const MODEL_FLAG: Partial<Record<AgentId, string>> = { claude: '--model', codex: '--model', gemini: '--model' };
+/** A model id a lead or the user may pick; never one starting with `-`, which a CLI could take for a flag. */
+export const isModelId = (m: unknown): m is string => typeof m === 'string' && MODEL_RE.test(m) && !m.startsWith('-');
+
+/**
+ * Which agents (and models) leads may start with aw_spawn: agent id -> its allowed models, [] for any.
+ * An agent not listed is off. Unset (null) means every agent, any model. Throws with a readable message.
+ */
+export type SpawnAgents = Partial<Record<AgentId, string[]>>;
+export function parseSpawnAgents(raw: unknown): SpawnAgents {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('spawnAgents must be an object of agent id -> list of models');
+  const out: SpawnAgents = {};
+  for (const [id, models] of Object.entries(raw)) {
+    if (!isAgent(id)) throw new Error(`spawnAgents: unknown agent ${id} (one of ${Object.keys(AGENTS).join(', ')})`);
+    if (!Array.isArray(models) || models.some((m) => !isModelId(m))) throw new Error(`spawnAgents.${id} must be a list of model ids`);
+    if (models.length && !MODEL_FLAG[id]) throw new Error(`spawnAgents.${id}: Agent Worlds cannot pick a model for ${AGENTS[id].name}, so its list must be empty`);
+    out[id] = [...new Set(models as string[])];
+  }
+  return out;
+}
+
 /** Quote one string for POSIX sh. */
 export const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -56,15 +82,16 @@ const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Permiss
  * the command never changes, so it does not ask again. Qwen and Gemini read them from a system
  * settings file we point them at.
  */
-export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider; dir?: string }): { args: string[]; env: Record<string, string> } {
+export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider; dir?: string; model?: string }): { args: string[]; env: Record<string, string> } {
   const task = o.task ? ['--', o.task] : [];
+  const model = o.model && MODEL_FLAG[agent] ? [`${MODEL_FLAG[agent]}=${o.model}`] : [];
   if (agent === 'codex') {
     const cmd = JSON.stringify(hookCommand('codex'));
     const hooks = o.home ? CODEX_EVENTS.flatMap((ev) => ['-c', `hooks.${ev}=[{hooks=[{type="command",command=${cmd},timeout=${ev === 'PermissionRequest' ? HOLD_TIMEOUT : FAST_TIMEOUT}}]}]`]) : [];
     // Codex hands an MCP server only a few env vars unless told: the bridge needs the pane and our home.
     const mcp = o.home ? [`mcp_servers.aw.command=${JSON.stringify(MCP_BRIDGE)}`, 'mcp_servers.aw.args=["codex"]',
       'mcp_servers.aw.env_vars=["TMUX_PANE","AGENT_WORLDS_PTY","AGENT_WORLDS_HOME"]', 'mcp_servers.aw.default_tools_approval_mode="approve"'].flatMap((c) => ['-c', c]) : [];
-    return { args: o.resume ? ['resume', ...hooks, ...mcp, o.resume] : [...hooks, ...mcp, ...task], env: {} };
+    return { args: o.resume ? ['resume', ...hooks, ...mcp, o.resume] : [...hooks, ...mcp, ...model, ...task], env: {} };
   }
   if (agent === 'kimi') {
     // Kimi takes no starting prompt (and drops keys typed before it draws): createSession turns the
@@ -87,7 +114,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     const yolo = o.dir !== undefined && !existsSync(join(o.dir, '.gemini', 'settings.json'));
     const g = writeGeminiHome(o.home);
     // Gemini saves trust by rename, which would replace our link with a copy: it writes the user's file itself.
-    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...(o.resume ? ['--resume', o.resume] : task)], env: { GEMINI_CLI_HOME: g.root, GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(g.real, 'trustedFolders.json') } };
+    return { args: [...(yolo ? ['--approval-mode', 'yolo'] : []), ...model, ...(o.resume ? ['--resume', o.resume] : task)], env: { GEMINI_CLI_HOME: g.root, GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(g.real, 'trustedFolders.json') } };
   }
   if (agent === 'agy') {
     // `-i` runs the task and stays interactive, like Qwen's. AGENT_WORLDS_DIR names the project to its hooks:
@@ -104,7 +131,7 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   const settings = o.home ? ['--settings', join(o.home, 'hooks.json'), '--mcp-config', join(o.home, 'claude-mcp.json')] : [];
   const resume = o.resume ? ['--resume', o.resume] : [];
   const mode = o.permissionMode ? ['--permission-mode', o.permissionMode] : [];
-  return { args: [...resume, ...mode, ...settings, ...task], env: {} };
+  return { args: [...resume, ...mode, ...model, ...settings, ...task], env: {} };
 }
 
 const KIMI_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest',

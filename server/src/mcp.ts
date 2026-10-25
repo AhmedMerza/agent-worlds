@@ -4,12 +4,15 @@
  * Codex has a built-in send_message that would win over a plain name.
  */
 
-export type Peer = { id: string; agent: string; repo: string; branch: string | null; task: string | null; state: string; parent: string | null };
-export type SpawnArgs = { folder: string; agent?: string; worktree?: boolean; task: string; steps?: unknown };
+export type Peer = { id: string; agent: string; model: string | null; context: { used: number; limit: number; pct: number } | null; repo: string; branch: string | null; task: string | null; state: string; parent: string | null; you?: true };
+export type SpawnArgs = { folder: string; agent?: string; model?: string; worktree?: boolean; task: string; steps?: unknown };
 export type McpContext = {
   /** The calling session, or null when the server does not know it (yet). */
   self: string | null;
+  /** The other sessions, after the caller itself (`you`). */
   peers(): Peer[];
+  /** The agents and models aw_spawn may use, in words, for its description. */
+  spawnable(): string;
   /** Send; the result text for the caller, or an Error to report. */
   send(to: string, text: string): string | Error;
   inbox(): string;
@@ -24,7 +27,7 @@ export type McpContext = {
 const TOOLS = [
   {
     name: 'aw_agents',
-    description: 'List the other coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, repo, branch, task, state, and parent (the session that started it with aw_spawn).',
+    description: 'List the coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, model, context (how full its context window is: used and limit tokens, pct; null when not known), repo, branch, task, state, and parent (the session that started it with aw_spawn). The first entry, marked you, is yourself: check your own context before taking on more.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -58,7 +61,8 @@ const TOOLS = [
       properties: {
         folder: { type: 'string', description: 'One of your world\'s folders: its full path, or its name' },
         task: { type: 'string', description: 'The first message: what the worker should do' },
-        agent: { type: 'string', description: 'The agent CLI: claude, codex, qwen, kimi, gemini or agy. Default: the user\'s default' },
+        agent: { type: 'string', description: 'The agent CLI: claude, codex, qwen, kimi, gemini or agy. Default: the first agent the user allows, else their default' },
+        model: { type: 'string', description: 'The model to run it on (claude, codex and gemini only), e.g. sonnet for a small task, opus for a hard one. Default: the CLI\'s own' },
         worktree: { type: 'boolean', description: 'Work in a new git worktree on its own branch (default true)' },
         steps: {
           type: 'array', description: 'Optional: start a run with these steps (1 to 8) instead of one session',
@@ -102,7 +106,7 @@ export async function handleMcp(msg: Record<string, unknown>, ctx: McpContext): 
     case 'ping':
       return ok({});
     case 'tools/list':
-      return ok({ tools: TOOLS });
+      return ok({ tools: TOOLS.map((t) => t.name === 'aw_spawn' ? { ...t, description: `${t.description} ${ctx.spawnable()}` } : t) });
     case 'tools/call':
       return ok(await call(String(m.params?.name), m.params?.arguments ?? {}, ctx));
     default:
@@ -115,7 +119,7 @@ async function call(name: string, args: Record<string, unknown>, ctx: McpContext
   if (!ctx.self) return text('Agent Worlds does not know this session yet; try again in a moment.', true);
   if (name === 'aw_agents') {
     const peers = ctx.peers();
-    return text(peers.length ? JSON.stringify(peers, null, 1) : 'No other sessions are running.');
+    return text(peers.some((p) => !p.you) ? JSON.stringify(peers, null, 1) : `No other sessions are running.${peers.length ? ` You: ${JSON.stringify(peers[0])}` : ''}`);
   }
   if (name === 'aw_inbox') return text(ctx.inbox());
   if (name === 'aw_handoff') {
@@ -127,6 +131,7 @@ async function call(name: string, args: Record<string, unknown>, ctx: McpContext
     if (typeof args.folder !== 'string' || !args.folder || typeof args.task !== 'string' || !args.task.trim()) return text('aw_spawn needs a `folder` and a `task`', true);
     if (args.task.length > 10000) return text('task is limited to 10000 characters', true);
     if (args.agent !== undefined && typeof args.agent !== 'string') return text('agent must be an agent id', true);
+    if (args.model !== undefined && typeof args.model !== 'string') return text('model must be a model id', true);
     if (args.worktree !== undefined && typeof args.worktree !== 'boolean') return text('worktree must be true or false', true);
     const r = await ctx.spawn(args as SpawnArgs);
     return r instanceof Error ? text(r.message, true) : text(r);

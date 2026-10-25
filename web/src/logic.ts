@@ -549,3 +549,26 @@ export const typingWaits = (c: Card | null): boolean => c?.kind === 'permission'
 export function nextChat(queue: Session[], currentId: string | null, skipped: Set<string>): Session | null {
   return queue.find((s) => s.id !== currentId && !skipped.has(cardKey(s))) ?? null
 }
+
+/**
+ * Lead spawn rules (agent id -> allowed models, [] for any; key order is the preference order) with agent `id` set to
+ * `models`, or turned off with null. Unset rules (everything allowed) are spelled out as every agent in `ids` first.
+ * An agent turned on goes last.
+ */
+export function spawnWith(rules: Record<string, string[]> | null, ids: string[], id: string, models: string[] | null): Record<string, string[]> {
+  const next = { ...(rules ?? Object.fromEntries(ids.map((a) => [a, []]))) }
+  if (models === null) delete next[id]
+  else next[id] = models
+  return next
+}
+
+/**
+ * The same rules with agent `id` swapped with its neighbour earlier (-1) or later (1) among the `shown` agents
+ * (rules can name an agent that is not installed here, which no list shows).
+ */
+export function spawnMoved(rules: Record<string, string[]>, id: string, dir: -1 | 1, shown: string[]): Record<string, string[]> {
+  const keys = Object.keys(rules), seen = keys.filter((k) => shown.includes(k))
+  const other = seen[seen.indexOf(id) + dir]
+  if (!seen.includes(id) || !other) return rules
+  return Object.fromEntries(keys.map((k) => (k === id ? other : k === other ? id : k)).map((k) => [k, rules[k]]))
+}
