@@ -1064,7 +1064,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         const allowed = Object.entries(cfg.spawnAgents ?? Object.fromEntries(Object.keys(AGENTS).map((id) => [id, []]))) as [AgentId, string[]][];
         const usable = allowed.filter(([id]) => id === 'claude' || hasBin(AGENTS[id].bin));
         if (!usable.length) return 'The user has allowed no agents for it.';
-        return `The user allows: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Pick the agent and model per task: a cheaper one (or codex, to spare Claude usage) for simple work.`;
+        return `The user allows, most preferred first: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Use the first that suits each task and a later one only when it does not; within an agent, a cheaper model for simple work.`;
       },
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
@@ -1142,7 +1142,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const folder = world.repos.includes(path) ? path : byName.length === 1 ? byName[0] : null;
     if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the ${world.name} world's folders: ${world.repos.join(', ')}`);
     if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
-    const agent = isAgent(a.agent) ? a.agent : defaultAgent(cfg.defaultAgent);
+    // Left out: the first agent the user allows (their order is their preference), else their default
+    const first = cfg.spawnAgents && (Object.keys(cfg.spawnAgents) as AgentId[]).find((id) => id === 'claude' || hasBin(AGENTS[id].bin));
+    const agent = isAgent(a.agent) ? a.agent : first || defaultAgent(cfg.defaultAgent);
     if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);

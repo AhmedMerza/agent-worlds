@@ -470,3 +470,18 @@ it('teamOf names the lead that started a session, or none', () => {
   expect(teamOf({ parent: 'lead' }, sessions)).toBe('team of Manager')
   expect(teamOf({ parent: 'gone' }, sessions)).toBe('team of a lead that ended')
 })
+
+describe('lead spawn rules', () => {
+  it('spells out "everything" on the first change, keeps order, and puts an agent turned back on last', async () => {
+    const { spawnWith, spawnMoved } = await import('../src/logic')
+    const ids = ['claude', 'codex', 'qwen']
+    const off = spawnWith(null, ids, 'qwen', null)
+    expect(off).toEqual({ claude: [], codex: [] })
+    const haiku = spawnWith(off, ids, 'claude', ['haiku'])
+    expect(Object.keys(haiku), 'changing models keeps its place').toEqual(['claude', 'codex'])
+    const codexFirst = spawnMoved(haiku, 'codex', -1)
+    expect(Object.entries(codexFirst)).toEqual([['codex', []], ['claude', ['haiku']]])
+    expect(Object.keys(spawnWith(codexFirst, ids, 'qwen', []))).toEqual(['codex', 'claude', 'qwen'])
+    expect(spawnMoved(codexFirst, 'codex', -1)).toEqual(codexFirst)
+  })
+})

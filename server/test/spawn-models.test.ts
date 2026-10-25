@@ -53,17 +53,19 @@ test('with nothing configured, a lead may pick any agent and model', async () =>
 });
 
 test('the user\'s list turns agents off and limits their models', async () => {
-  assert.equal((await allow({ claude: ['sonnet'], codex: [] })).status, 200);
+  assert.equal((await allow({ codex: [], claude: ['sonnet'] })).status, 200);
   assert.equal(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).spawnAgents.claude[0], 'sonnet', 'saved');
   const n = launched.length;
-  assert.match((await spawn({ agent: 'gemini' })).content[0].text, /not allowed leads to start Gemini CLI.*claude \(models sonnet\); codex \(any model\)/);
+  assert.match((await spawn({ agent: 'gemini' })).content[0].text, /not allowed leads to start Gemini CLI.*most preferred first: codex \(any model\); claude \(models sonnet\)/);
   assert.match((await spawn({ agent: 'claude', model: 'opus' })).content[0].text, /only on sonnet/);
   assert.match((await spawn({ steps: [{ kind: 'plan', agent: 'qwen' }] })).content[0].text, /not allowed leads to start Qwen/);
   assert.equal(launched.length, n, 'nothing refused was started');
   await spawn({ agent: 'claude', model: 'sonnet' });
   assert.equal(launched.at(-1).model, 'sonnet');
+  await spawn({});
+  assert.equal(launched.at(-1).agent, 'codex', 'no agent named: the first the user allows, not their default (claude)');
   const desc = (await rpc('tools/list')).tools.find((t: any) => t.name === 'aw_spawn').description;
-  assert.match(desc, /The user allows: claude \(models sonnet\); codex \(any model\)/, 'the lead learns its choices up front');
+  assert.match(desc, /most preferred first: codex \(any model\); claude \(models sonnet\)/, 'the lead learns its choices up front');
   assert.equal((await allow({ claude: 'opus' })).status, 400);
   assert.equal((await allow(null)).status, 200);
   assert.equal((await (await fetch(`${base}/api/agents`, { headers: H })).json() as any).spawn, null, 'back to everything');

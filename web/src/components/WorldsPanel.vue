@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { World } from '../types'
-import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, type AgentInfo, type SpawnAgents } from '../store'
-import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf } from '../logic'
+import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, spawnRules, type AgentInfo, type SpawnAgents } from '../store'
+import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf, spawnWith, spawnMoved } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 
 const emit = defineEmits<{ close: [] }>()
@@ -16,32 +16,42 @@ const sessionsIn = (w: World) => sessionList.value.filter((s) => s.worldId === w
 onMounted(async () => {
   box.value?.focus()
   const r = await fetchAgents()
-  if (r.ok) { agents.value = r.data.agents.filter((a) => a.installed); spawnAgents.value = r.data.spawn ?? null }
+  if (!r.ok) { agentsError.value = r.error; return }
+  agents.value = r.data.agents.filter((a) => a.installed)
+  spawnRules.value = r.data.spawn ?? null
 })
-/** Which agents (and models) leads in any world may start their workers on. */
-const agents = ref<AgentInfo[]>([])
-const spawnAgents = ref<SpawnAgents>(null)
-const spawnOn = (id: string) => !spawnAgents.value || id in spawnAgents.value
+/** Which agents (and models) leads in any world may start their workers on, in order of preference. */
+const agents = ref<AgentInfo[] | null>(null)
+const agentsError = ref('')
+const spawnOn = (id: string) => !spawnRules.value || id in spawnRules.value
+/** Allowed agents first, in the order leads should prefer them, then the ones turned off. */
+const spawnList = computed(() => {
+  const all = agents.value ?? [], r = spawnRules.value
+  if (!r) return all
+  return [...Object.keys(r).flatMap((id) => all.filter((a) => a.id === id)), ...all.filter((a) => !(a.id in r))]
+})
 /** Models of an agent turned off, so turning it back on doesn't quietly widen it to any model. */
 const kept: Record<string, string[]> = {}
-const modelsOf = (id: string) => (spawnAgents.value?.[id] ?? kept[id])?.join(', ') ?? ''
-const noneOn = computed(() => agents.value.length > 0 && agents.value.every((a) => !spawnOn(a.id)))
+const modelsOf = (id: string) => (spawnRules.value?.[id] ?? kept[id])?.join(', ') ?? ''
+const noneOn = computed(() => !!agents.value?.length && agents.value.every((a) => !spawnOn(a.id)))
 /** What leads may use now, in words, for the saved toast. */
 function spawnSummary(s: SpawnAgents) {
   if (!s) return 'leads may start workers on any agent and model'
-  const on = agents.value.filter((a) => a.id in s).map((a) => `${a.name}${s[a.id].length ? ` (${s[a.id].join(', ')})` : ''}`)
-  return on.length ? `leads may start workers on ${on.join(', ')}` : 'leads may not start workers on any agent'
+  const on = Object.keys(s).flatMap((id) => (agents.value ?? []).filter((a) => a.id === id)).map((a) => `${a.name}${s[a.id].length ? ` (${s[a.id].join(', ')})` : ''}`)
+  return on.length ? `leads prefer ${on.join(', then ')}` : 'leads may not start workers on any agent'
 }
-async function setSpawn(el: HTMLInputElement, id: string, on: boolean, models?: string) {
-  const next: Record<string, string[]> = spawnAgents.value ? { ...spawnAgents.value } : Object.fromEntries(agents.value.map((a) => [a.id, []]))
-  if (!on) { kept[id] = next[id] ?? []; delete next[id] }
-  else next[id] = models === undefined ? next[id] ?? kept[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
+async function saveSpawn(next: Record<string, string[]>) {
   const res = await saveSpawnAgents(next)
   error.value = res.ok ? '' : (res as { error: string }).error
-  if (!res.ok) { if (el.type === 'checkbox') el.checked = spawnOn(id); else el.value = modelsOf(id); return }
-  spawnAgents.value = res.data.spawn
-  showToast(`Saved: ${spawnSummary(res.data.spawn)}.`)
+  if (res.ok) showToast(`Saved: ${spawnSummary(res.data.spawn)}.`)
 }
+const agentIds = () => (agents.value ?? []).map((a) => a.id)
+function setSpawn(id: string, on: boolean, models?: string) {
+  if (!on) kept[id] = spawnRules.value?.[id] ?? []
+  const list = models === undefined ? spawnRules.value?.[id] ?? kept[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
+  return saveSpawn(spawnWith(spawnRules.value, agentIds(), id, on ? list : null))
+}
+const moveSpawn = (id: string, dir: -1 | 1) => saveSpawn(spawnMoved(spawnWith(spawnRules.value, agentIds(), id, spawnRules.value?.[id] ?? []), id, dir))
 
 async function run(r: Promise<{ ok: boolean; error?: string }>) {
   const res = await r
@@ -100,13 +110,19 @@ defineExpose({ escape })
       <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
 
       <template v-else>
-        <fieldset v-if="agents.length" class="spawn-agents">
+        <fieldset class="spawn-agents">
           <legend>Which agents leads may give work to (all worlds)</legend>
-          <p class="why">A lead session can start its own worker sessions. Untick an agent to keep leads off it, e.g. to save Claude usage by sending workers to Codex. Name the models a lead may pick (like haiku, sonnet), or leave the box empty for any. Changes save at once.</p>
-          <div v-for="a in agents" :key="a.id" class="spawn">
-            <label><input type="checkbox" :checked="spawnOn(a.id)" @change="setSpawn($event.target as HTMLInputElement, a.id, ($event.target as HTMLInputElement).checked)"> {{ a.name }}</label>
-            <input v-if="a.models" class="reply-in" :value="modelsOf(a.id)" :disabled="!spawnOn(a.id)" placeholder="any model" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn($event.target as HTMLInputElement, a.id, true, ($event.target as HTMLInputElement).value)">
-            <small v-else class="why">uses its own model</small>
+          <p class="why">A lead session can start its own worker sessions. Untick an agent to keep leads off it, and put the one to use first at the top: e.g. Codex first and Claude Code on haiku after it, to save Claude usage. Name the models a lead may pick, or leave the box empty for any. Changes save at once.</p>
+          <p v-if="agentsError" class="err" role="alert">Could not load the agents: {{ agentsError }}</p>
+          <p v-else-if="!agents" class="why">Loading the agents…</p>
+          <div v-for="(a, i) in spawnList" :key="a.id" class="spawn">
+            <label class="name"><input type="checkbox" :checked="spawnOn(a.id)" @change="setSpawn(a.id, ($event.target as HTMLInputElement).checked)"> {{ a.name }}</label>
+            <span v-if="spawnOn(a.id)" class="move">
+              <button class="btn" :disabled="i === 0" :aria-label="`Prefer ${a.name} over the agent above it`" @click="moveSpawn(a.id, -1)">↑</button>
+              <button class="btn" :disabled="!spawnOn(spawnList[i + 1]?.id ?? '') || !spawnList[i + 1]" :aria-label="`Prefer the agent below over ${a.name}`" @click="moveSpawn(a.id, 1)">↓</button>
+            </span>
+            <input v-if="a.models" class="reply-in models" :value="modelsOf(a.id)" :disabled="!spawnOn(a.id)" :placeholder="a.id === 'claude' ? 'any model, or e.g. haiku, sonnet' : 'any model'" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn(a.id, true, ($event.target as HTMLInputElement).value)">
+            <small v-else class="why models">uses its own model</small>
           </div>
           <p v-if="noneOn" class="err" role="status">With every agent off, leads cannot start any workers.</p>
         </fieldset>

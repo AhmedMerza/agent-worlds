@@ -252,3 +252,32 @@ describe('skipped', () => {
     expect(skipped.has('d1:done')).toBe(false) // answered: forgotten, so its next 'done' is offered
   })
 })
+
+describe('saveSpawnAgents', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('two quick changes both reach the server, in order, even while the first save is slow', async () => {
+    const { saveSpawnAgents, spawnRules } = await import('../src/store')
+    const { spawnWith } = await import('../src/logic')
+    const sent: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body); sent.push(body.spawn)
+      await new Promise((r) => setTimeout(r, 30))
+      return { ok: true, status: 200, json: async () => body }
+    }))
+    const ids = ['claude', 'qwen', 'kimi']
+    spawnRules.value = null
+    const a = saveSpawnAgents(spawnWith(spawnRules.value, ids, 'qwen', null)) // the panel builds each change on spawnRules
+    const b = saveSpawnAgents(spawnWith(spawnRules.value, ids, 'kimi', null))
+    await Promise.all([a, b])
+    expect(sent).toEqual([{ claude: [], kimi: [] }, { claude: [] }])
+    expect(spawnRules.value).toEqual({ claude: [] })
+  })
+  it('a failed save puts the rules back', async () => {
+    const { saveSpawnAgents, spawnRules } = await import('../src/store')
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'disk full' }) })))
+    spawnRules.value = { claude: [] }
+    const res = await saveSpawnAgents({})
+    expect(res.ok).toBe(false)
+    expect(spawnRules.value).toEqual({ claude: [] })
+  })
+})

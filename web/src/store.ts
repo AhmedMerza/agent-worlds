@@ -263,9 +263,20 @@ export const saveDefaultAgent = (agent: string) => {
   return api<{ default: string }>('POST', '/api/agents/default', { agent })
 }
 
-export const saveSpawnAgents = (spawn: SpawnAgents) => {
+/** The agents and models leads may start workers on, as Manage worlds shows them: changed at once, saved in click order. */
+export const spawnRules = ref<SpawnAgents>(null)
+let spawnSaving: Promise<unknown> = Promise.resolve(), spawnChanges = 0
+/**
+ * Shows `spawn` at once and saves it after any save still in flight, so quick clicks each build on the one before
+ * instead of on what the server last answered. A failed save puts the rules back unless a newer change came since.
+ */
+export function saveSpawnAgents(spawn: SpawnAgents): Promise<ApiResult<{ spawn: SpawnAgents }>> {
+  const before = spawnRules.value, change = ++spawnChanges
+  spawnRules.value = spawn
   agentsCache = null
-  return api<{ spawn: SpawnAgents }>('POST', '/api/agents/spawn', { spawn })
+  const saved = spawnSaving.then(() => api<{ spawn: SpawnAgents }>('POST', '/api/agents/spawn', { spawn }))
+  spawnSaving = saved
+  return saved.then((res) => { if (!res.ok && change === spawnChanges) spawnRules.value = before; return res })
 }
 
 /** Moves a repo out of the world that owns it and into `toId` (two PATCHes). Puts the old world back if the second fails. */
