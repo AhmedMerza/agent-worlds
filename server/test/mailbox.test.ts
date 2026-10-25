@@ -72,7 +72,7 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
   assert.deepEqual(peers.map((p: any) => p.id).sort(), [B, 'eeee5555-0000'], 'only sessions that reached the mailbox, early ones too');
   assert.match((await tool('%1', 'aw_send', { to: 'cccc', text: 'x' })).content[0].text, /no session "cccc"/);
   assert.match((await tool('%1', 'aw_send', { to: 'nope', text: 'x' })).content[0].text, /no session "nope"/);
-  assert.match((await tool('%1', 'aw_send', { to: 'bbbb', text: 'step 3 misses the auth check' })).content[0].text, /working now/);
+  assert.match((await tool('%1', 'aw_send', { to: 'bbbb', text: 'step 3 misses the auth check' })).content[0].text, /busy now/);
   await app.deliverMail();
   assert.deepEqual(typed, [], 'not typed into a session mid-turn');
 
@@ -97,6 +97,23 @@ test('/mcp: our own mail notice is not a human prompt, so it does not reset a lo
   assert.equal((await tool('%1', 'aw_send', { to: 'bbbb', text: 'again' })).isError, true);
   await hook({ ...ev.prompt, prompt: 'keep going, you two' }, A, '%1');
   assert.equal((await tool('%1', 'aw_send', { to: 'bbbb', text: 'again' })).isError, undefined);
+});
+
+test('/mcp: a session at its prompt with background work or a wake-up still pending is told at once', async () => {
+  const D = 'dddd4444-0000', E = 'eeee6666-0000', F = 'ffff7777-0000';
+  await hook(ev.start, D, '%6');
+  for (const [id, pane] of [[E, '%7'], [F, '%8']]) { await hook(ev.start, id, pane); await rpc(pane, 'initialize', {}); await hook(ev.prompt, id, pane); }
+  const task = { id: 'b1', type: 'subagent', status: 'running', description: 'Trace the bug', agent_type: 'Explore' };
+  await hook({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, E, '%7');
+  await hook({ ...ev.stop, background_tasks: [task] }, E, '%7'); // E's turn ended, its helper runs on
+  await hook({ ...ev.stop, session_crons: [{ id: 'c1', schedule: '*/10 * * * *', recurring: true, prompt: 'check CI' }] }, F, '%8'); // F is on /loop
+  typed.length = 0;
+  for (const [to, pane] of [['eeee6666', '%7'], ['ffff', '%8']]) {
+    assert.match((await tool('%6', 'aw_send', { to, text: 'your review is ready' })).content[0].text, /being told now/);
+    await app.deliverMail();
+    assert.equal(typed.at(-1)?.[0], pane, `${to} is told while it waits at its prompt`);
+  }
+  assert.deepEqual(typed.map(([p]) => p).filter((p) => p === '%7' || p === '%8'), ['%7', '%8'], 'each told once');
 });
 
 const BIN = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../bin');

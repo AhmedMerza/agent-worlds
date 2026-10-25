@@ -1055,7 +1055,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         store.log(from, `Message to ${label(hits[0])}: ${text}`);
         store.log(hits[0], `Message from ${label(from)}: ${text}`);
         store.push(from); store.push(hits[0]);
-        return `Sent to ${label(hits[0])}. ${hits[0].state === 'working' ? 'It is working now and will be told when it is free.' : 'It is being told now.'}`;
+        return `Sent to ${label(hits[0])}. ${!atPrompt(hits[0]) ? 'It is busy now and will be told when it is free.' : 'It is being told now.'}`;
       },
       handoff: (summary: string) => handoff(self!, summary),
       spawn: (a: SpawnArgs) => spawn(self!, a),
@@ -1292,6 +1292,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     delivering = true;
     try { await deliverPass(); } finally { delivering = false; }
   }
+  /** Free to read mail: its turn is over, even if background work or a wake-up will bring it back. */
+  function atPrompt(s: Session) {
+    return (['idle', 'done', 'error'].includes(s.state) || s.busy?.kind === 'background') && !s.pending.length;
+  }
+
   async function deliverPass() {
     for (const id of mailbox.waiting()) {
       const s = store.sessions.get(id);
@@ -1300,7 +1305,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (mailboxed.has(id) && mailbox.unnotified(id).some((m) => Date.now() - m.at < MAIL_WAITS)) continue;
         mailbox.forget(id); if (mailboxed.delete(id)) saveMailboxed(); continue;
       }
-      if (!['idle', 'done', 'error'].includes(s.state) || s.pending.length) continue;
+      if (!atPrompt(s)) continue;
       const mail = mailbox.unnotified(id);
       // Agent and id only: a repo folder or branch name could carry a newline (typed as Enter) or text aimed at the agent.
       const from = [...new Set(mail.map((m) => store.sessions.get(m.from)).filter((x) => !!x).map((x) => `${AGENTS[x.agent].name} ${x.id.slice(0, 8).replace(/[^\w-]/g, '')}`))].join(', ') || 'another session';
