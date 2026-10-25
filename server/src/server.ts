@@ -394,11 +394,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const stopWatch = opts.onRestart ? watchCode(() => { update = true; broadcast({ type: 'update' }); }) : null;
   /** Drops sessions whose tmux pane is gone (also run at once when a terminal's tmux attach ends). */
   // A pane gone while tmux still runs was closed (or its agent quit, which not every CLI reports): not interrupted.
-  // No tmux server at all (a crash, a reboot) keeps the conversations to resume.
+  // No tmux server at all (a crash, a reboot) keeps the conversations to resume. So does a restore
+  // that dies before its first hook (it failed to start): removing its card already released the original.
   const sweepNow = async () => {
+    const before = [...store.sessions.values()]; // one added while tmux answers may not be listed yet
     const alive = await (opts.tmuxPanes ?? sys.tmuxPanes)();
     if (!alive) return;
-    const before = [...store.sessions.values()];
     store.sweep(alive);
     if (alive.size && !closing) for (const s of before) if (!store.sessions.has(s.id)) forgetRecovery(s);
   };
@@ -1269,7 +1270,6 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
     }
   }
-  /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   /** Ended for good: no longer offered as interrupted, nor the conversation it was restoring. */
   function forgetRecovery(s: Session) {
     recovery.delete(s.id);
@@ -1277,6 +1277,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     for (const [id, restoring] of resuming) if (restoring === terminal) { recovery.delete(id); resuming.delete(id); parents.set(id, null); }
     pushRecoverable();
   }
+  /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
     parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
     if (s.direct) { forgetRecovery(s); direct.kill(s.direct); return null; } // its exit removes the card
