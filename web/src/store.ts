@@ -268,31 +268,35 @@ export const saveDefaultAgent = (agent: string) => {
 export const spawnRules = ref<SpawnAgents>(null)
 /** Bumped when a save fails, so inputs showing the refused value are drawn again from spawnRules. */
 export const spawnFailures = ref(0)
-/** The rules the server last confirmed, and the ones the next save builds on (what was sent before it). */
-let spawnSaved: SpawnAgents = null, spawnBase: SpawnAgents = null, spawnSaving: Promise<unknown> = Promise.resolve(), spawnChanges = 0, spawnPending = 0
+/** The rules as the server last confirmed them (its own, normalised copy): each save says it was built on these. */
+let spawnSaved: SpawnAgents = null, spawnSaving: Promise<unknown> = Promise.resolve(), spawnChanges = 0, spawnPending = 0
 /** The rules as the server has them, unless a save from here is still on its way. */
 export function loadSpawnRules(spawn: SpawnAgents) {
   if (spawnPending) return
-  spawnRules.value = spawnSaved = spawnBase = spawn
+  spawnRules.value = spawnSaved = spawn
 }
 /**
  * Shows `spawn` at once and saves it after any save still in flight, so quick clicks each build on the one before
- * instead of on what the server last answered. Each save names the rules it was built on: if another window changed
- * them since, the server refuses (409) and sends its own, which are shown. A failed save puts back the last saved
- * rules unless a newer change came since.
+ * instead of on what the server last answered. Each save names, as it goes out, the rules the server last confirmed:
+ * if another window changed them since, the server refuses (409) and sends its own, which are shown. A failed save
+ * puts back the last saved rules unless a newer change came since.
  */
 export function saveSpawnAgents(spawn: SpawnAgents): Promise<ApiResult<{ spawn: SpawnAgents }>> {
-  const base = spawnBase, change = ++spawnChanges
-  spawnRules.value = spawnBase = spawn
+  const change = ++spawnChanges
+  spawnRules.value = spawn
   spawnPending++
   agentsCache = null
   const saved = spawnSaving.then(async () => {
-    const r = await fetch('/api/agents/spawn', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spawn, base }) }).catch(() => null)
+    const r = await fetch('/api/agents/spawn', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spawn, base: spawnSaved }) }).catch(() => null)
     const data = r ? await r.json().catch(() => null) as { spawn?: SpawnAgents; error?: string } | null : null
     spawnPending--
-    if (r?.ok) { spawnSaved = data?.spawn ?? null; return { ok: true as const, data: { spawn: spawnSaved } } }
+    if (r?.ok) {
+      spawnSaved = data?.spawn ?? null
+      if (change === spawnChanges) spawnRules.value = spawnSaved // the server's copy (models deduplicated)
+      return { ok: true as const, data: { spawn: spawnSaved } }
+    }
     if (r?.status === 409 && data && 'spawn' in data) spawnSaved = data.spawn ?? null
-    if (change === spawnChanges || r?.status === 409) { spawnRules.value = spawnBase = spawnSaved; spawnFailures.value++ }
+    if (change === spawnChanges || r?.status === 409) { spawnRules.value = spawnSaved; spawnFailures.value++ }
     return { ok: false as const, error: r ? errorText(r.status, data) : 'Could not reach the server.' }
   })
   spawnSaving = saved

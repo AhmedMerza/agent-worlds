@@ -310,6 +310,40 @@ describe('saveSpawnAgents', () => {
     expect(spawnRules.value).toEqual({ codex: [] })
     expect(spawnFailures.value, 'inputs showing the refused text are redrawn').toBe(failures + 1)
   })
+  /** A server that keeps the rules like the real one: refuses a stale base (409), dedupes models, can fail once. */
+  function realish(start: Record<string, string[]> | null, failFirst = false) {
+    let saved = start, n = 0
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body); n++
+      await new Promise((r) => setTimeout(r, 10))
+      const reply = (status: number, json: unknown) => ({ ok: status < 300, status, json: async () => json })
+      if (JSON.stringify(b.base) !== JSON.stringify(saved)) return reply(409, { error: 'changed in another window', spawn: saved })
+      if (failFirst && n === 1) return reply(500, { error: 'disk full' })
+      saved = b.spawn && Object.fromEntries(Object.entries(b.spawn as Record<string, string[]>).map(([k, v]) => [k, [...new Set(v)]]))
+      return reply(200, { spawn: saved })
+    }))
+    return () => saved
+  }
+  it('a save queued behind one that failed still lands, and is not blamed on another window', async () => {
+    const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
+    const onServer = realish({ claude: [] }, true)
+    loadSpawnRules({ claude: [] })
+    const a = saveSpawnAgents({})
+    const b = saveSpawnAgents({ codex: [] })
+    expect((await a).ok).toBe(false)
+    expect(await b).toEqual({ ok: true, data: { spawn: { codex: [] } } })
+    expect(onServer()).toEqual({ codex: [] })
+    expect(spawnRules.value).toEqual({ codex: [] })
+  })
+  it('the server\'s own copy is what the next save is built on (a model typed twice)', async () => {
+    const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
+    const onServer = realish(null)
+    loadSpawnRules(null)
+    expect((await saveSpawnAgents({ claude: ['haiku', 'haiku'] })).ok).toBe(true)
+    expect(spawnRules.value).toEqual({ claude: ['haiku'] })
+    expect((await saveSpawnAgents({ claude: ['haiku'], codex: [] })).ok, 'not refused as changed elsewhere').toBe(true)
+    expect(onServer()).toEqual({ claude: ['haiku'], codex: [] })
+  })
   it('opening the panel while a save is on its way does not overwrite it with older rules', async () => {
     const { saveSpawnAgents, spawnRules, loadSpawnRules } = await import('../src/store')
     server((b) => ({ status: 200, json: { spawn: b.spawn } }))

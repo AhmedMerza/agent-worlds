@@ -49,7 +49,7 @@ async function saveSpawn(next: Record<string, string[]>) {
 const agentIds = () => (agents.value ?? []).map((a) => a.id)
 function setSpawn(id: string, on: boolean, models?: string) {
   if (!on) kept[id] = spawnRules.value?.[id] ?? []
-  const list = models === undefined ? spawnRules.value?.[id] ?? kept[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
+  const list = models === undefined ? spawnRules.value?.[id] ?? kept[id] ?? [] : [...new Set(models.split(/[\s,]+/).filter(Boolean))]
   return saveSpawn(spawnWith(spawnRules.value, agentIds(), id, on ? list : null))
 }
 const moveSpawn = (id: string, dir: -1 | 1) => saveSpawn(spawnMoved(spawnWith(spawnRules.value, agentIds(), id, spawnRules.value?.[id] ?? []), id, dir, agentIds()))
