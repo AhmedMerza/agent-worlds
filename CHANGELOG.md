@@ -2,6 +2,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-10-25
+- Mail between sessions (`aw_send`) now reaches a Claude session as soon as its turn ends, even when it still has a background subagent or job running or a `/loop` wake-up set. The new-message notice used to wait until that work reported back or 30 minutes passed, so leads and workers seemed to ignore their messages. `aw_send` now says "It is being told now" for such a session.
+
 ## 2026-10-24
 - **Codex in Chats:** Codex conversations now open as messages alongside Claude Code, including folded command, edit and MCP-tool steps. The terminal remains available for Codex's native permission prompts.
 - **Recover after a computer restart:** Agent Worlds remembers conversations it was managing and, after their processes disappear, shows an interrupted-session banner with **Resume all** plus individual controls in Recent sessions. Explicitly ended sessions stay ended. Recovery uses each CLI's native resume command for Claude, Codex, Qwen, Kimi, Gemini and Antigravity.
