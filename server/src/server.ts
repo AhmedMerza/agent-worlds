@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { homeDir, MAX_SPAWNED, type Config } from './config.ts';
 import { Store, type Session } from './store.ts';
-import { AGENTS, defaultAgent, installed as onPath, isAgent, type AgentId, type Provider } from './agents.ts';
+import { AGENTS, MODEL_FLAG, defaultAgent, installed as onPath, isAgent, parseSpawnAgents, type AgentId, type Provider } from './agents.ts';
 import { fromGemini, toGemini } from './gemini.ts';
 import { agyHooksDir, asHelper, fromAgy, mentions, toAgy } from './agy.ts';
 import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, KEY_RE, MODEL_RE } from './providers.ts';
@@ -564,7 +564,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return send(res, 200, out);
     }
     if (method === 'GET' && url.pathname === '/api/agents') {
-      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || hasBin(a.bin), modes: a.modes, decides: a.decides, task: a.task })), default: defaultAgent(cfg.defaultAgent, (id) => id === 'claude' || hasBin(AGENTS[id].bin)) });
+      return send(res, 200, { agents: Object.entries(AGENTS).map(([id, a]) => ({ id, name: a.name, installed: id === 'claude' || hasBin(a.bin), modes: a.modes, decides: a.decides, task: a.task, models: !!MODEL_FLAG[id as AgentId] })), default: defaultAgent(cfg.defaultAgent, (id) => id === 'claude' || hasBin(AGENTS[id].bin)), spawn: cfg.spawnAgents ?? null });
+    }
+    // Which agents and models leads may start with aw_spawn; null lets them use every agent, any model.
+    if (method === 'POST' && url.pathname === '/api/agents/spawn') {
+      const b = await readBody(req);
+      let spawn;
+      try { spawn = b.spawn === null ? undefined : parseSpawnAgents(b.spawn); } catch (e) { return send(res, 400, { error: (e as Error).message }); }
+      const err = saveConfigKey(join(opts.home ?? homeDir(), 'config.json'), 'spawnAgents', spawn);
+      if (err) return send(res, 500, { error: err });
+      cfg.spawnAgents = spawn;
+      return send(res, 200, { spawn: spawn ?? null });
     }
     if (method === 'POST' && url.pathname === '/api/agents/default') {
       const b = await readBody(req);
@@ -1039,13 +1049,23 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     reject(404, 'Not Found');
   };
+  const peer = (s: Session): Peer => ({ id: s.id, agent: AGENTS[s.agent].name, model: s.model, context: s.context, repo: s.repoName, branch: s.branch, task: s.task, state: s.state, parent: s.parent });
   const label = (s: { id: string; agent: AgentId; repoName: string; branch: string | null }) => `${AGENTS[s.agent].name} ${s.id.slice(0, 8)} (${s.repoName}${s.branch ? `@${s.branch}` : ''})`;
   function mcpContext(self: string | null) {
     return {
       self,
       // Its own workers too while they start (before their CLI reached /mcp)
-      peers: (): Peer[] => [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (self && s.parent === self)))
-        .map((s) => ({ id: s.id, agent: AGENTS[s.agent].name, repo: s.repoName, branch: s.branch, task: s.task, state: s.state, parent: s.parent })),
+      peers: (): Peer[] => {
+        const me = self ? store.sessions.get(self) : undefined;
+        const others = [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (self && s.parent === self)));
+        return [...(me ? [{ ...peer(me), you: true as const }] : []), ...others.map(peer)];
+      },
+      spawnable: () => {
+        const allowed = Object.entries(cfg.spawnAgents ?? Object.fromEntries(Object.keys(AGENTS).map((id) => [id, []]))) as [AgentId, string[]][];
+        const usable = allowed.filter(([id]) => id === 'claude' || hasBin(AGENTS[id].bin));
+        if (!usable.length) return 'The user has allowed no agents for it.';
+        return `The user allows: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Pick the agent and model per task: a cheaper one (or codex, to spare Claude usage) for simple work.`;
+      },
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
         const hits = [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id) && s.id.startsWith(to));
@@ -1073,9 +1093,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    * Starts a session: New session, a run's step and aw_spawn all come here. Its CLI in tmux (or a pty), then its
    * 'starting' card; `made` runs in between. card: the task its card shows, when not the first message.
    */
-  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; via?: string | null; card?: string; parent?: string | null },
+  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
-    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
     return { ...c, id };
@@ -1126,6 +1146,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);
+    const allowed = cfg.spawnAgents, model = a.model?.trim() || undefined;
+    const off = allowed && (steps ? steps.map((st) => st.agent) : [agent]).find((id) => !allowed[id]);
+    if (off) return new Error(`the user has not allowed leads to start ${AGENTS[off].name}. ${mcpContext(self).spawnable()}`);
+    if (model) {
+      if (steps) return new Error('model is for a single session, not a run: leave it out with steps');
+      if (!MODEL_FLAG[agent]) return new Error(`Agent Worlds cannot pick a model for ${AGENTS[agent].name}: leave model out`);
+      if (!MODEL_RE.test(model)) return new Error('model must be a model id like sonnet or gpt-5-codex');
+      const models = allowed?.[agent] ?? [];
+      if (models.length && !models.includes(model)) return new Error(`the user allows ${AGENTS[agent].name} only on ${models.join(', ')}`);
+    }
     const max = world.maxSpawned ?? MAX_SPAWNED;
     // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
     const places = new Set<string>();
@@ -1147,15 +1177,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         store.log(lead, `Started run ${r.id} in ${basename(folder)}: ${task}`); store.push(lead);
         return `Started run ${r.id} in ${folder} (${r.steps.map((x) => `${STEP_KINDS[x.kind].label} on ${AGENTS[x.agent].name}`).join(', ')}). Each step's session shows in aw_agents with you as its parent; end one with aw_stop.`;
       }
-      const c = await launch({ agent, repo: folder, task, worktree, parent: self });
+      const c = await launch({ agent, repo: folder, task, worktree, parent: self, ...(model ? { model } : {}) });
       // Its card counts under the cap from here on: release the place now, not after the wait for its id
       spawning.set(world.id, spawning.get(world.id)! - 1); released = true;
-      store.log(lead, `Started ${AGENTS[agent].name} in ${basename(folder)}: ${task}`); store.push(lead);
+      const on = `${AGENTS[agent].name}${model ? ` (${model})` : ''}`;
+      store.log(lead, `Started ${on} in ${basename(folder)}: ${task}`); store.push(lead);
       const id = await realId(c.id, c.pane ?? null, c.direct ? c.tmuxSession : null);
-      if (id === 'gone') return new Error(`${AGENTS[agent].name} in ${c.dir} exited before it came up: look at its terminal, or ask the user`);
+      if (id === 'gone') return new Error(`${on} in ${c.dir} exited before it came up: look at its terminal, or ask the user`);
       return id
-        ? `Started ${AGENTS[agent].name} in ${c.dir}: session id ${id}. It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`
-        : `Started ${AGENTS[agent].name} in ${c.dir} (tmux session ${c.tmuxSession}), but its agent is not up yet: it may be asking to trust the folder in its terminal. It shows in aw_agents with you as its parent once it is; until then, aw_stop takes ${c.tmuxSession}.`;
+        ? `Started ${on} in ${c.dir}: session id ${id}. It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`
+        : `Started ${on} in ${c.dir} (tmux session ${c.tmuxSession}), but its agent is not up yet: it may be asking to trust the folder in its terminal. It shows in aw_agents with you as its parent once it is; until then, aw_stop takes ${c.tmuxSession}.`;
     } catch (e) { return new Error(`could not start it: ${(e as Error).message}`); }
     finally { if (!released) spawning.set(world.id, spawning.get(world.id)! - 1); }
   }

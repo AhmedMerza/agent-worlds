@@ -69,7 +69,8 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
   await rpc('%2', 'initialize', {}); // B's CLI connected to the mailbox
   await hook(ev.prompt, B, '%2'); // B is mid-turn
   const peers = JSON.parse((await tool('%1', 'aw_agents')).content[0].text);
-  assert.deepEqual(peers.map((p: any) => p.id).sort(), [B, 'eeee5555-0000'], 'only sessions that reached the mailbox, early ones too');
+  assert.deepEqual(peers[0], { ...peers[0], id: A, you: true }, 'the caller comes first, marked you');
+  assert.deepEqual(peers.slice(1).map((p: any) => p.id).sort(), [B, 'eeee5555-0000'], 'only sessions that reached the mailbox, early ones too');
   assert.match((await tool('%1', 'aw_send', { to: 'cccc', text: 'x' })).content[0].text, /no session "cccc"/);
   assert.match((await tool('%1', 'aw_send', { to: 'nope', text: 'x' })).content[0].text, /no session "nope"/);
   assert.match((await tool('%1', 'aw_send', { to: 'bbbb', text: 'step 3 misses the auth check' })).content[0].text, /busy now/);

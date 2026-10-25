@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { World } from '../types'
-import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast } from '../store'
+import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, type AgentInfo, type SpawnAgents } from '../store'
 import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 
@@ -13,7 +13,22 @@ const confirming = ref<string | null>(null)
 const box = ref<HTMLElement | null>(null)
 const ids = computed(() => state.worlds.map((w) => w.id))
 const sessionsIn = (w: World) => sessionList.value.filter((s) => s.worldId === w.id).length
-onMounted(() => box.value?.focus())
+onMounted(async () => {
+  box.value?.focus()
+  const r = await fetchAgents()
+  if (r.ok) { agents.value = r.data.agents.filter((a) => a.installed); spawnAgents.value = r.data.spawn ?? null }
+})
+/** Which agents (and models) leads in any world may start their workers on. */
+const agents = ref<AgentInfo[]>([])
+const spawnAgents = ref<SpawnAgents>(null)
+const spawnOn = (id: string) => !spawnAgents.value || id in spawnAgents.value
+const modelsOf = (id: string) => spawnAgents.value?.[id]?.join(', ') ?? ''
+function setSpawn(id: string, on: boolean, models?: string) {
+  const next: Record<string, string[]> = spawnAgents.value ? { ...spawnAgents.value } : Object.fromEntries(agents.value.map((a) => [a.id, []]))
+  if (!on) delete next[id]
+  else next[id] = models === undefined ? next[id] ?? [] : models.split(/[\s,]+/).filter(Boolean)
+  return run(saveSpawnAgents(next).then((res) => { if (res.ok) spawnAgents.value = res.data.spawn; return res }))
+}
 
 async function run(r: Promise<{ ok: boolean; error?: string }>) {
   const res = await r
@@ -72,6 +87,14 @@ defineExpose({ escape })
       <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
 
       <template v-else>
+        <fieldset v-if="agents.length" class="spawn-agents">
+          <legend>Agents leads may start workers on, in every world</legend>
+          <p class="why">Turn one off to save its usage, e.g. keep Claude for leads and send workers to Codex. Name the models a lead may pick, or leave the box empty for any.</p>
+          <div v-for="a in agents" :key="a.id" class="spawn">
+            <label><input type="checkbox" :checked="spawnOn(a.id)" @change="setSpawn(a.id, ($event.target as HTMLInputElement).checked)"> {{ a.name }}</label>
+            <input v-if="a.models && spawnOn(a.id)" class="reply-in" :value="modelsOf(a.id)" placeholder="any model, or list them: a, b" :aria-label="`Models leads may start ${a.name} on`" @change="setSpawn(a.id, true, ($event.target as HTMLInputElement).value)">
+          </div>
+        </fieldset>
         <p v-if="!state.worlds.length" class="why">No worlds yet. Create one below.</p>
         <ul class="wlist">
           <li v-for="(w, i) in state.worlds" :key="w.id" class="winfo" :style="{ '--tint': w.color }">
