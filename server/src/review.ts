@@ -14,16 +14,20 @@ function git(cwd: string, args: string[], okCodes = [0]): Promise<string | null>
   });
 }
 
-/** The commit this branch forked from the default branch, or HEAD when there is no default branch to compare with. */
+/**
+ * The commit this branch forked from the default branch, or HEAD when there is no default branch to compare with.
+ * Of the candidate refs it takes the nearest fork point: a stale origin/dev must not turn 200 commits into 15,000.
+ */
 async function baseOf(cwd: string): Promise<string | null> {
   const remote = (await git(cwd, ['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD']))?.trim();
-  for (const ref of [remote, 'main', 'master'].filter(Boolean) as string[]) {
-    if (await git(cwd, ['rev-parse', '-q', '--verify', ref + '^{commit}'])) {
-      const mb = (await git(cwd, ['merge-base', 'HEAD', ref]))?.trim();
-      if (mb) return mb;
-    }
+  let best: { mb: string; ahead: number } | null = null;
+  for (const ref of new Set([remote, remote?.replace(/^origin\//, ''), 'main', 'master'].filter(Boolean) as string[])) {
+    if (!(await git(cwd, ['rev-parse', '-q', '--verify', ref + '^{commit}']))) continue;
+    const mb = (await git(cwd, ['merge-base', 'HEAD', ref]))?.trim();
+    const ahead = mb ? Number((await git(cwd, ['rev-list', '--count', `${mb}..HEAD`]))?.trim()) : NaN;
+    if (mb && !Number.isNaN(ahead) && (!best || ahead < best.ahead)) best = { mb, ahead };
   }
-  return (await git(cwd, ['rev-parse', '-q', '--verify', 'HEAD']))?.trim() || null;
+  return best?.mb ?? ((await git(cwd, ['rev-parse', '-q', '--verify', 'HEAD']))?.trim() || null);
 }
 
 type FileStat = { path: string; added: number; deleted: number };

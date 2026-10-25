@@ -91,3 +91,36 @@ test('review follows the worktree a session committed in, with its branch', asyn
   assert.deepEqual(s.card.review.commits.map((c: any) => c.subject), ['journey screen']);
   assert.ok(!s.card.review.uncommitted.some((f: any) => f.path === 'unrelated.txt'), 'the main checkout is not reviewed');
 });
+
+test('without a baseSha, review forks from the nearest default branch, not a stale origin ref', async () => {
+  const d = gitRepo();
+  git(d, 'update-ref', 'refs/remotes/origin/dev', 'HEAD'); // fetched long ago, never updated
+  git(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/dev');
+  git(d, 'checkout', '-q', '-b', 'dev');
+  for (const n of ['x', 'y', 'z']) { writeFileSync(join(d, n), n); git(d, 'add', '.'); git(d, 'commit', '-q', '-m', 'dev ' + n); }
+  git(d, 'checkout', '-q', '-b', 'feature');
+  writeFileSync(join(d, 'f.txt'), 'f\n'); git(d, 'add', '.'); git(d, 'commit', '-q', '-m', 'feature work');
+  const r = (await reviewOf(d, null))!;
+  assert.deepEqual(r.commits.map((c) => c.subject), ['feature work']);
+  assert.deepEqual(r.files.map((f) => f.path), ['f.txt']);
+});
+
+test('without a baseSha: no remote, an unrelated ref, no default branch, detached HEAD', async () => {
+  const commit = (d: string, n: string) => { writeFileSync(join(d, n), n); git(d, 'add', '.'); git(d, 'commit', '-q', '-m', n); };
+  // no remote, default branch master
+  const a = gitRepo(); git(a, 'branch', '-m', 'master'); git(a, 'checkout', '-q', '-b', 'feat'); commit(a, 'a1');
+  assert.deepEqual((await reviewOf(a, null))!.commits.map((c) => c.subject), ['a1']);
+  // origin/HEAD names a ref with no shared history: skipped, main still used
+  const b = gitRepo(); git(b, 'checkout', '-q', '--orphan', 'other'); commit(b, 'orphan');
+  git(b, 'update-ref', 'refs/remotes/origin/other', 'HEAD'); git(b, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/other');
+  git(b, 'checkout', '-q', 'main'); git(b, 'checkout', '-q', '-b', 'feat'); commit(b, 'b1');
+  assert.deepEqual((await reviewOf(b, null))!.commits.map((c) => c.subject), ['b1']);
+  // no default branch at all: nothing to compare with, so nothing is claimed
+  const c = gitRepo(); git(c, 'branch', '-m', 'trunk'); commit(c, 'c1');
+  const rc = (await reviewOf(c, null))!;
+  assert.deepEqual([rc.commits.length, rc.files.length], [0, 0]);
+  // detached HEAD two commits past main
+  const d = gitRepo(); commit(d, 'd1'); commit(d, 'd2'); git(d, 'checkout', '-q', '--detach', 'HEAD'); git(d, 'branch', '-f', 'main', 'HEAD~2');
+  const rd = (await reviewOf(d, null))!;
+  assert.deepEqual([rd.branch, rd.commits.map((x) => x.subject)], [null, ['d2', 'd1']]);
+});
