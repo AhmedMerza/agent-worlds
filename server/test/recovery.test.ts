@@ -112,3 +112,31 @@ test('a conversation can only start restoring once, only while its CLI is instal
     assert.equal(launches, 2, 'a missing CLI never reaches the launcher');
   } finally { release(); await app.close(); }
 });
+
+test('closing a pane forgets its conversation, but losing the whole tmux server keeps it to resume', async () => {
+  const home = tmp(), repo = tmp(), procRoot = join(tmp(), 'missing');
+  const cfg = { ...parseConfig({}), port: 0 };
+  const deps = { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' };
+  let panes = new Map([['%1', new Set(['aw-x'])], ['%2', new Set(['aw-x'])], ['%9', new Set(['other'])]]);
+  new Recovery(join(home, 'recovery.json')).upsert({ id: 'restored-one', agent: 'claude', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
+  const app = startServer(cfg, TOKEN, {
+    home, procRoot, deps, tmuxPanes: async () => panes,
+    createSession: async (o: any) => ({ tmuxSession: 'aw-restore', dir: o.repo, branch: null, pane: '%3' }),
+  });
+  await app.listen();
+  try {
+    await app.store.handle({ session_id: 'closed-one', hook_event_name: 'SessionStart', cwd: repo }, '%1');
+    await app.store.handle({ session_id: 'crashed-one', hook_event_name: 'SessionStart', cwd: repo }, '%2');
+    await app.scan();
+    const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    const resumed = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers: { 'x-aw-token': TOKEN, 'content-type': 'application/json' }, body: '{}' });
+    assert.deepEqual((await resumed.json() as any).started, ['restored-one']);
+    panes = new Map([['%2', new Set(['aw-x'])], ['%9', new Set(['other'])]]);
+    await app.sweep();
+    assert.deepEqual(new Recovery(join(home, 'recovery.json')).list().map((s) => s.id).sort(), ['crashed-one', 'restored-one'], 'a closed pane is not an interruption, a restore that died before starting is');
+    assert.deepEqual(((await (await fetch(`${base}/api/state`, { headers: { 'x-aw-token': TOKEN } })).json()) as any).recoverable.map((s: any) => s.id), ['restored-one'], 'and it is offered again');
+    panes = new Map();
+    await app.sweep();
+    assert.deepEqual(new Recovery(join(home, 'recovery.json')).list().map((s) => s.id).sort(), ['crashed-one', 'restored-one'], 'no tmux server at all: still offered');
+  } finally { await app.close(); }
+});

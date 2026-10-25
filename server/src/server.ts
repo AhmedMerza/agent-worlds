@@ -52,6 +52,8 @@ type Opts = {
   spawnIdMs?: number;
   /** Closes a tmux pane (End session); tests stub it. */
   endPane?: typeof sys.endPane;
+  /** Lists live tmux panes (the sweep); tests stub it. */
+  tmuxPanes?: typeof sys.tmuxPanes;
   /** Types into a tmux pane (the mail notice); tests stub it. */
   typeInto?: typeof sys.typeInto;
   /** Set by `agent-worlds start`: exits so the launcher starts the new code. Enables watching for code changes. */
@@ -391,7 +393,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   let update = false, restarting = false;
   const stopWatch = opts.onRestart ? watchCode(() => { update = true; broadcast({ type: 'update' }); }) : null;
   /** Drops sessions whose tmux pane is gone (also run at once when a terminal's tmux attach ends). */
-  const sweepNow = async () => { const alive = await sys.tmuxPanes(); if (alive) store.sweep(alive); };
+  // A pane gone while tmux still runs was closed (or its agent quit, which not every CLI reports): not interrupted.
+  // No tmux server at all (a crash, a reboot) keeps the conversations to resume. So does a restore
+  // that dies before its first hook (it failed to start): removing its card already released the original.
+  const sweepNow = async () => {
+    const before = [...store.sessions.values()]; // one added while tmux answers may not be listed yet
+    const alive = await (opts.tmuxPanes ?? sys.tmuxPanes)();
+    if (!alive) return;
+    store.sweep(alive);
+    if (alive.size && !closing) for (const s of before) if (!store.sessions.has(s.id)) forgetRecovery(s);
+  };
   const waiting = () => [...store.sessions.values()].filter((s) => s.pending.length);
   const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
   let installed: string | null = null;
@@ -1259,20 +1270,21 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
     }
   }
+  /** Ended for good: no longer offered as interrupted, nor the conversation it was restoring. */
+  function forgetRecovery(s: Session) {
+    recovery.delete(s.id);
+    const terminal = s.tmux?.session ?? s.direct;
+    for (const [id, restoring] of resuming) if (restoring === terminal) { recovery.delete(id); resuming.delete(id); parents.set(id, null); }
+    pushRecoverable();
+  }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
     parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
-    const forgetRecovery = () => {
-      recovery.delete(s.id);
-      const terminal = s.tmux?.session ?? s.direct;
-      for (const [id, restoring] of resuming) if (restoring === terminal) { recovery.delete(id); resuming.delete(id); parents.set(id, null); }
-      pushRecoverable();
-    };
-    if (s.direct) { forgetRecovery(); direct.kill(s.direct); return null; } // its exit removes the card
+    if (s.direct) { forgetRecovery(s); direct.kill(s.direct); return null; } // its exit removes the card
     if (!s.tmux) return 'it does not run in tmux or under this server';
     const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
     if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
-    forgetRecovery();
+    forgetRecovery(s);
     if (store.sessions.get(s.id) === s) store.remove(s);
     return null;
   }
@@ -1323,7 +1335,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   let scanner: NodeJS.Timeout | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
   return {
-    server: servers[0], servers, store, scan, deliverMail,
+    server: servers[0], servers, store, scan, deliverMail, sweep: sweepNow,
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
