@@ -112,3 +112,23 @@ test('a conversation can only start restoring once, only while its CLI is instal
     assert.equal(launches, 2, 'a missing CLI never reaches the launcher');
   } finally { release(); await app.close(); }
 });
+
+test('closing a pane forgets its conversation, but losing the whole tmux server keeps it to resume', async () => {
+  const home = tmp(), repo = tmp(), procRoot = join(tmp(), 'missing');
+  const cfg = { ...parseConfig({}), port: 0 };
+  const deps = { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' };
+  let panes = new Map([['%1', new Set(['aw-x'])], ['%2', new Set(['aw-x'])], ['%9', new Set(['other'])]]);
+  const app = startServer(cfg, TOKEN, { home, procRoot, deps, tmuxPanes: async () => panes });
+  await app.listen();
+  try {
+    await app.store.handle({ session_id: 'closed-one', hook_event_name: 'SessionStart', cwd: repo }, '%1');
+    await app.store.handle({ session_id: 'crashed-one', hook_event_name: 'SessionStart', cwd: repo }, '%2');
+    await app.scan();
+    panes = new Map([['%2', new Set(['aw-x'])], ['%9', new Set(['other'])]]);
+    await app.sweep();
+    assert.deepEqual(new Recovery(join(home, 'recovery.json')).list().map((s) => s.id), ['crashed-one'], 'a closed pane is not an interruption');
+    panes = new Map();
+    await app.sweep();
+    assert.deepEqual(new Recovery(join(home, 'recovery.json')).list().map((s) => s.id), ['crashed-one'], 'no tmux server at all: still offered');
+  } finally { await app.close(); }
+});
