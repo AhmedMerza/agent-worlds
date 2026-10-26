@@ -182,6 +182,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   let insights: Insights | null = null;
   const mailbox = new Mailbox(Date.now, join(home, 'mailbox.json'));
   const spawnOrigins = new Placements(join(home, 'spawn-origins.json'));
+  const launchPending = new Placements(join(home, 'launch-pending.json'));
+  const resumableRemoval = new Set<string>();
   const recovery = new Recovery(join(home, 'recovery.json'));
   const codexHome = opts.homes?.codex ?? process.env.CODEX_HOME ?? join(homedir(), '.codex');
   const codexSessions = resolve(codexHome, 'sessions') + sep;
@@ -260,7 +262,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const terminal = msg.id.slice('starting:'.length);
       for (const [id, restoring] of resuming) if (restoring === terminal) resuming.delete(id);
     }
-    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); if (spawnOrigins.get(msg.id)) spawnOrigins.set(msg.id, null); runSessionGone(msg.id); agyPending.delete(msg.id); }
+    if (msg.type === 'session-removed' && msg.id && !closing) {
+      insights?.forget(msg.id);
+      if (!resumableRemoval.delete(msg.id)) {
+        mailbox.forget(msg.id);
+        if (mailboxed.delete(msg.id)) saveMailboxed();
+        if (spawnOrigins.get(msg.id)) spawnOrigins.set(msg.id, null);
+        if (launchPending.get(msg.id)) launchPending.set(msg.id, null);
+      }
+      runSessionGone(msg.id); agyPending.delete(msg.id);
+    }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -277,11 +288,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       recovery.rename(from, to);
       const origin = spawnOrigins.get(from);
       if (origin) { spawnOrigins.set(to, origin); spawnOrigins.set(from, null); }
+      const pending = launchPending.get(from);
+      if (pending) { launchPending.set(to, pending); launchPending.set(from, null); }
       for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); }
     },
-    onEnded: (id) => { if (!closing) recovery.delete(id); },
+    onEnded: (id, reason) => {
+      if (!closing) recovery.delete(id);
+      if (store.sessions.has(id) && reason !== 'prompt_input_exit' && reason !== 'logout') resumableRemoval.add(id);
+    },
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
+      if (['UserPromptSubmit', 'Stop', 'StopFailure', 'Interrupt'].includes(ev) && launchPending.get(s.id)) launchPending.set(s.id, null);
       // A prompt you typed (not our mail notice) lets its conversations with other sessions go on. This event's own
       // text, not lastPrompt: lastPrompt keeps the previous prompt when a CLI sends none. Kimi sends content blocks.
       const text = typeof p.prompt === 'string' ? p.prompt : Array.isArray(p.prompt) ? p.prompt.map((b: { text?: unknown }) => (typeof b?.text === 'string' ? b.text : '')).join('') : '';
@@ -1126,10 +1143,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
+    const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));
+    const liveId = live?.id ?? id;
+    if (o.task.trim() && !live?.lastPrompt && live?.state !== 'done' && live?.state !== 'error') launchPending.set(liveId, 'pending');
     if (o.parent) {
       const origin = o.originWorldId ?? store.sessions.get(o.parent)?.worldId;
-      const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));
-      if (origin) spawnOrigins.set(live?.id ?? id, origin);
+      if (origin) spawnOrigins.set(liveId, origin);
     }
     return { ...c, id };
   }
@@ -1214,7 +1233,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         store.log(lead, `Started run ${r.id} in ${basename(folder)}: ${task}`); store.push(lead);
         return `Started run ${r.id} in ${folder} (${r.steps.map((x) => `${STEP_KINDS[x.kind].label} on ${AGENTS[x.agent].name}`).join(', ')}). Each step's session shows in aw_agents with you as its parent; end one with aw_stop.`;
       }
-      const c = await launch({ agent, repo: folder, task, worktree, parent: self, ...(model ? { model } : {}) });
+      const c = await launch({ agent, repo: folder, task, worktree, parent: self, originWorldId: world.id, ...(model ? { model } : {}) });
       // Its card counts under the cap from here on: release the place now, not after the wait for its id
       spawning.set(world.id, spawning.get(world.id)! - 1); released = true;
       const on = `${AGENTS[agent].name}${model ? ` (${model})` : ''}`;
@@ -1339,6 +1358,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
     parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
+    if (spawnOrigins.get(s.id)) spawnOrigins.set(s.id, null);
+    if (launchPending.get(s.id)) launchPending.set(s.id, null);
+    mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
     if (s.direct) { forgetRecovery(s); direct.kill(s.direct); return null; } // its exit removes the card
     if (!s.tmux) return 'it does not run in tmux or under this server';
     const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
@@ -1365,7 +1387,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** Free to read mail: its turn is over, even if background work or a wake-up will bring it back. */
   function atPrompt(s: Session) {
-    if (s.state === 'idle' && s.task && !s.lastPrompt) return false; // its launch task has not reached the agent yet
+    if (s.state === 'idle' && (launchPending.get(s.id) || (s.task && !s.lastPrompt))) return false; // its launch task has not reached the agent yet
     return (['idle', 'done', 'error'].includes(s.state) || s.busy?.kind === 'background') && !s.pending.length;
   }
 
@@ -1374,7 +1396,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const s = store.sessions.get(id);
       if (!s) {
         // Not back yet after a restart: its mail waits until its next hook names it, for a day at most
-        if (mailboxed.has(id) && mailbox.unnotified(id).some((m) => Date.now() - m.at < MAIL_WAITS)) continue;
+        if (mailbox.unnotified(id).some((m) => Date.now() - m.at < MAIL_WAITS)) continue;
         mailbox.forget(id); if (mailboxed.delete(id)) saveMailboxed(); continue;
       }
       if (!mailboxed.has(id)) continue; // a newly started worker must connect to aw_inbox before we tell it to read mail

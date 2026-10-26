@@ -226,6 +226,8 @@ test('a cross-world worker still counts against its origin after its lead exits 
   const two = await boot();
   try {
     await two.hk(ev.start, 'worker-1', '%51', '/work/ops');
+    await two.hk({ ...ev.end, reason: 'other' }, 'worker-1', '%51', '/work/ops'); // its CLI restarts, then resumes the same id
+    await two.hk({ ...ev.start, source: 'resume' }, 'worker-1', '%51', '/work/ops');
     await two.hk(ev.start, 'lead-new', '%42', '/work/repo-a');
     const denied = await two.spawn('%42', 'repo-a');
     assert.equal(denied.isError, true);

@@ -18,10 +18,11 @@ let base = '';
 const home = tmp('aw-mail-home-');
 
 before(async () => {
-  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'] }] }), port: 0 };
+  const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'], leadSpawn: true }] }), port: 0 };
   app = startServer(cfg, TOKEN, {
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
     home,
+    createSession: (async (o: any) => ({ tmuxSession: 'awtest-mail-new', dir: o.repo, branch: null, pane: '%9' })) as any,
     typeInto: async (pane, text) => { typed.push([pane, text]); return typeOk; },
   });
   await app.listen();
@@ -164,7 +165,7 @@ test('/mcp: argument errors are tool errors, a failed notice is retried, a remov
   await app.deliverMail();
   assert.equal(toD(), 2, 'typed again after a failed attempt');
   await tool('%1', 'aw_send', { to: 'dddd', text: 'unread when it goes' });
-  await hook(ev.end, D, '%4');
+  await hook({ ...ev.end, reason: 'prompt_input_exit' }, D, '%4');
   assert.equal((await tool('%1', 'aw_send', { to: 'dddd', text: 'gone' })).isError, true);
   assert.ok(!JSON.parse(readFileSync(join(home, 'mailboxed.json'), 'utf8')).includes(D));
 });
@@ -240,18 +241,22 @@ test('mail not yet delivered when the server restarts is delivered once its reci
   } finally { await two.s.close(); }
 });
 
-test('a new worker receives mail after its launch task reaches the agent', async () => {
+test('a new worker receives mail after its launch task reaches the agent, even after a CLI restart', async () => {
   const worker = '99990000-0000', pane = '%9';
-  await hook(ev.start, '88880000-0000', '%10');
-  await rpc('%10', 'initialize', {});
-  await app.store.addStarting({ tmuxSession: 'awtest-mail-new', pane, dir: '/work/repo-a', task: 'Handle the first task', agent: 'claude', parent: '88880000-0000' });
+  const started = tool('%1', 'aw_spawn', { folder: '/work/repo-a', task: 'Handle the first task', agent: 'claude', worktree: false });
+  for (let i = 0; i < 40 && !app.store.sessions.has('starting:awtest-mail-new'); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(app.store.sessions.has('starting:awtest-mail-new'));
   await hook(ev.start, worker, pane);
-  const sent = await tool('%10', 'aw_send', { to: '9999', text: 'Check the gateway too' });
+  assert.equal((await started).isError, undefined);
+  const sent = await tool('%1', 'aw_send', { to: '9999', text: 'Check the gateway too' });
   assert.equal(sent.isError, undefined, sent.content[0].text);
   assert.match(sent.content[0].text, /tools are ready/);
   const before = typed.length;
   await app.deliverMail();
   assert.equal(typed.length, before, 'mail waits for the worker to connect to its tools');
+  await hook({ ...ev.end, reason: 'other' }, worker, pane); // CLI restarts before its MCP handshake
+  await app.deliverMail();
+  await hook({ ...ev.start, source: 'resume' }, worker, pane);
   await rpc(pane, 'initialize', {});
   await app.deliverMail();
   assert.equal(typed.length, before, 'a startup hook alone does not mean the task is ready for another prompt');
@@ -261,4 +266,5 @@ test('a new worker receives mail after its launch task reaches the agent', async
   await hook(ev.stop, worker, pane);
   await app.deliverMail();
   assert.equal(typed.at(-1)?.[0], pane, 'the worker is notified after its first turn');
+  assert.match((await tool(pane, 'aw_inbox')).content[0].text, /Check the gateway too/);
 });
