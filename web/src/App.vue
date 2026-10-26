@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Room from './components/Room.vue'
+import WorldConnections from './components/WorldConnections.vue'
 import Inbox from './components/Inbox.vue'
 import ChatList from './components/ChatList.vue'
 import ChatView from './components/ChatView.vue'
@@ -175,13 +176,14 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
     <div v-if="state.loaded" class="layout">
       <div :class="['main-col', { 'chats-mode': !phone && ui.left === 'chats' }]">
         <ChatList v-if="listShown" @new-task="ui.pane = 'chat'; openNewTask()" />
-        <section v-show="phone ? tab === 'rooms' : ui.left === 'world'" :class="['worlds', { single: state.filter !== 'all' || shown.length === 1 }]" aria-label="Worlds">
+        <section v-show="phone ? tab === 'rooms' : ui.left === 'world'" :class="['worlds', { single: state.filter !== 'all' || shown.length === 1, campus: state.filter === 'all' && shown.length > 1 }]" aria-label="Worlds">
           <div v-if="!state.worlds.length" class="empty-world">
             <h2>Create your first world</h2>
             <p class="why">A world is a named group of repos. Its sessions get their own room.</p>
             <button class="btn primary" @click="ui.worldsOpen = true">Create your first world</button>
           </div>
           <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
+          <WorldConnections v-if="state.filter === 'all' && shown.length > 1" :worlds="shown.map(g => g.world.id)" />
         </section>
         <ChatView v-if="chatShown" :back="phone" @back="closeChat" />
         <TerminalPanel v-show="termShown" />

@@ -1,11 +1,12 @@
 import type { RoomGroup, Session, SessionState } from './types'
+import { illustratedRoom } from './illustratedRoom'
 import { tiredLevel, waitMinutes, ctxColor, roomConflicts, nameOf } from './logic'
 import { ROOM_W, ROOM_H, WALK_MS, assignZones, zoneBounds, countZones, slotPos, slotWidth, capacity, retarget, doorWalker, walkPos, pauseWalker, type Zone, type Walker } from './zones'
 
 export const W = ROOM_W
 const WALL_H = 48
 
-export interface Hit { id: string; x: number; y: number; w: number; h: number }
+export interface Hit { id: string; x: number; y: number; w: number; h: number; exact?: boolean }
 export interface DrawOpts { group: RoomGroup; selectedId: string | null; /** Run step tags by session id, shown in place of the branch. */ steps?: Record<string, string>; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; /** Desk arrival order, kept between frames. */ arrivals?: Set<string>; k: number; h: number
   /** Session under the pointer: its walk is held still. */
   hoverId?: string | null
@@ -408,6 +409,8 @@ function drawLight(ctx: Ctx, H: number, f: Frame, waiting: boolean) {
 
 /** Draws one world's room; returns click hit-boxes (in room coordinates) that follow the walking people. */
 export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
+  const illustrated = illustratedRoom(ctx, o)
+  if (illustrated) return illustrated
   ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.imageSmoothingEnabled = true
   ts = Math.min(1.6, Math.max(1, 10 / (7 * o.k / (globalThis.devicePixelRatio || 1))))
   ctx.clearRect(0, 0, W, o.h)
@@ -463,4 +466,4 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
 
 /** Finds the session under a point given in room coordinates. */
 export const hitTest = (hits: Hit[], px: number, py: number): Hit | undefined =>
-  hits.find((h) => px >= h.x - 9 && px <= h.x + h.w + 9 && py >= h.y - 20 && py <= h.y + h.h + 26)
+  hits.find((h) => px >= h.x - (h.exact ? 0 : 9) && px <= h.x + h.w + (h.exact ? 0 : 9) && py >= h.y - (h.exact ? 0 : 20) && py <= h.y + h.h + (h.exact ? 0 : 26))
