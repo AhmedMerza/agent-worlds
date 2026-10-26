@@ -50,12 +50,16 @@ test('aw_spawn is refused while the world has not enabled leadSpawn', async () =
   assert.equal(launched.length, 0);
 });
 
-test('aw_spawn only starts sessions in the caller\'s own world\'s folders', async () => {
+test('aw_spawn only starts sessions in configured worlds\' folders', async () => {
   await hook(ev.start, LEAD, '%1', '/work/repo-a');
-  for (const folder of ['/work/ops', 'ops', '/etc', '../ops']) {
+  for (const folder of ['/etc', 'missing']) {
     const r = await tool('%1', 'aw_spawn', { folder, task: 'x' });
     assert.equal(r.isError, true, folder);
-    assert.match(r.content[0].text, /not one of the Web world's folders/);
+    assert.match(r.content[0].text, /not one of the configured worlds' folders/);
+  }
+  for (const folder of ['/work/ops', 'ops']) {
+    const r = await tool('%1', 'aw_spawn', { folder, task: 'x', agent: 'nope' });
+    assert.match(r.content[0].text, /agent must be one of/, `${folder} resolves to the other world's folder`);
   }
   assert.equal((await tool('%1', 'aw_spawn', { folder: 'repo-b', task: 'x', agent: 'nope' })).isError, true);
   assert.equal(launched.length, 0);
@@ -82,9 +86,11 @@ test('a spawned session records its lead, shows it in aw_agents and survives its
 });
 
 test('the world\'s maxSpawned caps live spawned sessions', async () => {
-  const two = await tool('%1', 'aw_spawn', { folder: '/work/repo-a', task: 'second', worktree: false });
+  const two = await tool('%1', 'aw_spawn', { folder: '/work/ops', task: 'second', worktree: false });
   assert.equal(two.isError, undefined, two.content[0].text);
+  assert.equal(launched[1].repo, '/work/ops');
   assert.equal(launched[1].worktree, false);
+  assert.equal((await state()).sessions.find((x: any) => x.id === 'starting:awtest-spawn-2').worldId, 'ops');
   const three = await tool('%1', 'aw_spawn', { folder: 'repo-a', task: 'third' });
   assert.equal(three.isError, true);
   assert.match(three.content[0].text, /maxSpawned 2/);
@@ -106,10 +112,11 @@ test('aw_stop ends only the caller\'s own workers, which frees a place under the
   assert.ok((await tool('%1', 'aw_stop', { session: 'awtest-spawn-2' })).content[0].text.startsWith('Ended'), 'by the tmux session aw_spawn named');
 
   // With steps it starts a run on the lead's team
-  const run = await tool('%1', 'aw_spawn', { folder: 'repo-a', task: 'plan it', steps: [{ kind: 'plan', agent: 'claude' }] });
+  const run = await tool('%1', 'aw_spawn', { folder: 'ops', task: 'plan it', steps: [{ kind: 'plan', agent: 'claude' }] });
   assert.equal(run.isError, undefined, run.content[0].text);
   const s = await state();
   assert.equal(s.runs.at(-1).parent, LEAD);
+  assert.equal(s.runs.at(-1).worldId, 'web', 'the lead owns the run even when its worker is in Ops');
   assert.equal(s.sessions.find((x: any) => x.id === `starting:awtest-spawn-${launched.length}`).parent, LEAD);
 });
 
@@ -183,4 +190,48 @@ test('a worker still coming up takes one place under the cap, not two', async ()
     const third = await call('aw_spawn', { folder: 'x', task: 'three' });
     assert.equal(third.isError, true, 'the cap still holds');
   } finally { two.close(); }
+});
+
+test('a cross-world worker still counts against its origin after its lead exits and the server restarts', async () => {
+  const h = tmp('aw-spawn-origin-');
+  const cfg = { ...parseConfig({ worlds: [
+    { id: 'web', name: 'Web', repos: ['/work/repo-a'], leadSpawn: true, maxSpawned: 1 },
+    { id: 'ops', name: 'Ops', repos: ['/work/ops'] },
+  ] }), port: 0 };
+  let launches = 0;
+  const boot = async () => {
+    const server = startServer(cfg, TOKEN, {
+      home: h, spawnIdMs: 20,
+      deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+      createSession: (async (o: any) => ({ tmuxSession: `awtest-origin-${++launches}`, dir: o.repo, branch: null, pane: `%${50 + launches}` })) as any,
+      typeInto: async () => true, endPane: async () => null,
+    });
+    await server.listen();
+    const url = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+    const hk = (body: object, id: string, pane: string, cwd: string) => fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id, cwd }) });
+    const spawn = async (pane: string, folder: string) => {
+      const r = await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'aw_spawn', arguments: { folder, task: 'work' } } }) });
+      return ((await r.json()) as any).result as { isError?: boolean; content: { text: string }[] };
+    };
+    return { server, hk, spawn };
+  };
+  const one = await boot();
+  try {
+    await one.hk(ev.start, 'lead-old', '%41', '/work/repo-a');
+    assert.equal((await one.spawn('%41', 'ops')).isError, undefined);
+    await one.hk(ev.start, 'worker-1', '%51', '/work/ops');
+    assert.equal(JSON.parse(readFileSync(join(h, 'spawn-origins.json'), 'utf8'))['worker-1'], 'web');
+    await one.hk({ ...ev.end, reason: 'prompt_input_exit' }, 'lead-old', '%41', '/work/repo-a');
+  } finally { await one.server.close(); }
+  const two = await boot();
+  try {
+    await two.hk(ev.start, 'worker-1', '%51', '/work/ops');
+    await two.hk({ ...ev.end, reason: 'other' }, 'worker-1', '%51', '/work/ops'); // its CLI restarts, then resumes the same id
+    await two.hk({ ...ev.start, source: 'resume' }, 'worker-1', '%51', '/work/ops');
+    await two.hk(ev.start, 'lead-new', '%42', '/work/repo-a');
+    const denied = await two.spawn('%42', 'repo-a');
+    assert.equal(denied.isError, true);
+    assert.match(denied.content[0].text, /maxSpawned 1/);
+    assert.equal(launches, 1);
+  } finally { await two.server.close(); }
 });

@@ -55,11 +55,11 @@ const TOOLS = [
   },
   {
     name: 'aw_spawn',
-    description: 'Start a worker session for a task, in one of your world\'s folders, as part of your team (only when the user enabled it for the world). It gets the task as its first message; message it with aw_send, end it with aw_stop. With `steps`, start an Agent Worlds run instead: the task goes through those steps, each a session on its own agent.',
+    description: 'Start a worker session for a task in a folder listed in any world, as part of your team (only when the user enabled spawning for your world). It gets the task as its first message; message it with aw_send, end it with aw_stop. With `steps`, start an Agent Worlds run instead: the task goes through those steps, each a session on its own agent.',
     inputSchema: {
       type: 'object',
       properties: {
-        folder: { type: 'string', description: 'One of your world\'s folders: its full path, or its name' },
+        folder: { type: 'string', description: 'A folder listed in any world: its full path, or its name if unique' },
         task: { type: 'string', description: 'The first message: what the worker should do' },
         agent: { type: 'string', description: 'The agent CLI: claude, codex, qwen, kimi, gemini or agy. Default: the first agent the user allows, else their default' },
         model: { type: 'string', description: 'The model to run it on (claude, codex and gemini only), e.g. sonnet for a small task, opus for a hard one. Default: the CLI\'s own' },

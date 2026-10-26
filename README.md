@@ -358,17 +358,19 @@ opening New session for each. It is off until you turn it on per world: in **Man
 that was already running when you updated Agent Worlds sees the new tools only after **Restart**.
 
 - `aw_spawn { folder, task, agent?, model?, worktree?, steps? }` starts a session the same way New session
-  does: in `folder` (one of the lead's own world's folders, by path or by name), on `agent` (your
+  does: in `folder` (a folder listed in any world, by full path or by name if unique), on `agent` (your
   default when left out) and `model` (Claude Code, Codex and Gemini CLI only; the CLI's own when
   left out), in a new worktree unless `worktree` is false, with `task` as its first
   message. With `steps` it starts a [run](#runs-one-task-several-agents) instead. It answers with
   the new session's id once its agent is up (up to 20 s); an agent still asking to trust the
   folder gets its tmux name instead, which `aw_stop` also takes.
+- The lead's world controls whether it can start workers and how many it can have, including workers
+  in other worlds. The worker appears in the world that lists its folder.
 - The new session is on the lead's team: its panel and its Needs you card say "team of <lead>",
   and `aw_agents` shows the lead as its `parent`. This survives a restart (`<home>/parents.json`).
 - `aw_stop { session }` ends one of the lead's own workers, as **End** does (a run it is a step of
   stops too). A lead cannot end sessions it did not start.
-- At most `maxSpawned` (default 6) sessions started this way are open in a world at once; past that
+- At most `maxSpawned` (default 6) workers started by leads in a world are open at once; past that
   `aw_spawn` refuses until one ends. A run counts once, however many step sessions it opens.
 - You choose which agents and models leads may use, for every world at once: in **Manage worlds**,
   untick an agent to keep leads off it (for example, keep Claude for the lead and send workers to

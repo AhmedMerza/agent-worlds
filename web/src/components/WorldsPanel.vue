@@ -106,6 +106,7 @@ defineExpose({ escape })
     <div ref="box" class="dialog worlds" role="dialog" aria-modal="true" aria-label="Worlds" tabindex="-1">
       <h2>Manage worlds</h2>
       <p class="why">A world is a named group of repos. Sessions in those repos show up in its room. Rename, recolour, reorder or delete each one here. Where sessions may start their own workers, a lead session builds its own team instead of asking you to start each one.</p>
+      <p class="why">A lead may start workers in folders listed in any world. Workers appear with their folder and count toward the lead's world's limit.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
 
       <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
