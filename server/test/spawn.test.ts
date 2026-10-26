@@ -50,12 +50,16 @@ test('aw_spawn is refused while the world has not enabled leadSpawn', async () =
   assert.equal(launched.length, 0);
 });
 
-test('aw_spawn only starts sessions in the caller\'s own world\'s folders', async () => {
+test('aw_spawn only starts sessions in configured worlds\' folders', async () => {
   await hook(ev.start, LEAD, '%1', '/work/repo-a');
-  for (const folder of ['/work/ops', 'ops', '/etc', '../ops']) {
+  for (const folder of ['/etc', 'missing']) {
     const r = await tool('%1', 'aw_spawn', { folder, task: 'x' });
     assert.equal(r.isError, true, folder);
-    assert.match(r.content[0].text, /not one of the Web world's folders/);
+    assert.match(r.content[0].text, /not one of the configured worlds' folders/);
+  }
+  for (const folder of ['/work/ops', 'ops']) {
+    const r = await tool('%1', 'aw_spawn', { folder, task: 'x', agent: 'nope' });
+    assert.match(r.content[0].text, /agent must be one of/, `${folder} resolves to the other world's folder`);
   }
   assert.equal((await tool('%1', 'aw_spawn', { folder: 'repo-b', task: 'x', agent: 'nope' })).isError, true);
   assert.equal(launched.length, 0);
@@ -82,9 +86,11 @@ test('a spawned session records its lead, shows it in aw_agents and survives its
 });
 
 test('the world\'s maxSpawned caps live spawned sessions', async () => {
-  const two = await tool('%1', 'aw_spawn', { folder: '/work/repo-a', task: 'second', worktree: false });
+  const two = await tool('%1', 'aw_spawn', { folder: '/work/ops', task: 'second', worktree: false });
   assert.equal(two.isError, undefined, two.content[0].text);
+  assert.equal(launched[1].repo, '/work/ops');
   assert.equal(launched[1].worktree, false);
+  assert.equal((await state()).sessions.find((x: any) => x.id === 'starting:awtest-spawn-2').worldId, 'ops');
   const three = await tool('%1', 'aw_spawn', { folder: 'repo-a', task: 'third' });
   assert.equal(three.isError, true);
   assert.match(three.content[0].text, /maxSpawned 2/);
@@ -106,10 +112,11 @@ test('aw_stop ends only the caller\'s own workers, which frees a place under the
   assert.ok((await tool('%1', 'aw_stop', { session: 'awtest-spawn-2' })).content[0].text.startsWith('Ended'), 'by the tmux session aw_spawn named');
 
   // With steps it starts a run on the lead's team
-  const run = await tool('%1', 'aw_spawn', { folder: 'repo-a', task: 'plan it', steps: [{ kind: 'plan', agent: 'claude' }] });
+  const run = await tool('%1', 'aw_spawn', { folder: 'ops', task: 'plan it', steps: [{ kind: 'plan', agent: 'claude' }] });
   assert.equal(run.isError, undefined, run.content[0].text);
   const s = await state();
   assert.equal(s.runs.at(-1).parent, LEAD);
+  assert.equal(s.runs.at(-1).worldId, 'web', 'the lead owns the run even when its worker is in Ops');
   assert.equal(s.sessions.find((x: any) => x.id === `starting:awtest-spawn-${launched.length}`).parent, LEAD);
 });
 

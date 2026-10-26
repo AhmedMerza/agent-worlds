@@ -1090,14 +1090,14 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       },
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
-        const hits = [...store.sessions.values()].filter((s) => s.id !== self && mailboxed.has(s.id) && s.id.startsWith(to));
+        const hits = [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (s.parent === self && !s.id.startsWith('starting:'))) && s.id.startsWith(to));
         if (hits.length !== 1) return new Error(hits.length ? `"${to}" matches ${hits.length} sessions: use more of the id` : `no session "${to}": see aw_agents`);
         const r = mailbox.send(from.id, hits[0].id, text);
         if (typeof r === 'string') return new Error(r);
         store.log(from, `Message to ${label(hits[0])}: ${text}`);
         store.log(hits[0], `Message from ${label(from)}: ${text}`);
         store.push(from); store.push(hits[0]);
-        return `Sent to ${label(hits[0])}. ${!atPrompt(hits[0]) ? 'It is busy now and will be told when it is free.' : 'It is being told now.'}`;
+        return `Sent to ${label(hits[0])}. ${!mailboxed.has(hits[0].id) ? 'It will be told when its tools are ready.' : !atPrompt(hits[0]) ? 'It is busy now and will be told when it is free.' : 'It is being told now.'}`;
       },
       handoff: (summary: string) => handoff(self!, summary),
       spawn: (a: SpawnArgs) => spawn(self!, a),
@@ -1153,16 +1153,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** aw_spawn calls still starting, per world: the cap counts them, or two at once could both slip under it. */
   const spawning = new Map<string, number>();
-  /** aw_spawn: a lead starts a worker session (or a run) in one of its world's folders, if that world allows it. */
+  /** aw_spawn: a lead starts a worker session (or a run) in a configured world's folder, if its world allows spawning. */
   async function spawn(self: string, a: SpawnArgs): Promise<string | Error> {
     const lead = store.sessions.get(self);
     const world = cfg.worlds.find((w) => w.id === lead?.worldId);
     if (!lead || !world) return new Error('this session is not in a world, so it cannot start sessions: ask the user to start them');
     if (!world.leadSpawn) return new Error(`starting sessions is off for the ${world.name} world. Ask the user to start the session for you, or to allow it: in Agent Worlds, Manage worlds (W), "Sessions here may start and end their own workers" on ${world.name} (or "leadSpawn": true in config.json).`);
     const path = resolve(lead.cwd, a.folder);
-    const byName = world.repos.filter((r) => basename(r) === a.folder);
-    const folder = world.repos.includes(path) ? path : byName.length === 1 ? byName[0] : null;
-    if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the ${world.name} world's folders: ${world.repos.join(', ')}`);
+    const folders = cfg.worlds.flatMap((w) => w.repos);
+    const byName = folders.filter((r) => basename(r) === a.folder);
+    const folder = folders.includes(path) ? path : byName.length === 1 ? byName[0] : null;
+    if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the configured worlds' folders: ${folders.join(', ')}`);
     if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
     // Left out: the first agent the user allows (their order is their preference), else their default
     const agent = isAgent(a.agent) ? a.agent : (Object.keys(spawnRules())[0] as AgentId | undefined) ?? defaultAgent(cfg.defaultAgent);
@@ -1185,7 +1186,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
     const places = new Set<string>();
     for (const s of store.sessions.values()) {
-      if (!s.parent || s.worldId !== world.id) continue;
+      if (!s.parent || store.sessions.get(s.parent)?.worldId !== world.id) continue;
       const r = [...runs.values()].find((x) => x.parent && inRun(x, s));
       places.add(r ? `run:${r.id}` : s.id);
     }
@@ -1353,6 +1354,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** Free to read mail: its turn is over, even if background work or a wake-up will bring it back. */
   function atPrompt(s: Session) {
+    if (s.state === 'idle' && s.task && !s.lastPrompt) return false; // its launch task has not reached the agent yet
     return (['idle', 'done', 'error'].includes(s.state) || s.busy?.kind === 'background') && !s.pending.length;
   }
 
@@ -1364,6 +1366,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (mailboxed.has(id) && mailbox.unnotified(id).some((m) => Date.now() - m.at < MAIL_WAITS)) continue;
         mailbox.forget(id); if (mailboxed.delete(id)) saveMailboxed(); continue;
       }
+      if (!mailboxed.has(id)) continue; // a newly started worker must connect to aw_inbox before we tell it to read mail
       if (!atPrompt(s)) continue;
       const mail = mailbox.unnotified(id);
       // Agent and id only: a repo folder or branch name could carry a newline (typed as Enter) or text aimed at the agent.

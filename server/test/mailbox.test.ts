@@ -239,3 +239,26 @@ test('mail not yet delivered when the server restarts is delivered once its reci
     assert.match(inbox.result.content[0].text, /survive this/);
   } finally { await two.s.close(); }
 });
+
+test('a new worker receives mail after its launch task reaches the agent', async () => {
+  const worker = '99990000-0000', pane = '%9';
+  await hook(ev.start, '88880000-0000', '%10');
+  await rpc('%10', 'initialize', {});
+  await app.store.addStarting({ tmuxSession: 'awtest-mail-new', pane, dir: '/work/repo-a', task: 'Handle the first task', agent: 'claude', parent: '88880000-0000' });
+  await hook(ev.start, worker, pane);
+  const sent = await tool('%10', 'aw_send', { to: '9999', text: 'Check the gateway too' });
+  assert.equal(sent.isError, undefined, sent.content[0].text);
+  assert.match(sent.content[0].text, /tools are ready/);
+  const before = typed.length;
+  await app.deliverMail();
+  assert.equal(typed.length, before, 'mail waits for the worker to connect to its tools');
+  await rpc(pane, 'initialize', {});
+  await app.deliverMail();
+  assert.equal(typed.length, before, 'a startup hook alone does not mean the task is ready for another prompt');
+  await hook(ev.prompt, worker, pane);
+  await app.deliverMail();
+  assert.equal(typed.length, before, 'the worker is busy with its launch task');
+  await hook(ev.stop, worker, pane);
+  await app.deliverMail();
+  assert.equal(typed.at(-1)?.[0], pane, 'the worker is notified after its first turn');
+});

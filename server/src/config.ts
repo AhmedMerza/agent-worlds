@@ -8,7 +8,7 @@ export type World = {
   id: string; name: string; color: string; repos: string[];
   /** Sessions in this world may start and stop their own worker sessions (aw_spawn, aw_stop). Off unless set. */
   leadSpawn?: boolean;
-  /** At most this many sessions started by other sessions live in this world at once (default MAX_SPAWNED). */
+  /** At most this many workers started by sessions in this world at once (default MAX_SPAWNED). */
   maxSpawned?: number;
 };
 /** The default cap on live sessions started by other sessions, per world. */
