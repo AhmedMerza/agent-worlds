@@ -181,6 +181,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const track = (ws: WebSocket) => { alive.add(ws); ws.on('pong', () => alive.add(ws)); };
   let insights: Insights | null = null;
   const mailbox = new Mailbox(Date.now, join(home, 'mailbox.json'));
+  const spawnOrigins = new Placements(join(home, 'spawn-origins.json'));
   const recovery = new Recovery(join(home, 'recovery.json'));
   const codexHome = opts.homes?.codex ?? process.env.CODEX_HOME ?? join(homedir(), '.codex');
   const codexSessions = resolve(codexHome, 'sessions') + sep;
@@ -259,7 +260,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const terminal = msg.id.slice('starting:'.length);
       for (const [id, restoring] of resuming) if (restoring === terminal) resuming.delete(id);
     }
-    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); runSessionGone(msg.id); agyPending.delete(msg.id); }
+    if (msg.type === 'session-removed' && msg.id && !closing) { insights?.forget(msg.id); mailbox.forget(msg.id); if (mailboxed.delete(msg.id)) saveMailboxed(); if (spawnOrigins.get(msg.id)) spawnOrigins.set(msg.id, null); runSessionGone(msg.id); agyPending.delete(msg.id); }
     const text = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === 1) c.send(text);
   };
@@ -272,7 +273,12 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     placements: new Placements(join(home, 'placements.json')),
     labels: new Placements(join(home, 'labels.json')),
     parents,
-    onRenamed: (from, to) => { recovery.rename(from, to); for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); } },
+    onRenamed: (from, to) => {
+      recovery.rename(from, to);
+      const origin = spawnOrigins.get(from);
+      if (origin) { spawnOrigins.set(to, origin); spawnOrigins.set(from, null); }
+      for (const r of runs.values()) if (r.parent === from) { r.parent = to; pushRun(r); }
+    },
     onEnded: (id) => { if (!closing) recovery.delete(id); },
     onEvent: (s, ev, p) => {
       insights?.onEvent(s, ev);
@@ -956,7 +962,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       try {
         const handoff = await writeHandoff(s, home);
         const task = `Read "${handoff}" and carry on from there.`;
-        const r = await launch({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), parent: s.parent });
+        const r = await launch({ agent: b.agent, repo: s.cwd, task, worktree: false, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), parent: s.parent, originWorldId: spawnOrigins.get(s.id) });
         return send(res, 201, { tmuxSession: r.tmuxSession, handoff });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -1115,11 +1121,16 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    * Starts a session: New session, a run's step and aw_spawn all come here. Its CLI in tmux (or a pty), then its
    * 'starting' card; `made` runs in between. card: the task its card shows, when not the first message.
    */
-  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null },
+  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null; originWorldId?: string },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
     const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
+    if (o.parent) {
+      const origin = o.originWorldId ?? store.sessions.get(o.parent)?.worldId;
+      const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));
+      if (origin) spawnOrigins.set(live?.id ?? id, origin);
+    }
     return { ...c, id };
   }
   /** A run's steps from a request (POST /api/runs, aw_spawn): the steps, or err: [status, why not]. */
@@ -1186,7 +1197,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
     const places = new Set<string>();
     for (const s of store.sessions.values()) {
-      if (!s.parent || store.sessions.get(s.parent)?.worldId !== world.id) continue;
+      if (!s.parent || (spawnOrigins.get(s.id) ?? store.sessions.get(s.parent)?.worldId) !== world.id) continue;
       const r = [...runs.values()].find((x) => x.parent && inRun(x, s));
       places.add(r ? `run:${r.id}` : s.id);
     }
@@ -1257,7 +1268,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       // A worktree's branch is named after the run, not after the step's long first message.
       // A lead's run keeps to the models the user named for each step's agent
       const model = r.parent ? cfg.spawnAgents?.[step.agent]?.[0] : undefined;
-      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null }, async (c) => {
+      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null, originWorldId: r.worldId }, async (c) => {
         if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
         step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       });

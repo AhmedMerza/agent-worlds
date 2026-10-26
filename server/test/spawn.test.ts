@@ -191,3 +191,45 @@ test('a worker still coming up takes one place under the cap, not two', async ()
     assert.equal(third.isError, true, 'the cap still holds');
   } finally { two.close(); }
 });
+
+test('a cross-world worker still counts against its origin after its lead exits and the server restarts', async () => {
+  const h = tmp('aw-spawn-origin-');
+  const cfg = { ...parseConfig({ worlds: [
+    { id: 'web', name: 'Web', repos: ['/work/repo-a'], leadSpawn: true, maxSpawned: 1 },
+    { id: 'ops', name: 'Ops', repos: ['/work/ops'] },
+  ] }), port: 0 };
+  let launches = 0;
+  const boot = async () => {
+    const server = startServer(cfg, TOKEN, {
+      home: h, spawnIdMs: 20,
+      deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+      createSession: (async (o: any) => ({ tmuxSession: `awtest-origin-${++launches}`, dir: o.repo, branch: null, pane: `%${50 + launches}` })) as any,
+      typeInto: async () => true, endPane: async () => null,
+    });
+    await server.listen();
+    const url = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+    const hk = (body: object, id: string, pane: string, cwd: string) => fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id, cwd }) });
+    const spawn = async (pane: string, folder: string) => {
+      const r = await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'aw_spawn', arguments: { folder, task: 'work' } } }) });
+      return ((await r.json()) as any).result as { isError?: boolean; content: { text: string }[] };
+    };
+    return { server, hk, spawn };
+  };
+  const one = await boot();
+  try {
+    await one.hk(ev.start, 'lead-old', '%41', '/work/repo-a');
+    assert.equal((await one.spawn('%41', 'ops')).isError, undefined);
+    await one.hk(ev.start, 'worker-1', '%51', '/work/ops');
+    assert.equal(JSON.parse(readFileSync(join(h, 'spawn-origins.json'), 'utf8'))['worker-1'], 'web');
+    await one.hk({ ...ev.end, reason: 'prompt_input_exit' }, 'lead-old', '%41', '/work/repo-a');
+  } finally { await one.server.close(); }
+  const two = await boot();
+  try {
+    await two.hk(ev.start, 'worker-1', '%51', '/work/ops');
+    await two.hk(ev.start, 'lead-new', '%42', '/work/repo-a');
+    const denied = await two.spawn('%42', 'repo-a');
+    assert.equal(denied.isError, true);
+    assert.match(denied.content[0].text, /maxSpawned 1/);
+    assert.equal(launches, 1);
+  } finally { await two.server.close(); }
+});
