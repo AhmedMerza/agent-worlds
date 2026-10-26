@@ -24,7 +24,8 @@ const page = ref(0)
 const drawn = computed(() => drawnSessions(props.group.sessions))
 const steps = computed(() => stepTags(Object.values(state.runs), Object.values(state.sessions)))
 const pages = computed(() => Math.max(1, Math.ceil(drawn.value.sessions.length / OFFICE_PAGE_SIZE)))
-const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: officePage(drawn.value.sessions, page.value) }))
+const illustrated = computed(() => ui.worldDesign === 'illustrated')
+const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: illustrated.value ? officePage(drawn.value.sessions, page.value) : drawn.value.sessions }))
 const filtered = computed(() => real.value.filter(s => `${nameOf(s)} ${s.branch ?? ''} ${s.task ?? ''} ${stateLabel(s, state.now)}`.toLowerCase().includes(query.value.trim().toLowerCase())))
 watch(pages, n => { page.value = Math.min(page.value, n - 1) })
 watch(() => state.selectedId, id => {
@@ -37,7 +38,7 @@ const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))
 const working = computed(() => count((st) => st === 'working'))
 const idle = computed(() => count((st) => st === 'idle'))
 
-const h = computed(() => Math.max(480, roomHeight(scene.value.sessions)))
+const h = computed(() => Math.max(illustrated.value ? 480 : 0, roomHeight(scene.value.sessions)))
 const walkers = new Map<string, Walker>()
 const arrivals = new Set<string>()
 let hits: Hit[] = []
@@ -74,14 +75,14 @@ function frame(t: number) {
   const ctx = c.getContext('2d')
   if (!ctx) return
   // Illustrated artwork is static: repaint only for data, hover, selection, size or asset changes.
-  if (reduced || illustrationReady()) {
+  if (reduced || (illustrated.value && illustrationReady())) {
     const key = `${revision}/${illustrationReady()}/${c.width}/${c.height}`
     if (key === lastStatic) return
     lastStatic = key
   }
   const dt = lastT ? Math.min(100, t - lastT) : 0
   lastT = t
-  hits = drawRoom(ctx, { group: scene.value, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
+  hits = drawRoom(ctx, { group: scene.value, worldDesign: ui.worldDesign, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
 }
 let ro: ResizeObserver | null = null
 let io: IntersectionObserver | null = null
@@ -153,7 +154,7 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
       <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>
     </header>
     <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @pointerdown="onDown" @pointermove="onPointerMove" @pointerup="onUp" @pointercancel="onCancel" @mouseleave="hoverId = null" /></div>
-    <nav v-if="pages > 1" class="room-pages" :aria-label="`${group.world.name} agent pages`">
+    <nav v-if="illustrated && pages > 1" class="room-pages" :aria-label="`${group.world.name} agent pages`">
       <button class="btn" :disabled="page === 0" aria-label="Previous agents" @click="page--">←</button>
       <span>Agents {{ page * OFFICE_PAGE_SIZE + 1 }}–{{ Math.min((page + 1) * OFFICE_PAGE_SIZE, drawn.sessions.length) }} of {{ drawn.sessions.length }}</span>
       <button class="btn" :disabled="page === pages - 1" aria-label="Next agents" @click="page++">→</button>

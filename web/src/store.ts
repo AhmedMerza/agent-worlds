@@ -425,12 +425,12 @@ watch(() => needsYou.value.map(cardKey), (keys) => {
 /** A session you just started or resumed: shown where you were looking, its chat or its terminal. */
 const showFollowed = (id: string): void => { if (ui.pane === 'chat') openChat(id); else { select(id); focusTerminal() } }
 
-type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat' }
+type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated' }
 function savedViews(): Views {
   try {
     const v = JSON.parse(localStorage.getItem('aw-views') ?? '{}') as Partial<Views>
-    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term' }
-  } catch { return { left: 'world', pane: 'term' } }
+    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'classic' ? 'classic' : 'illustrated' }
+  } catch { return { left: 'world', pane: 'term', worldDesign: 'illustrated' } }
 }
 
 /** Dialog state shared by the header, rooms and detail panel. */
@@ -438,4 +438,4 @@ function savedViews(): Views {
 export const ui = reactive({ ...savedViews(), worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
   /** A character being dragged to another room: where the pointer is, and the world under it. */
   drag: null as { id: string; x: number; y: number; over: string | null } | null })
-watch(() => [ui.left, ui.pane], () => { try { localStorage.setItem('aw-views', JSON.stringify({ left: ui.left, pane: ui.pane })) } catch { /* private window: not remembered */ } })
+watch(() => [ui.left, ui.pane, ui.worldDesign], () => { try { localStorage.setItem('aw-views', JSON.stringify({ left: ui.left, pane: ui.pane, worldDesign: ui.worldDesign })) } catch { /* private window: not remembered */ } })

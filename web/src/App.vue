@@ -142,6 +142,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
         </nav>
         <button class="hdr-btn" title="One task through plan, review, build and review, each step on its own agent" @click="openNewTask(undefined, true)">New run</button>
         <button class="hdr-btn" @click="ui.worldsOpen = true"><kbd>W</kbd> Manage worlds</button>
+        <label class="world-design">World design
+          <select v-model="ui.worldDesign" class="hdr-btn" aria-label="World design">
+            <option value="classic">Classic</option>
+            <option value="illustrated">Illustrated</option>
+          </select>
+        </label>
         <button class="hdr-btn" @click="ui.recentRepo = null; ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
         <button class="hdr-btn toggle" :aria-pressed="!prefs.muted" title="Sound for new requests (M)" @click="onMute"><i aria-hidden="true" />Sound {{ prefs.muted ? 'off' : 'on' }}</button>
         <button v-if="notifySupported" class="hdr-btn toggle" :aria-pressed="prefs.notify" @click="onNotify"><i aria-hidden="true" />Notifications {{ prefs.notify ? 'on' : 'off' }}</button>
@@ -176,14 +182,14 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
     <div v-if="state.loaded" class="layout">
       <div :class="['main-col', { 'chats-mode': !phone && ui.left === 'chats' }]">
         <ChatList v-if="listShown" @new-task="ui.pane = 'chat'; openNewTask()" />
-        <section v-show="phone ? tab === 'rooms' : ui.left === 'world'" :class="['worlds', { single: state.filter !== 'all' || shown.length === 1, campus: state.filter === 'all' && shown.length > 1 }]" aria-label="Worlds">
+        <section v-show="phone ? tab === 'rooms' : ui.left === 'world'" :class="['worlds', ui.worldDesign, { single: state.filter !== 'all' || shown.length === 1, campus: ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1 }]" aria-label="Worlds">
           <div v-if="!state.worlds.length" class="empty-world">
             <h2>Create your first world</h2>
             <p class="why">A world is a named group of repos. Its sessions get their own room.</p>
             <button class="btn primary" @click="ui.worldsOpen = true">Create your first world</button>
           </div>
           <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
-          <WorldConnections v-if="state.filter === 'all' && shown.length > 1" :worlds="shown.map(g => g.world.id)" />
+          <WorldConnections v-if="ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1" :worlds="shown.map(g => g.world.id)" />
         </section>
         <ChatView v-if="chatShown" :back="phone" @back="closeChat" />
         <TerminalPanel v-show="termShown" />
