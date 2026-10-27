@@ -5,7 +5,9 @@ import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { illustrationReady, officePage, OFFICE_PAGE_SIZE } from '../illustratedRoom'
 import { roomHeight, type Walker } from '../zones'
 import { agentLabel, nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch, stepTags } from '../logic'
-import { state, select, focusTerminal, ui, moveSession, showToast } from '../store'
+import { state, select, openSession, ui, moveSession, showToast } from '../store'
+import { cameraOn, viewCentre, tokenText, usageTotal, type Camera } from '../hq'
+import AgentCard from './AgentCard.vue'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
 defineEmits<{ 'new-task': [worldId: string] }>()
@@ -25,6 +27,11 @@ const drawn = computed(() => drawnSessions(props.group.sessions))
 const steps = computed(() => stepTags(Object.values(state.runs), Object.values(state.sessions)))
 const pages = computed(() => Math.max(1, Math.ceil(drawn.value.sessions.length / OFFICE_PAGE_SIZE)))
 const illustrated = computed(() => ui.worldDesign === 'illustrated')
+/** A right-clicked (on touch: tapped) person gets the camera and their card. */
+const cardId = ref<string | null>(null)
+const card = computed(() => (cardId.value ? props.group.sessions.find(s => s.id === cardId.value) ?? null : null))
+const cam = ref<Camera>({ z: 1, x: 0, y: 0 })
+watch(illustrated, () => closeCard())
 const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: illustrated.value ? officePage(drawn.value.sessions, page.value) : drawn.value.sessions }))
 const filtered = computed(() => real.value.filter(s => `${nameOf(s)} ${s.branch ?? ''} ${s.task ?? ''} ${stateLabel(s, state.now)}`.toLowerCase().includes(query.value.trim().toLowerCase())))
 watch(pages, n => { page.value = Math.min(page.value, n - 1) })
@@ -57,7 +64,9 @@ function fitCanvas() {
   if (!c || !box) return
   const dpr = window.devicePixelRatio || 1
   box.style.minHeight = `${(h.value * box.clientWidth) / W}px` // never shorter than the scene needs
-  c.width = Math.max(1, Math.round(box.clientWidth * dpr)); c.height = Math.max(1, Math.round(box.clientHeight * dpr))
+  // Zoomed in, draw at the zoomed size so the scaled-up canvas stays sharp.
+  const z = cam.value.z
+  c.width = Math.max(1, Math.round(box.clientWidth * dpr * z)); c.height = Math.max(1, Math.round(box.clientHeight * dpr * z))
   k = c.width / W
   hLog = c.height / k
   lastStatic = ''
@@ -96,19 +105,21 @@ onMounted(() => {
   }
   raf = requestAnimationFrame(frame)
 })
-watch(h, fitCanvas, { flush: 'post' })
-onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect(); io?.disconnect() })
+watch([h, () => cam.value.z], fitCanvas, { flush: 'post' })
+// Escape closes the card unless the page already used it (a dialog, or the chat drawer on top).
+const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && cardId.value && !ui.chatDrawer) closeCard() }
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect(); io?.disconnect(); window.removeEventListener('keydown', onKey) })
 
 function at(e: MouseEvent): Hit | undefined {
   const b = canvas.value!.getBoundingClientRect()
   return hitTest(hits, (e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * hLog)
 }
-/** A mouse click also puts you in the session's terminal, so what you type next goes to Claude.
- *  Not on touch (it would leave the Rooms tab and pop the keyboard); 1-9 keep the shortcuts. */
+/** A click opens the session where you work (its chat or its terminal), so what you type next goes to the agent.
+ *  Not on touch (it would leave the Rooms tab and pop the keyboard): a tap selects, and on a person opens their card. */
 function open(id: string) {
-  select(id)
-  const s = state.sessions[id]
-  if (!isTouch() && (s?.tmux || s?.direct)) focusTerminal()
+  if (isTouch()) select(id)
+  else openSession(id)
 }
 const onMove = (e: MouseEvent) => { const h = at(e); hoverId.value = h?.id ?? null; canvas.value!.style.cursor = h ? 'pointer' : 'default' }
 
@@ -140,7 +151,32 @@ async function onUp() {
   showToast(r.ok ? `This ${s.repoName} session is now in ${to.name}.` : r.error)
 }
 const onCancel = () => { press = null; ui.drag = null }
-const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } const h = at(e); if (h) open(h.id) }
+function showCard(id: string) {
+  select(id)
+  cardId.value = id
+  const hit = hits.find(x => x.id === id), box = wrap.value
+  if (!hit || !box) return
+  // Hit boxes are in room units (W wide); the camera works in the box's own pixels.
+  const u = box.clientWidth / W, w = box.clientWidth, hh = box.clientHeight
+  const v = viewCentre(box)
+  cam.value = cameraOn(w, hh, (hit.x + hit.w / 2) * u, (hit.y + hit.h / 2) * u, 1.7, v.x, v.y)
+}
+function closeCard() { cardId.value = null; cam.value = { z: 1, x: 0, y: 0 } }
+const onClick = (e: MouseEvent) => {
+  if (dropped) { dropped = false; return }
+  const h = at(e)
+  if (!h) { if (cardId.value) closeCard(); return }
+  closeCard()
+  if (isTouch()) showCard(h.id)
+  else open(h.id)
+}
+/** Right-click a person for their card; elsewhere the browser's own menu. */
+function onContext(e: MouseEvent) {
+  const h = at(e)
+  if (!h) return
+  e.preventDefault()
+  showCard(h.id)
+}
 </script>
 
 <template>
@@ -153,7 +189,10 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
       <button v-if="illustrated" class="room-btn" :aria-expanded="sessionsOpen" @click="sessionsOpen = !sessionsOpen">Sessions ({{ group.sessions.length }})</button>
       <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>
     </header>
-    <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @pointerdown="onDown" @pointermove="onPointerMove" @pointerup="onUp" @pointercancel="onCancel" @mouseleave="hoverId = null" /></div>
+    <div ref="wrap" class="canvas-wrap">
+      <canvas ref="canvas" :class="{ zoomed: cam.z > 1 }" :style="{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})` }" :aria-label="`${group.world.name} room`" title="Click a person to open them · right-click for their details" @click="onClick" @contextmenu="onContext" @pointerdown="onDown" @pointermove="onPointerMove" @pointerup="onUp" @pointercancel="onCancel" @mouseleave="hoverId = null" />
+      <AgentCard v-if="card" :s="card" @close="closeCard" />
+    </div>
     <nav v-if="illustrated && pages > 1" class="room-pages" :aria-label="`${group.world.name} agent pages`">
       <button class="btn" :disabled="page === 0" aria-label="Previous agents" @click="page--">←</button>
       <span>Agents {{ page * OFFICE_PAGE_SIZE + 1 }}–{{ Math.min((page + 1) * OFFICE_PAGE_SIZE, drawn.sessions.length) }} of {{ drawn.sessions.length }}</span>
@@ -165,7 +204,7 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <p v-else-if="query && !filtered.length" class="meta">No matching sessions.</p>
       <button v-for="s in filtered" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
+        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.context || s.usage" class="st" title="Context use and tokens this conversation">{{ [s.context ? `${s.context.pct}% ctx` : '', s.usage ? `${tokenText(usageTotal(s.usage))} tok` : ''].filter(Boolean).join(' · ') }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
         <span class="dot ghost" />{{ ghostChipText(split.ghosts.length) }} <span class="st">{{ ghostsOpen ? 'Hide' : 'Show' }}</span>

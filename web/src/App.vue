@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Room from './components/Room.vue'
+import HqRoom from './components/HqRoom.vue'
 import WorldConnections from './components/WorldConnections.vue'
 import Inbox from './components/Inbox.vue'
 import ChatList from './components/ChatList.vue'
@@ -15,7 +16,7 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
+import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -31,6 +32,28 @@ const phone = ref(mq.matches)
 const onMq = () => { phone.value = mq.matches }
 const showTab = (t: Tab) => !phone.value || tab.value === t
 watch(termFocusTick, () => { if (phone.value) tab.value = 'term' })
+// Full height layout (wide windows): the world beside the terminal or chat, split where you drag the divider; Needs you and the details float.
+const wq = matchMedia('(min-width: 1000px)')
+const wide = ref(wq.matches)
+const onWq = () => { wide.value = wq.matches }
+const fullLayout = computed(() => ui.layout === 'full' && wide.value && !phone.value)
+watch(fullLayout, (v) => { if (!v) ui.needsOpen = false })
+// A press outside the floating Needs you panel (and its button) closes it.
+const onOutside = (e: PointerEvent) => { if (ui.needsOpen && !(e.target as HTMLElement).closest('#needs-panel, .needs-btn')) ui.needsOpen = false }
+const sideBySide = computed(() => fullLayout.value && ui.left === 'world')
+const mainCol = ref<HTMLElement | null>(null)
+function onSplitDown(e: PointerEvent) {
+  const el = e.currentTarget as HTMLElement
+  el.setPointerCapture(e.pointerId)
+  const move = (m: PointerEvent) => { const b = mainCol.value!.getBoundingClientRect(); ui.split = clampSplit(((m.clientX - b.left) / b.width) * 100) }
+  const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up) }
+  el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up)
+}
+function onSplitKey(e: KeyboardEvent) {
+  const step = e.key === 'ArrowLeft' ? -2 : e.key === 'ArrowRight' ? 2 : e.key === 'Home' ? -100 : e.key === 'End' ? 100 : 0
+  if (!step) return
+  e.preventDefault(); e.stopPropagation(); ui.split = clampSplit(ui.split + step)
+}
 const tabs = computed<[Tab, string][]>(() => [['chats', 'Chats'], ['rooms', 'Rooms'], ['term', 'Terminal']])
 // On a phone a chat opens over the list, like a messaging app; it gets a history entry so Back closes it, not the app.
 const chatOpen = ref(false)
@@ -46,6 +69,8 @@ watch(tab, (t) => { if (t !== 'chats' && chatOpen.value) closeChat() })
 // Phone: the Chats tab is the list or one chat. Wide: World or Chats on the left, a chat or the terminal beside it.
 const listShown = computed(() => (phone.value ? tab.value === 'chats' && !chatOpen.value : ui.left === 'chats'))
 const chatShown = computed(() => (phone.value ? tab.value === 'chats' && chatOpen.value : ui.pane === 'chat'))
+/** A chat opened from a person's card slides in over the page instead of taking the pane. */
+const chatDrawer = computed(() => ui.chatDrawer && !!selected.value && !selected.value.ghost)
 const termShown = computed(() => (phone.value ? tab.value === 'term' : ui.pane === 'term'))
 
 function openNewTask(worldId?: string, run = false) {
@@ -87,10 +112,11 @@ const shown = computed(() => groups.value.filter((g) => state.filter === 'all' |
 const numbers = computed(() => Object.fromEntries(screenSessions.value.slice(0, 9).map((s, i) => [s.id, i + 1])))
 const count = (st: string) => sessionList.value.filter((s) => s.state === st).length
 
+const dialogOpen = () => help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null || ui.moveSession !== null
 function onKey(e: KeyboardEvent) {
   const a = routeKey({
     key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
-    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null || ui.moveSession !== null,
+    typing: isTypingTarget(e.target), onControl: isControlTarget(e.target), overlayOpen: dialogOpen() || chatDrawer.value || ui.needsOpen,
   })
   if (!a) return
   e.preventDefault()
@@ -105,6 +131,8 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()
   else if (a.kind === 'mute') onMute()
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return
+  else if (chatDrawer.value && !dialogOpen()) ui.chatDrawer = false
+  else if (ui.needsOpen && !dialogOpen()) ui.needsOpen = false
   else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.phoneOpen = false; ui.putSession = null; ui.moveSession = null }
 }
 
@@ -118,8 +146,8 @@ watch(() => state.toast?.n, () => {
 // If the filtered world disappears, show everything again.
 watch(groups, (g) => { if (state.filter !== 'all' && !g.some((x) => x.world.id === state.filter)) state.filter = 'all' })
 
-onMounted(() => { connect(); startClock(); window.addEventListener('keydown', onKey); window.addEventListener('popstate', onPop); mq.addEventListener('change', onMq) })
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('popstate', onPop); mq.removeEventListener('change', onMq) })
+onMounted(() => { connect(); startClock(); window.addEventListener('keydown', onKey); window.addEventListener('popstate', onPop); mq.addEventListener('change', onMq); wq.addEventListener('change', onWq); document.addEventListener('pointerdown', onOutside) })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('popstate', onPop); mq.removeEventListener('change', onMq); wq.removeEventListener('change', onWq); document.removeEventListener('pointerdown', onOutside) })
 </script>
 
 <template>
@@ -146,6 +174,13 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
           <select v-model="ui.worldDesign" class="hdr-btn" aria-label="World design">
             <option value="classic">Classic</option>
             <option value="illustrated">Illustrated</option>
+            <option value="hq">HQ</option>
+          </select>
+        </label>
+        <label v-if="!phone" class="world-design" title="Full height: the world and the terminal or chat side by side at full height; Needs you and the details open from a button">Layout
+          <select v-model="ui.layout" class="hdr-btn" aria-label="Layout">
+            <option value="full">Full height</option>
+            <option value="stacked">Stacked</option>
           </select>
         </label>
         <button class="hdr-btn" @click="ui.recentRepo = null; ui.recentOpen = true"><kbd>R</kbd> Recent sessions</button>
@@ -178,9 +213,10 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       <span class="views-gap" />
       <button :aria-pressed="ui.pane === 'chat'" @click="ui.pane = 'chat'">Conversation</button>
       <button :aria-pressed="ui.pane === 'term'" @click="ui.pane = 'term'">Terminal</button>
+      <button v-if="fullLayout" :class="['needs-btn', { on: needsYou.length }]" :aria-expanded="ui.needsOpen" aria-controls="needs-panel" @click="ui.needsOpen = !ui.needsOpen">Needs you<span class="count">{{ needsYou.length }}</span></button>
     </nav>
-    <div v-if="state.loaded" class="layout">
-      <div :class="['main-col', { 'chats-mode': !phone && ui.left === 'chats' }]">
+    <div v-if="state.loaded" :class="['layout', { full: fullLayout }]">
+      <div ref="mainCol" :class="['main-col', { 'chats-mode': !phone && ui.left === 'chats', split: sideBySide }]" :style="sideBySide ? { '--split': `${ui.split}%` } : undefined">
         <ChatList v-if="listShown" @new-task="ui.pane = 'chat'; openNewTask()" />
         <section v-show="phone ? tab === 'rooms' : ui.left === 'world'" :class="['worlds', ui.worldDesign, { single: state.filter !== 'all' || shown.length === 1, campus: ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1 }]" aria-label="Worlds">
           <div v-if="!state.worlds.length" class="empty-world">
@@ -188,14 +224,16 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
             <p class="why">A world is a named group of repos. Its sessions get their own room.</p>
             <button class="btn primary" @click="ui.worldsOpen = true">Create your first world</button>
           </div>
-          <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
+          <template v-if="ui.worldDesign === 'hq'"><HqRoom v-for="g in shown" :key="g.world.id" :group="g" @new-task="openNewTask" /></template>
+          <Room v-for="g in shown" v-else :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
           <WorldConnections v-if="ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1" :worlds="shown.map(g => g.world.id)" />
         </section>
-        <ChatView v-if="chatShown" :back="phone" @back="closeChat" />
+        <div v-if="sideBySide" class="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the world and the terminal" tabindex="0" :aria-valuenow="ui.split" aria-valuemin="25" aria-valuemax="75" title="Drag to resize" @pointerdown="onSplitDown" @keydown="onSplitKey" @dblclick="ui.split = 45" />
+        <ChatView v-if="chatShown && !chatDrawer" :back="phone" @back="closeChat" />
         <TerminalPanel v-show="termShown" />
       </div>
-      <aside>
-        <Inbox v-show="!phone && ui.left !== 'chats'" />
+      <aside id="needs-panel" :class="{ floating: fullLayout, open: ui.needsOpen }" :aria-label="fullLayout ? 'Needs you and details' : undefined">
+        <Inbox v-show="!phone && (fullLayout || ui.left !== 'chats')" />
         <Detail v-show="showTab('term')" />
       </aside>
     </div>
@@ -207,6 +245,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
     <div v-if="ui.drag" class="drag-tag" :style="{ left: `${ui.drag.x}px`, top: `${ui.drag.y}px` }" aria-hidden="true">
       {{ state.sessions[ui.drag.id]?.repoName }}<template v-if="ui.drag.over && ui.drag.over !== state.sessions[ui.drag.id]?.worldId"> → {{ state.worlds.find((w) => w.id === ui.drag!.over)?.name }}</template>
     </div>
+    <Transition name="hq-drawer">
+      <aside v-if="chatDrawer" class="hq-drawer" aria-label="Conversation">
+        <button class="hq-x hq-drawer-x" aria-label="Close the conversation" @click="ui.chatDrawer = false">×</button>
+        <ChatView />
+      </aside>
+    </Transition>
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
     <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" :run="newTaskRun" :fixed-world="newTaskFixed" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>

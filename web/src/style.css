@@ -34,7 +34,9 @@ kbd{font-family:var(--f-mono);font-size:11.5px;color:var(--ink);background:var(-
 .room h2{font-family:var(--f-display);font-size:21px;font-weight:600;margin:0;color:var(--tint)}
 .meta{font-size:12.5px;color:var(--muted)}
 .canvas-wrap{background:transparent;min-width:0;position:relative;flex:1}
-.room canvas{display:block;position:absolute;inset:0;width:100%;height:100%;background:transparent}
+.room canvas{display:block;position:absolute;inset:0;width:100%;height:100%;background:transparent;transform-origin:0 0;transition:transform .7s cubic-bezier(.2,.9,.25,1.05)}
+.worlds.classic .canvas-wrap{overflow:hidden}
+@media (prefers-reduced-motion:reduce){.room canvas{transition:none}}
 .chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 12px}
 .chip{font:inherit;font-size:12.5px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:4px;padding:3px 8px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .chip .st{color:var(--muted)}
@@ -483,3 +485,105 @@ pre.diff{max-height:320px;overflow:auto}
   .worlds.campus .room .meta{flex-basis:100%;font-size:11px}
   .worlds.campus .room .room-btn{font-size:11px}
 }
+
+/* ---- HQ design: a zoomable office, a card per person, the chat slid in from the right ---- */
+.worlds.hq{grid-template-columns:minmax(0,1fr)}
+.hq{position:relative;display:flex;flex-direction:column;gap:10px;background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--tint);border-radius:12px;padding:12px;min-width:0}
+.hq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
+.hq-hello{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:8px 14px;min-width:0}
+.hq-hello h2{font-family:var(--f-display);font-size:17px;font-weight:600;margin:0}
+.hq-hello p{margin:2px 0 0;font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.hq-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.hq-btn{font:inherit;font-size:13px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:6px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;min-height:32px}
+.hq-btn:hover:not(:disabled){border-color:var(--muted)}
+.hq-btn:disabled{opacity:.4;cursor:default}
+.hq-btn.primary{background:var(--ink);color:var(--dark-ink);border-color:var(--ink);font-weight:700}
+.hq-stage{position:relative;overflow:hidden;container-type:size;aspect-ratio:16/10;max-height:72vh;width:100%;border-radius:10px;background:radial-gradient(ellipse at 50% 60%,color-mix(in srgb,var(--tint) 22%,var(--panel-2)),var(--bg) 75%);touch-action:pan-y;user-select:none}
+.hq-stage.zoomed{cursor:grab;touch-action:none}
+.hq-stage.zoomed:active{cursor:grabbing}
+.hq-cam{position:absolute;inset:0;transform-origin:0 0;transition:transform .7s cubic-bezier(.2,.9,.25,1.05);will-change:transform}
+.hq-stage.still .hq-cam{transition:none}
+/* The office art is square with empty margins: crop them and centre the floor. */
+.hq-floor{position:absolute;left:50%;top:50%;width:min(100cqw,165cqh);aspect-ratio:1;transform:translate(-50%,-60%)}
+.hq-office{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:drop-shadow(0 18px 30px #0008)}
+.hq-empty{position:absolute;left:50%;top:66%;transform:translate(-50%,-50%);color:var(--muted);font-size:14px}
+.hq-person{position:absolute;width:14%;transform:translate(-50%,-92%);background:none;border:0;padding:0;cursor:pointer;display:flex;flex-direction:column;align-items:center;color:inherit;font:inherit}
+.hq-person.ghost{opacity:.55}
+.hq-sprite{display:block;width:100%;aspect-ratio:418/690;background:url(/art/agents.png) no-repeat;transition:transform .25s cubic-bezier(.3,1.6,.5,1),filter .2s}
+.hq-person.seated .hq-sprite{aspect-ratio:418/564}
+.hq-person:hover .hq-sprite,.hq-person:focus-visible .hq-sprite{transform:translateY(-4%) scale(1.04)}
+.hq-person.on .hq-sprite{filter:drop-shadow(0 0 6px var(--tint)) drop-shadow(0 0 2px #fff)}
+.hq-person:focus-visible{outline:none}
+.hq-person:focus-visible .hq-tag{outline:2px solid var(--ink);outline-offset:2px}
+.hq-tag{margin-top:-6%;display:inline-flex;align-items:center;gap:4px;max-width:180%;white-space:nowrap;background:#0b111bee;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:clamp(8px,1vw,11.5px);font-weight:600;box-shadow:0 2px 8px #0006}
+.hq-tag small{font-weight:400;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.hq-person.on .hq-tag{border-color:var(--tint)}
+.hq-bubble{position:absolute;pointer-events:none;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:2px;max-width:220%;width:max-content;background:#f4f1ea;color:var(--dark-ink);font-size:clamp(7.5px,.9vw,11px);font-weight:600;line-height:1.25;padding:4px 8px;border-radius:8px;box-shadow:0 3px 10px #0007;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:hq-pop .45s cubic-bezier(.3,1.6,.5,1) both}
+.hq-bubble::after{content:"";position:absolute;top:100%;left:50%;margin-left:-4px;border:4px solid transparent;border-top-color:#f4f1ea}
+.hq-badge{position:absolute;pointer-events:none;bottom:96%;left:50%;transform:translateX(-50%);width:clamp(14px,1.6cqw,22px);aspect-ratio:1;border-radius:50%;display:grid;place-items:center;font-size:clamp(9px,1.1cqw,13px);font-weight:800;color:var(--dark-ink);background:var(--wait);box-shadow:0 0 0 2px #0b111b,0 3px 8px #0008;animation:hq-pop .45s cubic-bezier(.3,1.6,.5,1) both}
+.hq-person.waiting .hq-badge{animation:hq-pop .45s cubic-bezier(.3,1.6,.5,1) both,hq-nudge 2.4s 1s ease-in-out infinite}
+.hq-person.done .hq-badge{background:var(--ok)} .hq-person.error .hq-badge{background:var(--err)}
+@keyframes hq-nudge{0%,80%,100%{translate:0 0}88%{translate:0 -4px}}
+@keyframes hq-pop{from{opacity:0;transform:translate(-50%,6px) scale(.85)}}
+.hq-zoom{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px}
+.hq-zoom .hq-btn{width:34px;height:34px;padding:0;justify-content:center;font-size:17px}
+.hq-pages{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);background:#0b111bcc;border-radius:999px;padding:4px}
+.hq-pages .hq-btn{min-height:28px;padding:2px 10px}
+/* A person's card: full height from the left, the chat drawer's mirror, so the terminal keeps its space. */
+.hq-card{position:fixed;left:20px;bottom:20px;z-index:39;width:min(340px,calc(100vw - 40px));max-height:calc(100vh - 130px);overflow:auto;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(18px) saturate(1.3);border:1px solid color-mix(in srgb,var(--line) 70%,#fff 10%);border-radius:20px;padding:18px;box-shadow:0 24px 60px -12px #000a,0 0 0 1px #ffffff08 inset;display:flex;flex-direction:column;gap:12px;font-size:13.5px;animation:hq-card .45s cubic-bezier(.2,.9,.3,1.1) both}
+@keyframes hq-card{from{opacity:0;transform:translateX(-24px) scale(.97)}}
+.hq-card header{display:flex;align-items:center;gap:10px}
+.hq-card h3{margin:0;font-size:16px;font-family:var(--f-display)}
+.hq-card header p{margin:0;font-size:12px;color:var(--muted)}
+.hq-card > p{margin:0}
+.hq-avatar{flex:none;width:38px;height:38px;box-shadow:0 0 0 3px color-mix(in srgb,var(--tint) 30%,transparent);border-radius:50%;display:grid;place-items:center;font-weight:700;color:var(--dark-ink);background:var(--tint)}
+.hq-x{margin-left:auto;flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);font-size:18px;line-height:1;cursor:pointer}
+.hq-branch{margin-left:8px;font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.hq-line{margin:0;display:flex;flex-direction:column;gap:4px}
+.hq-line ol{margin:0;padding-left:18px;color:var(--muted)}
+.hq-usage{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}
+.hq-usage div{background:var(--panel-2);border-radius:12px;padding:8px 10px}
+.hq-usage dt{font-size:11px;color:var(--muted)}
+.hq-usage dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums}
+.hq-card .actions{margin-top:auto}
+.hq-card .btn{border-radius:999px;padding:8px 18px}
+.hq-card .meter{height:8px;border-radius:999px;border:0;background:var(--panel-2)}
+.hq-drawer{position:fixed;top:20px;right:20px;bottom:20px;z-index:40;width:min(460px,calc(100vw - 40px));display:flex;flex-direction:column;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(18px) saturate(1.3);border:1px solid color-mix(in srgb,var(--line) 70%,#fff 10%);border-radius:20px;box-shadow:0 24px 60px -12px #000a;padding:10px}
+.hq-drawer > .chat{border-radius:14px;overflow:hidden}
+.hq-drawer > .chat{flex:1;min-height:0}
+.hq-drawer-x{position:absolute;top:18px;left:-15px;z-index:1;box-shadow:0 6px 16px #0009}
+.hq-drawer-enter-active,.hq-drawer-leave-active{transition:transform .4s cubic-bezier(.2,.9,.3,1)}
+.hq-drawer-enter-active,.hq-drawer-leave-active{transition:transform .45s cubic-bezier(.2,.9,.3,1.05),opacity .3s}
+.hq-drawer-enter-from,.hq-drawer-leave-to{transform:translateX(calc(100% + 28px));opacity:0}
+@media (prefers-reduced-motion:reduce){.hq-drawer-enter-active,.hq-drawer-leave-active,.hq-card,.hq-bubble,.hq-badge,.hq-person.waiting .hq-badge{transition:none;animation:none}}
+@media (max-width:699px){.hq-stage{aspect-ratio:4/5}.hq-tag small{display:none}}
+/* A narrow room or office (phone, or one of several rooms side by side): the card sits at the bottom. */
+/* Phone: a bottom sheet; the person stays in view above it. */
+@media (max-width:699px){.hq-drawer-x{left:auto;right:12px;top:auto;bottom:76px}.hq-card{left:10px;right:10px;bottom:10px;width:auto;max-height:60vh;animation-name:hq-sheet}.hq-drawer{top:10px;right:10px;bottom:10px;left:10px;width:auto}}
+@keyframes hq-sheet{from{opacity:0;transform:translateY(32px)}}
+/* Desktop shell: the office fills the world area (the terminal keeps its usual share). */
+@media (min-width:1000px){
+  .worlds.hq{display:flex;flex-direction:column;grid-auto-rows:auto}
+  .worlds.hq > .hq{flex:1 0 240px;min-height:0}
+  .worlds.hq .hq-stage{flex:1;min-height:0;aspect-ratio:auto;max-height:none}
+}
+/* Full height layout: the world and the terminal/chat side by side, with a divider to drag; the right column floats. */
+.main-col.split{display:grid;grid-template-columns:minmax(0,var(--split,45%)) 12px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:0}
+.main-col.split > .worlds{grid-column:1;grid-row:1;min-height:0}
+.main-col.split > :is(.term,.chat){grid-column:3;grid-row:1;min-height:0}
+.splitter{grid-column:2;grid-row:1;cursor:col-resize;position:relative;touch-action:none}
+.splitter::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:48px;margin:-24px 0 0 -2px;border-radius:999px;background:var(--line);transition:background .15s,height .15s,margin .15s}
+.splitter:hover::after,.splitter:focus-visible::after,.splitter:active::after{background:var(--muted);height:72px;margin-top:-36px}
+.splitter:focus-visible{outline:none}
+@media (min-width:1000px){
+  .layout.full{grid-template-columns:minmax(0,1fr)}
+  aside.floating{display:none;position:fixed;z-index:38;right:20px;top:112px;width:min(400px,calc(100vw - 40px));max-height:calc(100vh - 132px);overflow:auto;padding:10px;gap:10px;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(18px) saturate(1.3);border:1px solid color-mix(in srgb,var(--line) 70%,#fff 10%);border-radius:20px;box-shadow:0 24px 60px -12px #000a;animation:hq-pop-panel .35s cubic-bezier(.2,.9,.3,1.05) both}
+  aside.floating.open{display:flex}
+  aside.floating > .panel{flex:none!important;max-height:none!important;overflow:visible;border-radius:14px}
+}
+@keyframes hq-pop-panel{from{opacity:0;transform:translateY(-10px) scale(.98)}}
+.views .needs-btn{margin-left:8px;font:inherit;font-size:13px;font-weight:700;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:5px 8px 5px 14px;display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.views .needs-btn .count{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--line);color:var(--ink);text-align:center;font-variant-numeric:tabular-nums}
+.views .needs-btn.on .count{background:var(--wait);color:var(--dark-ink)}
+.views .needs-btn[aria-expanded="true"]{border-color:var(--muted)}
+@media (prefers-reduced-motion:reduce){aside.floating{animation:none}}

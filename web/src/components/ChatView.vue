@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { tokenText, usageTotal } from '../hq'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Turn } from '../types'
 import { NEEDS_YOU, agentLabel, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
@@ -135,6 +136,7 @@ function onKey(e: KeyboardEvent) {
       <template v-if="s">
         <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b><span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span> <span class="chat-world">{{ world?.name }} ·</span> {{ stateLabel(s, state.now) }}
         <span v-if="s.branch" class="tag">{{ s.branch }}</span>
+        <span v-if="s.context || s.usage" class="chat-world" title="How full its context is, and tokens this conversation (in, out and cache)">· <template v-if="s.context">{{ s.context.pct }}% context</template><template v-if="s.context && s.usage"> · </template><template v-if="s.usage">{{ tokenText(usageTotal(s.usage)) }} tokens</template></span>
         <button v-if="!s.ghost" class="hdr-btn chat-term" @click="focusTerminal()">Terminal</button>
       </template>
       <span v-else>No session selected</span>

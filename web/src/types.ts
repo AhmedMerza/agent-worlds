@@ -63,6 +63,8 @@ export interface Session {
   /** The latest thing you said to it (task is the first). */
   lastPrompt?: string | null
   context?: { used: number; limit: number; pct: number } | null
+  /** Tokens over the whole conversation (Claude transcripts only). */
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } | null
   conflicts?: { withId: string; reason: string }[]
   startedAt: number
   updatedAt: number
