@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Store } from './store.ts';
 import { oneLine } from './store.ts';
-import { readHead, readTail, firstPrompt, contextOf, excerpt } from './transcript.ts';
+import { readHead, readTail, firstPrompt, contextOf, excerpt, scanUsage, type UsageScan } from './transcript.ts';
 import { reviewOf } from './review.ts';
 
 const CATCHUP_TIMEOUT_MS = 90_000;
@@ -68,6 +68,7 @@ export class Insights {
   bin: string;
   summarise: Summarise;
   contextAt = new Map<string, number>();
+  usageScans = new Map<string, UsageScan>();
   running = 0;
   queue: (() => void)[] = [];
 
@@ -85,7 +86,7 @@ export class Insights {
     if (!s.taskSure && s.transcriptPath && (ev === 'UserPromptSubmit' || ev === 'PreToolUse' || ev === 'Stop')) void this.updateTask(s);
   };
 
-  forget(id: string) { this.contextAt.delete(id); }
+  forget(id: string) { this.contextAt.delete(id); this.usageScans.delete(id); }
 
   private alive(s: Session) { return this.store.sessions.get(s.id) === s; }
 
@@ -94,7 +95,11 @@ export class Insights {
     if (!s.transcriptPath) return;
     try {
       const ctx = contextOf(await readTail(s.transcriptPath, 256 * 1024), s.model, this.contextLimit);
-      if (ctx && this.alive(s) && JSON.stringify(ctx) !== JSON.stringify(s.context)) { s.context = ctx; this.store.push(s); }
+      const scan = await scanUsage(s.transcriptPath, this.usageScans.get(s.id));
+      if (!this.alive(s)) return;
+      this.usageScans.set(s.id, scan);
+      const usage = { ...scan.total };
+      if ((ctx && JSON.stringify(ctx) !== JSON.stringify(s.context)) || JSON.stringify(usage) !== JSON.stringify(s.usage)) { s.context = ctx ?? s.context; s.usage = usage; this.store.push(s); }
     } catch (e) { console.error(`[agent-worlds] context for ${s.id}: ${(e as Error).message}`); }
   }
 

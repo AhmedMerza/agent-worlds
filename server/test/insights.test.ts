@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { riskOf, ruleFor, ruleText, addAllowRule, Stats } from '../src/rules.ts';
 import { computeConflicts, issueOf } from '../src/conflicts.ts';
-import { readTail, readHead, contextOf, firstPrompt, excerpt, slashCommand, conversation } from '../src/transcript.ts';
+import { readTail, readHead, contextOf, firstPrompt, excerpt, slashCommand, conversation, scanUsage } from '../src/transcript.ts';
 import { reviewOf, testLine, TEST_RE } from '../src/review.ts';
 import { Store } from '../src/store.ts';
 import { Insights, runClaude } from '../src/insights.ts';
@@ -190,6 +190,18 @@ test('catch-up: manual, one at a time per session, max 2 concurrent, failures ke
   assert.equal(ins.requestCatchup(store.sessions.get('s4')!), 'no-transcript');
 });
 
+test('token usage: each message once, whole lines only, added up across scans', async () => {
+  const f = join(tmp(), 't.jsonl');
+  const msg = (id: string, n: number) => JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: n, output_tokens: 2 * n, cache_read_input_tokens: 3 * n, cache_creation_input_tokens: 4 * n } } }) + '\n';
+  // Two content blocks of one message repeat its usage; a sidechain (helper) line is not this session's.
+  writeFileSync(f, msg('m1', 1) + msg('m1', 1) + JSON.stringify({ type: 'assistant', isSidechain: true, message: { id: 'h', usage: { input_tokens: 99 } } }) + '\n' + msg('m2', 10).slice(0, 20));
+  let scan = await scanUsage(f, undefined);
+  assert.deepEqual(scan.total, { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 }, 'the half-written line waits');
+  appendFileSync(f, msg('m2', 10).slice(20) + msg('m3', 100));
+  scan = await scanUsage(f, scan);
+  assert.deepEqual(scan.total, { input: 111, output: 222, cacheRead: 333, cacheWrite: 444 });
+});
+
 test('context and review are filled on Stop', async () => {
   const d = gitRepo();
   writeFileSync(join(d, 'a.txt'), 'changed\n');
@@ -205,6 +217,7 @@ test('context and review are filled on Stop', async () => {
   const s = store.sessions.get('sess-1')!;
   for (let i = 0; i < 100 && !(s.card as any).review; i++) await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(s.context, { used: 50_010, limit: 1_000_000, pct: 5 });
+  assert.deepEqual(s.usage, { input: 15, output: 0, cacheRead: 40_005, cacheWrite: 10_005 }, 'every main-thread message, not only the last');
   assert.deepEqual((s.card as any).review.files, [{ path: 'a.txt', added: 1, deleted: 2 }]);
 });
 

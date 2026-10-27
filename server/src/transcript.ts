@@ -89,6 +89,40 @@ export function contextOf(entries: Entry[], model: string | null, limit = DEFAUL
   return null;
 }
 
+export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
+export type UsageScan = { path: string; offset: number; seen: Set<string>; total: Usage };
+
+/** Adds token use written since the last scan (only whole lines) and returns the scan. Claude writes one line per content
+ *  block of a message, each repeating the message's usage, so a message id counts once. A new transcript (after /clear) starts over. */
+export async function scanUsage(path: string, prev: UsageScan | undefined): Promise<UsageScan> {
+  const scan = prev?.path === path ? prev : { path, offset: 0, seen: new Set<string>(), total: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const fh = await open(path, 'r');
+  try {
+    const { size } = await fh.stat();
+    if (size < scan.offset) return scanUsage(path, undefined); // rewritten
+    const CHUNK = 4 << 20;
+    let rest = Buffer.alloc(0);
+    while (scan.offset + rest.length < size) {
+      const buf = Buffer.alloc(Math.min(CHUNK, size - scan.offset - rest.length));
+      const { bytesRead } = await fh.read(buf, 0, buf.length, scan.offset + rest.length);
+      if (!bytesRead) break;
+      const all = Buffer.concat([rest, buf.subarray(0, bytesRead)]);
+      const end = all.lastIndexOf(10) + 1; // only whole lines; a line still being written waits for the next scan
+      rest = all.subarray(end);
+      scan.offset += end;
+      for (const e of parseLines(all.subarray(0, end).toString('utf8').split('\n'))) {
+        const u = e.type === 'assistant' ? e.message?.usage : null;
+        const id = e.message?.id;
+        if (!u || (id && scan.seen.has(id))) continue;
+        if (id) scan.seen.add(id);
+        scan.total.input += u.input_tokens ?? 0; scan.total.output += u.output_tokens ?? 0;
+        scan.total.cacheRead += u.cache_read_input_tokens ?? 0; scan.total.cacheWrite += u.cache_creation_input_tokens ?? 0;
+      }
+    }
+    return scan;
+  } finally { await fh.close(); }
+}
+
 export type Turn = { who: 'you' | 'claude' | 'step'; text: string };
 
 const codexText = (content: unknown): string => Array.isArray(content)
