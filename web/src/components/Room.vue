@@ -150,7 +150,7 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
       <span v-if="group.world.leadSpawn" class="badge mgd" title="Lead sessions here may start and end their own workers (Manage worlds)">leads start workers</span>
       <span class="meta">{{ needN }} need you · {{ working }} working · {{ idle }} idle</span>
       <span v-if="conflictN" class="warn" :title="'Sessions in this room may be working on the same thing'">⚠ {{ conflictN }}</span>
-      <button class="room-btn" :aria-expanded="sessionsOpen" @click="sessionsOpen = !sessionsOpen">Sessions ({{ group.sessions.length }})</button>
+      <button v-if="illustrated" class="room-btn" :aria-expanded="sessionsOpen" @click="sessionsOpen = !sessionsOpen">Sessions ({{ group.sessions.length }})</button>
       <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>
     </header>
     <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @pointerdown="onDown" @pointermove="onPointerMove" @pointerup="onUp" @pointercancel="onCancel" @mouseleave="hoverId = null" /></div>
@@ -159,8 +159,8 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
       <span>Agents {{ page * OFFICE_PAGE_SIZE + 1 }}–{{ Math.min((page + 1) * OFFICE_PAGE_SIZE, drawn.sessions.length) }} of {{ drawn.sessions.length }}</span>
       <button class="btn" :disabled="page === pages - 1" aria-label="Next agents" @click="page++">→</button>
     </nav>
-    <div v-if="sessionsOpen" class="room-roster">
-      <input v-model="query" type="search" :aria-label="`Search ${group.world.name} sessions`" placeholder="Search sessions…" />
+    <div v-if="sessionsOpen || !illustrated" :class="{ 'room-roster': illustrated }">
+      <input v-if="illustrated" v-model="query" type="search" :aria-label="`Search ${group.world.name} sessions`" placeholder="Search sessions…" />
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <p v-else-if="query && !filtered.length" class="meta">No matching sessions.</p>
