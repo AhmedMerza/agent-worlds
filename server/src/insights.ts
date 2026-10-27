@@ -105,7 +105,7 @@ export class Insights {
         if (this.alive(s)) this.usageScans.set(s.id, scan);
         return { ctx, scan };
       });
-      this.usageRuns.set(s.id, run.then(() => undefined));
+      this.usageRuns.set(s.id, run.then(() => undefined, () => undefined)); // a failed read is reported below, never left unhandled
       const { ctx, scan } = await run;
       if (!this.alive(s)) return;
       const usage = { ...scan.total };
