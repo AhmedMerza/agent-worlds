@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup, Session } from '../types'
 import { drawnSessions, isTouch, nameOf, nowText, stateLabel, NEEDS_YOU, UNSORTED } from '../logic'
 import { state, select, openSession, ui } from '../store'
@@ -24,7 +24,8 @@ const needN = computed(() => real.value.filter(s => NEEDS_YOU.includes(s.state))
 const lead = computed(() => real.value.find(s => real.value.some(c => c.parent === s.id)) ?? null)
 const greeting = computed(() => { const h = new Date(state.now).getHours(); return h < 5 ? 'Working late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening' })
 
-const openId = ref<string | null>(null)
+/** This office's open card: the page has one (ui.card); another room taking it closes ours. */
+const openId = computed({ get: () => (ui.card && drawn.value.some(s => s.id === ui.card) ? ui.card : null), set: (id: string | null) => { ui.card = id } })
 const open = computed<Session | null>(() => drawn.value.find(s => s.id === openId.value) ?? null)
 // Another view picked someone else (a chip, a number key): this card follows only while it is open.
 watch(() => state.selectedId, id => { if (openId.value && id && id !== openId.value && drawn.value.some(s => s.id === id)) show(id) })
@@ -46,9 +47,12 @@ function zoomAt(f: number, mx: number, my: number) {
 const zoomBy = (f: number) => { const { w, h } = size(); zoomAt(f, w / 2, h / 2) }
 const resetCam = () => { cam.value = { z: 1, x: 0, y: 0 } }
 
-function show(id: string) {
+async function show(id: string) {
   select(id)
   openId.value = id
+  // Someone on another page of the office: turn to it first.
+  const i = [...drawn.value].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id)).findIndex(s => s.id === id)
+  if (i >= 0 && Math.floor(i / HQ_PAGE_SIZE) !== page.value) { page.value = Math.floor(i / HQ_PAGE_SIZE); await nextTick() }
   const el = stage.value?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)
   if (!el || !stage.value) return
   // Where they stand with the camera at rest: undo the current transform.
@@ -59,8 +63,9 @@ function show(id: string) {
   cam.value = cameraOn(w, h, px, py, 1.7, v.x, v.y)
 }
 /** Left click opens them where you work; on touch (no right click) it opens their card. */
-function pick(id: string) { if (isTouch()) return show(id); openId.value = null; openSession(id) } // the camera stays where you put it
-function close() { openId.value = null; resetCam() }
+function pick(id: string) { if (isTouch()) return show(id); if (openId.value) openId.value = null; openSession(id) } // the camera stays where you put it
+function close() { if (openId.value) openId.value = null; resetCam() }
+watch(openId, (id) => { if (!id) resetCam() })
 
 // Drag the floor to look around once zoomed in; a drag never also counts as a click.
 let press: { x: number; y: number; cx: number; cy: number } | null = null

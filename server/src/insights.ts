@@ -69,6 +69,8 @@ export class Insights {
   summarise: Summarise;
   contextAt = new Map<string, number>();
   usageScans = new Map<string, UsageScan>();
+  /** A session's scan in progress: the next one waits for it, since both would read on from the same offset. */
+  usageRuns = new Map<string, Promise<UsageScan | undefined>>();
   running = 0;
   queue: (() => void)[] = [];
 
@@ -86,7 +88,7 @@ export class Insights {
     if (!s.taskSure && s.transcriptPath && (ev === 'UserPromptSubmit' || ev === 'PreToolUse' || ev === 'Stop')) void this.updateTask(s);
   };
 
-  forget(id: string) { this.contextAt.delete(id); this.usageScans.delete(id); }
+  forget(id: string) { this.contextAt.delete(id); this.usageScans.delete(id); this.usageRuns.delete(id); }
 
   private alive(s: Session) { return this.store.sessions.get(s.id) === s; }
 
@@ -95,9 +97,12 @@ export class Insights {
     if (!s.transcriptPath) return;
     try {
       const ctx = contextOf(await readTail(s.transcriptPath, 256 * 1024), s.model, this.contextLimit);
-      const scan = await scanUsage(s.transcriptPath, this.usageScans.get(s.id));
+      const path = s.transcriptPath;
+      const run = (this.usageRuns.get(s.id) ?? Promise.resolve(undefined)).catch(() => undefined)
+        .then(async () => { const scan = await scanUsage(path, this.usageScans.get(s.id)); this.usageScans.set(s.id, scan); return scan; });
+      this.usageRuns.set(s.id, run);
+      const scan = await run;
       if (!this.alive(s)) return;
-      this.usageScans.set(s.id, scan);
       const usage = { ...scan.total };
       if ((ctx && JSON.stringify(ctx) !== JSON.stringify(s.context)) || JSON.stringify(usage) !== JSON.stringify(s.usage)) { s.context = ctx ?? s.context; s.usage = usage; this.store.push(s); }
     } catch (e) { console.error(`[agent-worlds] context for ${s.id}: ${(e as Error).message}`); }

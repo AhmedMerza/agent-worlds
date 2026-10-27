@@ -28,7 +28,8 @@ const steps = computed(() => stepTags(Object.values(state.runs), Object.values(s
 const pages = computed(() => Math.max(1, Math.ceil(drawn.value.sessions.length / OFFICE_PAGE_SIZE)))
 const illustrated = computed(() => ui.worldDesign === 'illustrated')
 /** A right-clicked (on touch: tapped) person gets the camera and their card. */
-const cardId = ref<string | null>(null)
+/** This room's open card: the page has one (ui.card); another room taking it closes ours. */
+const cardId = computed({ get: () => (ui.card && props.group.sessions.some(s => s.id === ui.card) ? ui.card : null), set: (id: string | null) => { ui.card = id } })
 const card = computed(() => (cardId.value ? props.group.sessions.find(s => s.id === cardId.value) ?? null : null))
 const cam = ref<Camera>({ z: 1, x: 0, y: 0 })
 watch(illustrated, () => closeCard())
@@ -65,7 +66,8 @@ function fitCanvas() {
   const dpr = window.devicePixelRatio || 1
   box.style.minHeight = `${(h.value * box.clientWidth) / W}px` // never shorter than the scene needs
   // Zoomed in, draw at the zoomed size so the scaled-up canvas stays sharp.
-  const z = cam.value.z
+  // ...but no more than ~8M pixels: a big zoomed room redrawn 30 times a second costs more than slight softness.
+  const z = Math.max(1, Math.min(cam.value.z, Math.sqrt(8e6 / Math.max(1, box.clientWidth * box.clientHeight * dpr * dpr))))
   c.width = Math.max(1, Math.round(box.clientWidth * dpr * z)); c.height = Math.max(1, Math.round(box.clientHeight * dpr * z))
   k = c.width / W
   hLog = c.height / k
@@ -161,7 +163,8 @@ function showCard(id: string) {
   const v = viewCentre(box)
   cam.value = cameraOn(w, hh, (hit.x + hit.w / 2) * u, (hit.y + hit.h / 2) * u, 1.7, v.x, v.y)
 }
-function closeCard() { cardId.value = null; cam.value = { z: 1, x: 0, y: 0 } }
+function closeCard() { if (cardId.value) cardId.value = null; cam.value = { z: 1, x: 0, y: 0 } }
+watch(cardId, (id) => { if (!id) cam.value = { z: 1, x: 0, y: 0 } })
 const onClick = (e: MouseEvent) => {
   if (dropped) { dropped = false; return }
   const h = at(e)

@@ -448,6 +448,8 @@ function savedViews(): Views {
 export const ui = reactive({ ...savedViews(), worldsOpen: false,
   /** The selected session's chat, slid in from the right (opened from a person's card in a room). */
   chatDrawer: false,
+  /** The one person whose card is open, in whichever room they are. */
+  card: null as string | null,
   /** Full height layout: the floating Needs you and details panel. */
   needsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
   /** A character being dragged to another room: where the pointer is, and the world under it. */

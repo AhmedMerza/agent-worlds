@@ -71,6 +71,8 @@ const listShown = computed(() => (phone.value ? tab.value === 'chats' && !chatOp
 const chatShown = computed(() => (phone.value ? tab.value === 'chats' && chatOpen.value : ui.pane === 'chat'))
 /** A chat opened from a person's card slides in over the page instead of taking the pane. */
 const chatDrawer = computed(() => ui.chatDrawer && !!selected.value && !selected.value.ghost)
+// Selecting a plain-terminal session (no chat) closes the drawer, so it does not pop back for the next one.
+watch(selected, (s) => { if (!s || s.ghost) ui.chatDrawer = false })
 const termShown = computed(() => (phone.value ? tab.value === 'term' : ui.pane === 'term'))
 
 function openNewTask(worldId?: string, run = false) {
