@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, existsSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { riskOf, ruleFor, ruleText, addAllowRule, Stats } from '../src/rules.ts';
 import { computeConflicts, issueOf } from '../src/conflicts.ts';
-import { readTail, readHead, contextOf, firstPrompt, excerpt, slashCommand, conversation } from '../src/transcript.ts';
+import { readTail, readHead, contextOf, firstPrompt, excerpt, slashCommand, conversation, scanUsage } from '../src/transcript.ts';
 import { reviewOf, testLine, TEST_RE } from '../src/review.ts';
 import { Store } from '../src/store.ts';
 import { Insights, runClaude } from '../src/insights.ts';
@@ -190,6 +190,58 @@ test('catch-up: manual, one at a time per session, max 2 concurrent, failures ke
   assert.equal(ins.requestCatchup(store.sessions.get('s4')!), 'no-transcript');
 });
 
+test('token usage: each message once, whole lines only, added up across scans', async () => {
+  const f = join(tmp(), 't.jsonl');
+  const msg = (id: string, n: number) => JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: n, output_tokens: 2 * n, cache_read_input_tokens: 3 * n, cache_creation_input_tokens: 4 * n } } }) + '\n';
+  // Two content blocks of one message repeat its usage; a sidechain (helper) line is not this session's.
+  writeFileSync(f, msg('m1', 1) + msg('m1', 1) + JSON.stringify({ type: 'assistant', isSidechain: true, message: { id: 'h', usage: { input_tokens: 99 } } }) + '\n' + msg('m2', 10).slice(0, 20));
+  let scan = await scanUsage(f, undefined);
+  assert.deepEqual(scan.total, { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 }, 'the half-written line waits');
+  appendFileSync(f, msg('m2', 10).slice(20) + msg('m3', 100));
+  scan = await scanUsage(f, scan);
+  assert.deepEqual(scan.total, { input: 111, output: 222, cacheRead: 333, cacheWrite: 444 });
+});
+
+test('token usage: a rewritten transcript, a new one after /clear, lines without an id, nothing new', async () => {
+  const dir = tmp(), f = join(dir, 'a.jsonl'), g = join(dir, 'b.jsonl')
+  const msg = (id: string | null, n: number) => JSON.stringify({ type: 'assistant', message: { ...(id ? { id } : {}), usage: { input_tokens: n, output_tokens: 0 } } }) + '\n';
+  writeFileSync(f, msg('m1', 1) + msg(null, 10) + msg(null, 10));
+  let scan = await scanUsage(f, undefined);
+  assert.equal(scan.total.input, 21, 'lines without a message id each count');
+  assert.equal((await scanUsage(f, scan)).total.input, 21, 'scanning again with nothing new adds nothing');
+  writeFileSync(f, msg('m9', 5));
+  assert.equal((await scanUsage(f, scan)).total.input, 5, 'a transcript rewritten shorter is counted again from the start');
+  writeFileSync(g, msg('m1', 100));
+  scan = await scanUsage(g, await scanUsage(f, undefined));
+  assert.equal(scan.total.input, 100, 'a new transcript (after /clear) starts over, even for an id seen in the old one');
+});
+
+test('token usage: overlapping updates still count every line', async () => {
+  const dir = tmp(), f = join(dir, "t.jsonl");
+  const msg = (id: string, n: number, pad = 0) => JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: n, output_tokens: 0 } }, pad: 'x'.repeat(pad) }) + '\n';
+  writeFileSync(f, msg('a', 1));
+  const cfg = parseConfig({ claudeProjectsDir: realpathSync(tmpdir()) });
+  const store = new Store(cfg, {
+    repoInfo: async () => ({ repo: dir, branch: 'main', worktree: false, top: dir }),
+    branchOf: async () => 'main', tmuxSessionOf: async () => null, clientsConnected: () => false, holdMs: 1000,
+    stats: { get: () => 0, inc: () => 1 },
+  }, () => {});
+  const ins = new Insights(store, 'unused', { summarise: async () => ({ did: '', needs: '' }) });
+  await store.handle({ ...ev.stop, cwd: dir, transcript_path: f }, null);
+  const s = store.sessions.get('sess-1')!;
+  await ins.updateContext(s);
+  appendFileSync(f, msg('b', 10));
+  await Promise.all([ins.updateContext(s), ins.updateContext(s)]); // a Stop and a PostToolUse at once
+  appendFileSync(f, msg('c', 100, 400) + msg('d', 1000, 400));
+  await ins.updateContext(s);
+  assert.equal(s.usage!.input, 1111);
+  // Removed while a scan runs: nothing of it is kept for a later session with the same id.
+  const pending = ins.updateContext(s);
+  store.sessions.delete(s.id); ins.forget(s.id);
+  await pending;
+  assert.equal(ins.usageScans.has(s.id), false);
+});
+
 test('context and review are filled on Stop', async () => {
   const d = gitRepo();
   writeFileSync(join(d, 'a.txt'), 'changed\n');
@@ -205,6 +257,7 @@ test('context and review are filled on Stop', async () => {
   const s = store.sessions.get('sess-1')!;
   for (let i = 0; i < 100 && !(s.card as any).review; i++) await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(s.context, { used: 50_010, limit: 1_000_000, pct: 5 });
+  assert.deepEqual(s.usage, { input: 15, output: 0, cacheRead: 40_005, cacheWrite: 10_005 }, 'every main-thread message, not only the last');
   assert.deepEqual((s.card as any).review.files, [{ path: 'a.txt', added: 1, deleted: 2 }]);
 });
 

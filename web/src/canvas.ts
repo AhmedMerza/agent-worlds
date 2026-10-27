@@ -10,7 +10,7 @@ export interface Hit { id: string; x: number; y: number; w: number; h: number; e
 export interface DrawOpts { group: RoomGroup; selectedId: string | null; /** Run step tags by session id, shown in place of the branch. */ steps?: Record<string, string>; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; /** Desk arrival order, kept between frames. */ arrivals?: Set<string>; k: number; h: number
   /** Session under the pointer: its walk is held still. */
   hoverId?: string | null
-  worldDesign?: 'classic' | 'illustrated'
+  worldDesign?: 'classic' | 'illustrated' | 'hq'
   /** ms since the previous frame (used to hold a walk). */
   dt?: number
   /** Ghosts left out of the scene by the cap; drawn as "+N" in the lounge. */

@@ -410,6 +410,13 @@ export function startClock(): void { setInterval(() => { state.now = Date.now() 
 
 /** Bumped to ask the terminal panel to scroll into view and take focus. */
 export const termFocusTick = ref(0)
+/** A person clicked in a room: their terminal; in the Full height layout, wherever you work (their chat when Conversation is shown). */
+export const openSession = (id: string): void => {
+  const s = lookup(id)
+  if (ui.layout === 'full' && ui.pane === 'chat' && s && !s.ghost) return openChat(id)
+  select(id)
+  if (s?.tmux || s?.direct) focusTerminal()
+}
 export const focusTerminal = (): void => { ui.pane = 'term'; termFocusTick.value++ }
 /** Bumped to ask the page to show the selected session's chat (on a phone: open it in the Chats tab). */
 export const chatTick = ref(0)
@@ -425,17 +432,26 @@ watch(() => needsYou.value.map(cardKey), (keys) => {
 /** A session you just started or resumed: shown where you were looking, its chat or its terminal. */
 const showFollowed = (id: string): void => { if (ui.pane === 'chat') openChat(id); else { select(id); focusTerminal() } }
 
-type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated' }
+/** layout: 'stacked' is the original page; 'full' puts the world beside the terminal/chat at full height, with Needs you in a floating panel.
+ *  split: the world's share (%) of the width when side by side. */
+type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated' | 'hq'; layout: 'stacked' | 'full'; split: number }
+export const clampSplit = (n: number): number => Math.min(75, Math.max(25, Math.round(n)))
 function savedViews(): Views {
   try {
     const v = JSON.parse(localStorage.getItem('aw-views') ?? '{}') as Partial<Views>
-    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'classic' ? 'classic' : 'illustrated' }
-  } catch { return { left: 'world', pane: 'term', worldDesign: 'illustrated' } }
+    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'illustrated' || v.worldDesign === 'hq' ? v.worldDesign : 'classic', layout: v.layout === 'stacked' ? 'stacked' : 'full', split: typeof v.split === 'number' && isFinite(v.split) ? clampSplit(v.split) : 45 }
+  } catch { return { left: 'world', pane: 'term', worldDesign: 'classic', layout: 'full', split: 45 } }
 }
 
 /** Dialog state shared by the header, rooms and detail panel. */
 /** recentRepo: Recent sessions shows only that repo's (its folder and worktrees); null shows all. */
-export const ui = reactive({ ...savedViews(), worldsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
+export const ui = reactive({ ...savedViews(), worldsOpen: false,
+  /** The selected session's chat, slid in from the right (opened from a person's card in a room). */
+  chatDrawer: false,
+  /** The one person whose card is open, in whichever room they are. */
+  card: null as string | null,
+  /** Full height layout: the floating Needs you and details panel. */
+  needsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
   /** A character being dragged to another room: where the pointer is, and the world under it. */
   drag: null as { id: string; x: number; y: number; over: string | null } | null })
-watch(() => [ui.left, ui.pane, ui.worldDesign], () => { try { localStorage.setItem('aw-views', JSON.stringify({ left: ui.left, pane: ui.pane, worldDesign: ui.worldDesign })) } catch { /* private window: not remembered */ } })
+watch(() => [ui.left, ui.pane, ui.worldDesign, ui.layout, ui.split], () => { try { localStorage.setItem('aw-views', JSON.stringify({ left: ui.left, pane: ui.pane, worldDesign: ui.worldDesign, layout: ui.layout, split: ui.split })) } catch { /* private window: not remembered */ } })

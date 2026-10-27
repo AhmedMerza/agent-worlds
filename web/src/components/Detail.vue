@@ -6,6 +6,7 @@ import { selected, groups, focusTerminal, askClaude, showToast, ui, state, runOf
 import ResumeButton from './ResumeButton.vue'
 import ContinueIn from './ContinueIn.vue'
 import RunCard from './RunCard.vue'
+import { tokenText, usageTotal } from '../hq'
 
 const s = computed(() => selected.value)
 const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
@@ -52,6 +53,7 @@ async function copyAttach() {
         <template v-else-if="level === 1"><p class="why">Getting heavy. Check whether it is still worth keeping.</p>
           <div class="actions"><button class="btn" @click="askClaude(s.id, s.repoName, '/checkpoint')">/checkpoint</button></div></template>
       </div>
+      <p v-if="s.usage" class="now"><span class="lbl">Tokens this conversation</span>{{ tokenText(usageTotal(s.usage)) }} · {{ tokenText(s.usage.input) }} in, {{ tokenText(s.usage.output) }} out, {{ tokenText(s.usage.cacheRead) }} cache read, {{ tokenText(s.usage.cacheWrite) }} cache write</p>
       <p v-for="c in s.conflicts ?? []" :key="c.withId" class="conflicts">⚠ Overlaps with {{ c.withId }}: {{ c.reason }}</p>
       <div v-if="s.helpers.length">
         <span class="lbl">Helpers ({{ s.helpers.length }})</span>

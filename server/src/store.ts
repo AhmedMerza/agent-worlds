@@ -78,6 +78,8 @@ export type Session = {
   /** State or card changed after the catch-up was made. */
   catchupStale: boolean;
   context: { used: number; limit: number; pct: number } | null;
+  /** Tokens over the whole transcript (Claude only). */
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
   conflicts: Conflict[];
   startedAt: number; updatedAt: number;
   // internal, never sent to clients
@@ -362,7 +364,7 @@ export class Store {
       // A started worker, or a new conversation in a worker's pane (/clear), stays on its lead's team
       parent: this.deps.parents?.get(id) ?? prior?.parent ?? null,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
-      log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, conflicts: [],
+      log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, usage: null, conflicts: [],
       startedAt: t, updatedAt: t,
       pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, logPath: null, tests: null, testing: new Set(), launched: false, hookAt: t, promptAt: t,
     };
