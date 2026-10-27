@@ -9,13 +9,14 @@ const props = defineProps<{ sessionId: string; label?: string; primary?: boolean
 const emit = defineEmits<{ started: [] }>()
 const busy = ref(false)
 const error = ref('')
+const codexUnrestricted = ref(false)
 /** Set when the server says the session is still open elsewhere (pid may be unknown). */
 const running = ref<{ pid: number | null } | null>(null)
 
 async function go(stop: boolean) {
   if (busy.value) return
   busy.value = true; error.value = ''
-  const r = await resumeSession(props.sessionId, stop, resumePermissionMode(props.agent, props.mode ?? 'claude'), props.agent)
+  const r = await resumeSession(props.sessionId, stop, resumePermissionMode(props.agent, props.mode ?? 'claude'), props.agent, props.agent === 'codex' && codexUnrestricted.value)
   busy.value = false
   if (r.kind === 'ok') { running.value = null; emit('started') }
   else if (r.kind === 'running') running.value = { pid: r.pid }
@@ -25,6 +26,8 @@ async function go(stop: boolean) {
 
 <template>
   <div class="resume">
+    <label v-if="agent === 'codex'" class="row"><input v-model="codexUnrestricted" type="checkbox"> Unrestricted file and network access</label>
+    <p v-if="agent === 'codex' && codexUnrestricted" class="warn-note">Codex can access files outside this folder and use the network without a required approval.</p>
     <template v-if="running">
       <p class="warn-note" role="alert">
         This session is still open{{ running.pid ? ` in another terminal (pid ${running.pid})` : ' somewhere else' }}. Two copies writing to one conversation can garble it, so the other one has to quit first. It keeps everything said so far.

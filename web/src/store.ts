@@ -230,7 +230,7 @@ export async function continueIn(id: string, agent: string): Promise<string | nu
   followNew(r.data.tmuxSession)
   return null
 }
-export const startRun = (body: { worldId: string; repo: string; task: string; worktree: boolean; steps: { kind: StepKind; agent: string; checkpoint: boolean }[] }) => api<{ run: Run }>('POST', '/api/runs', body)
+export const startRun = (body: { worldId: string; repo: string; task: string; worktree: boolean; steps: { kind: StepKind; agent: string; checkpoint: boolean }[]; codexUnrestricted?: boolean }) => api<{ run: Run }>('POST', '/api/runs', body)
 export const runNext = (id: string) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/next`)
 export const runStop = (id: string, endSessions = false) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/stop`, { endSessions })
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
@@ -251,7 +251,7 @@ export async function askClaude(id: string, repoName: string, command: string): 
   if (ok) showToast(`Asked ${repoName} to ${command}`)
   return ok
 }
-export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode; agent?: string; provider?: string; model?: string }
+export interface NewTask { worldId: string; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: PermissionMode; codexUnrestricted?: boolean; agent?: string; provider?: string; model?: string }
 export interface AgentInfo { id: string; name: string; installed: boolean; modes: boolean; decides?: boolean; task?: boolean; models?: boolean }
 /** Agent id -> the models leads may start it on ([] for any); an agent left out is off. null: every agent, any model. */
 export type SpawnAgents = Record<string, string[]> | null
@@ -340,9 +340,9 @@ function followNew(name: unknown): void {
   if (known) { state.pending = null; showFollowed(known.id) } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */
-export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: AgentId): Promise<ResumeResult> {
+export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: AgentId, codexUnrestricted = false): Promise<ResumeResult> {
   try {
-    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(agent ? { agent } : {}), ...(stop ? { stop: true } : {}), ...(permissionMode ? { permissionMode } : {}) }) })
+    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(agent ? { agent } : {}), ...(stop ? { stop: true } : {}), ...(permissionMode ? { permissionMode } : {}), ...(agent === 'codex' && codexUnrestricted ? { codexUnrestricted: true } : {}) }) })
     let body: unknown = null
     try { body = await r.json() } catch { /* empty body */ }
     const res = resumeOutcome(r.status, body)

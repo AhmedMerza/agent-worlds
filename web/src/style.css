@@ -236,6 +236,9 @@ pre.diff{max-height:320px;overflow:auto}
 .resume .actions{margin-top:6px}
 .warn-note{margin:0 0 6px;font-size:13px;color:var(--wait);max-width:230px}
 .recent-list li .resume{flex:none}
+.recent-list li.codex-resume{display:block}
+.recent-list li.codex-resume .resume{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-top:8px}
+.recent-list li.codex-resume .warn-note{width:100%;max-width:none;margin:0}
 .attach-cmd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .attach-cmd code{font-family:var(--f-mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
 .term-paused{margin-left:auto;font-size:12px;color:var(--wait)}

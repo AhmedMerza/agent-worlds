@@ -778,6 +778,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const agent: AgentId = isAgent(b.agent) ? b.agent : 'claude';
       const kimi = agent === 'kimi', codex = agent === 'codex';
       if (b.permissionMode !== undefined && (agent !== 'claude' || !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode))) return send(res, 400, { error: agent !== 'claude' ? 'permissionMode is Claude-only' : `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
+      if (b.codexUnrestricted !== undefined && (agent !== 'codex' || typeof b.codexUnrestricted !== 'boolean')) return send(res, 400, { error: 'codexUnrestricted must be a boolean for Codex sessions' });
       if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       let cwd: string | undefined;
       if (kimi) {
@@ -814,7 +815,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (resuming.has(b.sessionId)) return send(res, 409, { error: 'that conversation is already being restored', stopFailed: true });
       try {
         resuming.set(b.sessionId, null);
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(agent !== 'claude' ? { agent } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(agent !== 'claude' ? { agent } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), ...(b.codexUnrestricted === true ? { codexUnrestricted: true } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
         resuming.set(b.sessionId, r.tmuxSession);
         const saved = recovery.get(b.sessionId);
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: saved?.lastPrompt ?? saved?.task ?? null, ...(agent !== 'claude' ? { agent } : {}), resuming: true });
@@ -893,6 +894,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.permissionMode !== undefined && !(sys.PERMISSION_MODES as readonly unknown[]).includes(b.permissionMode)) return send(res, 400, { error: `permissionMode must be one of ${sys.PERMISSION_MODES.join(', ')}` });
       if (b.agent !== undefined && !isAgent(b.agent)) return send(res, 400, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
       const agent = isAgent(b.agent) ? b.agent : defaultAgent(cfg.defaultAgent);
+      if (b.codexUnrestricted !== undefined && (agent !== 'codex' || typeof b.codexUnrestricted !== 'boolean')) return send(res, 400, { error: 'codexUnrestricted must be a boolean for Codex sessions' });
       if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return send(res, 422, { error: `${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)` });
       let provider, via = null;
       if (b.provider !== undefined) {
@@ -908,7 +910,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         via = `${p.name} · ${provider.model}`;
       }
       try {
-        const r = await launch({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), via });
+        const r = await launch({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), codexUnrestricted: b.codexUnrestricted === true, via });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -922,7 +924,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (b.worktree !== undefined && typeof b.worktree !== 'boolean') return send(res, 400, { error: 'worktree must be a boolean' });
       const steps = parseSteps(b.steps);
       if ('err' in steps) return send(res, steps.err[0], { error: steps.err[1] });
-      const r = await beginRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, steps });
+      if (b.codexUnrestricted !== undefined && (typeof b.codexUnrestricted !== 'boolean' || (b.codexUnrestricted && !steps.some((s) => s.agent === 'codex')))) return send(res, 400, { error: 'codexUnrestricted needs a Codex step and must be a boolean' });
+      const r = await beginRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, steps, codexUnrestricted: b.codexUnrestricted === true });
       return r.status === 'failed' ? send(res, 422, { error: r.note, run: r }) : send(res, 201, { run: r });
     }
     const runm = url.pathname.match(/^\/api\/runs\/([^/]+)\/(next|stop)$/);
@@ -1157,9 +1160,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    * Starts a session: New session, a run's step and aw_spawn all come here. Its CLI in tmux (or a pty), then its
    * 'starting' card; `made` runs in between. card: the task its card shows, when not the first message.
    */
-  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null; originWorldId?: string },
+  async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; codexUnrestricted?: boolean; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null; originWorldId?: string },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
-    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.codexUnrestricted === true && !o.parent ? { codexUnrestricted: true } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
     const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));
@@ -1306,7 +1309,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       // A worktree's branch is named after the run, not after the step's long first message.
       // A lead's run keeps to the models the user named for each step's agent
       const model = r.parent ? cfg.spawnAgents?.[step.agent]?.[0] : undefined;
-      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null, originWorldId: r.worldId }, async (c) => {
+      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), codexUnrestricted: r.codexUnrestricted === true && !r.parent, card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null, originWorldId: r.worldId }, async (c) => {
         if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
         step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       });

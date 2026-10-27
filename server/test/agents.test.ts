@@ -8,6 +8,8 @@ import { tmp } from './fixtures.ts';
 test('codex gets its hooks as -c overrides, with a permission hook timeout', () => {
   const { args, env } = launchArgs('codex', { home: '/h', task: 'fix it' });
   assert.deepEqual(env, {});
+  assert.deepEqual(args.slice(0, 4), ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']);
+  assert.deepEqual(launchArgs('codex', { task: 'fix it', codexUnrestricted: true }).args.slice(0, 4), ['--sandbox', 'danger-full-access', '--ask-for-approval', 'on-request']);
   assert.deepEqual(args.slice(-2), ['--', 'fix it']);
   const perm = args.find((a) => a.startsWith('hooks.PermissionRequest='));
   assert.match(perm!, /^hooks\.PermissionRequest=\[\{hooks=\[\{type="command",command=".*\/bin\/aw-hook codex",timeout=3600\}\]\}\]$/);
@@ -17,9 +19,11 @@ test('codex gets its hooks as -c overrides, with a permission hook timeout', () 
   assert.match(mcp[0], /^mcp_servers\.aw\.command=".*\/bin\/aw-mcp"$/);
   assert.ok(mcp.includes('mcp_servers.aw.env_vars=["TMUX_PANE","AGENT_WORLDS_PTY","AGENT_WORLDS_HOME"]'), 'the bridge learns its pane');
   assert.ok(mcp.includes('mcp_servers.aw.default_tools_approval_mode="approve"'));
-  assert.deepEqual(launchArgs('codex', { task: '' }).args, [], 'no home, no hooks');
+  assert.deepEqual(launchArgs('codex', { task: '' }).args, ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'], 'access is independent of hooks');
   const resumed = launchArgs('codex', { home: '/h', task: '', resume: '33333333-cccc-4ccc-8ccc-cccccccccccc' }).args;
   assert.equal(resumed[0], 'resume');
+  assert.deepEqual(resumed.slice(1, 5), ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']);
+  assert.deepEqual(launchArgs('codex', { task: '', resume: 'session-1234', codexUnrestricted: true }).args.slice(1, 5), ['--sandbox', 'danger-full-access', '--ask-for-approval', 'on-request']);
   assert.equal(resumed.at(-1), '33333333-cccc-4ccc-8ccc-cccccccccccc');
   assert.ok(resumed.some((a) => a.startsWith('hooks.SessionStart=')), 'resumed sessions keep reporting through hooks');
 });
@@ -89,7 +93,7 @@ test('claude keeps its own flags', () => {
 
 test('every agent uses its native conversation resume flag', () => {
   const o = { task: '', resume: 'session-1234' };
-  assert.deepEqual(launchArgs('codex', o).args.slice(0, 2), ['resume', 'session-1234']);
+  assert.equal(launchArgs('codex', o).args.at(-1), 'session-1234');
   assert.deepEqual(launchArgs('qwen', o).args, ['--resume', 'session-1234']);
   assert.deepEqual(launchArgs('kimi', o).args, ['--session', 'session-1234']);
   const pair = (args: string[], flag: string) => args.slice(args.indexOf(flag), args.indexOf(flag) + 2);

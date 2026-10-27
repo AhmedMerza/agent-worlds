@@ -42,7 +42,7 @@ beforeEach(async () => { await allow(null); await setDefault('claude'); });
 
 test('the model goes in as one --model=<id> argument, on the CLIs that take one', () => {
   assert.deepEqual(launchArgs('claude', { task: 't', model: 'sonnet' }).args, ['--model=sonnet', '--', 't']);
-  assert.deepEqual(launchArgs('codex', { task: 't', model: 'gpt-5-codex' }).args, ['--model=gpt-5-codex', '--', 't']);
+  assert.deepEqual(launchArgs('codex', { task: 't', model: 'gpt-5-codex' }).args.slice(-3), ['--model=gpt-5-codex', '--', 't']);
   const home = tmp('aw-gemini-home-'), dir = tmp('aw-gemini-dir-');
   const g = launchArgs('gemini', { home, dir, task: 't', model: 'gemini-2.5-pro' }).args;
   assert.deepEqual(g.slice(-3), ['--model=gemini-2.5-pro', '-i', 't'], 'Gemini reads a separate value starting with - as a flag');
@@ -69,6 +69,7 @@ test('config.json: saved rules load in their order; null or absent is no rules; 
 test('with nothing configured, a lead may pick any agent and model, and gets your default when it names none', async () => {
   const r = await spawn({ agent: 'codex', model: 'gpt-5-codex' });
   assert.equal(launched.at(-1).model, 'gpt-5-codex', r.content[0].text);
+  assert.equal(launched.at(-1).codexUnrestricted, undefined, 'lead-started Codex workers do not opt in to unrestricted access');
   assert.match(r.content[0].text, /Codex \(gpt-5-codex\)/);
   assert.match((await spawn({ agent: 'kimi', model: 'k2' })).content[0].text, /cannot pick a model for Kimi/);
   assert.match((await spawn({ model: 'sonnet; rm -rf /' })).content[0].text, /must be a model id/);
