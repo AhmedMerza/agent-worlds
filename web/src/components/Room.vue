@@ -6,7 +6,7 @@ import { illustrationReady, officePage, OFFICE_PAGE_SIZE } from '../illustratedR
 import { roomHeight, type Walker } from '../zones'
 import { agentLabel, nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch, stepTags } from '../logic'
 import { state, select, openSession, ui, moveSession, showToast } from '../store'
-import { cameraOn, viewCentre, tokenText, usageTotal, type Camera } from '../hq'
+import { cameraOn, viewCentre, usageText, type Camera } from '../hq'
 import AgentCard from './AgentCard.vue'
 
 const props = defineProps<{ group: RoomGroup; numbers: Record<string, number> }>()
@@ -204,7 +204,7 @@ function onContext(e: MouseEvent) {
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <p v-else-if="query && !filtered.length" class="meta">No matching sessions.</p>
       <button v-for="s in filtered" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.context || s.usage" class="st" title="Context use and tokens this conversation">{{ [s.context ? `${s.context.pct}% ctx` : '', s.usage ? `${tokenText(usageTotal(s.usage))} tok` : ''].filter(Boolean).join(' · ') }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
+        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.context || s.usage" class="st" title="Context use and tokens this conversation">{{ [s.context ? `${s.context.pct}% ctx` : '', s.usage ? usageText(s.usage) : ''].filter(Boolean).join(' · ') }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
         <span class="dot ghost" />{{ ghostChipText(split.ghosts.length) }} <span class="st">{{ ghostsOpen ? 'Hide' : 'Show' }}</span>

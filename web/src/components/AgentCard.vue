@@ -33,7 +33,7 @@ function terminal() { select(props.s.id); ui.chatDrawer = false; focusTerminal()
         <dl class="hq-usage">
           <div><dt>In</dt><dd>{{ tokenText(s.usage.input) }}</dd></div>
           <div><dt>Out</dt><dd>{{ tokenText(s.usage.output) }}</dd></div>
-          <div><dt>Cache read</dt><dd>{{ tokenText(s.usage.cacheRead) }}</dd></div>
+          <div title="Context re-read from the cache on every turn; it costs far less than new tokens"><dt>Cache read</dt><dd>{{ tokenText(s.usage.cacheRead) }}</dd></div>
           <div><dt>Cache write</dt><dd>{{ tokenText(s.usage.cacheWrite) }}</dd></div>
         </dl>
       </div>

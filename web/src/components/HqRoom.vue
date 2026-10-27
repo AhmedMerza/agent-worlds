@@ -4,7 +4,7 @@ import type { RoomGroup, Session } from '../types'
 import { drawnSessions, isTouch, nameOf, nowText, stateLabel, NEEDS_YOU, UNSORTED } from '../logic'
 import { state, select, openSession, ui } from '../store'
 import AgentCard from './AgentCard.vue'
-import { cameraOn, viewCentre, hqPlaces, tokenText, usageTotal, HQ_PAGE_SIZE, HQ_MAX_ZOOM, HQ_MIN_ZOOM, type Camera } from '../hq'
+import { cameraOn, viewCentre, hqPlaces, usageText, HQ_PAGE_SIZE, HQ_MAX_ZOOM, HQ_MIN_ZOOM, type Camera } from '../hq'
 
 /** The HQ design: one world as an office you can zoom around. A person opens their card; Chat slides their conversation in from the right. */
 const props = defineProps<{ group: RoomGroup }>()
@@ -103,7 +103,7 @@ const sprite = (s: Session) => seated(s)
 /** What a working person is doing, over their head; the open card's person always says theirs. Others get a badge, not a bubble, so a busy floor stays readable. */
 const bubble = (s: Session) => !s.ghost && (s.state === 'working' || s.id === openId.value) ? nowText(s.now) : null
 const badge = (s: Session) => s.ghost ? null : s.state === 'waiting' ? '!' : s.state === 'done' ? '✓' : s.state === 'error' ? '×' : null
-const stat = (s: Session) => [s.context ? `${s.context.pct}% ctx` : '', s.usage ? `${tokenText(usageTotal(s.usage))} tok` : ''].filter(Boolean).join(' · ')
+const stat = (s: Session) => [s.context ? `${s.context.pct}% ctx` : '', s.usage ? usageText(s.usage) : ''].filter(Boolean).join(' · ')
 </script>
 
 <template>
