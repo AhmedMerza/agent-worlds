@@ -16,6 +16,7 @@ const repo = ref(world.value?.repos[0] ?? '')
 watch(wid, () => { repo.value = world.value?.repos[0] ?? '' })
 const task = ref('')
 const mode = ref<ModeChoice>('claude')
+const codexUnrestricted = ref(false)
 /** The CLI to start; empty until the server says which ones exist (then the server's default applies). */
 const agents = ref<AgentInfo[]>([])
 const agent = ref('')
@@ -74,10 +75,12 @@ watch(agent, async (a) => {
 })
 /** Run mode: the task goes through these steps, each on its own agent, in one folder. */
 const asRun = ref(props.run ?? false)
+watch(asRun, () => { codexUnrestricted.value = false })
 const steps = ref<{ kind: StepKind; agent: string; checkpoint: boolean }[]>([
   { kind: 'plan', agent: 'claude', checkpoint: false }, { kind: 'review-plan', agent: 'claude', checkpoint: true },
   { kind: 'build', agent: 'claude', checkpoint: false }, { kind: 'review-code', agent: 'claude', checkpoint: true },
 ])
+watch(() => steps.value.some((st) => st.agent === 'codex'), (hasCodex) => { if (!hasCodex) codexUnrestricted.value = false })
 const kinds = Object.keys(STEP_LABEL) as StepKind[]
 const addStep = () => { steps.value.push({ kind: 'review-code', agent: defaultAgent.value, checkpoint: false }) }
 async function forgetKey(p: ProviderInfo) {
@@ -129,7 +132,7 @@ async function submit() {
     if (!task.value.trim()) { error.value = 'A run needs a task.'; return }
     if (!steps.value.length) { error.value = 'Add at least one step.'; return }
     sending.value = true; error.value = ''
-    const r = await startRun({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, steps: steps.value })
+    const r = await startRun({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, steps: steps.value, ...(codexUnrestricted.value && steps.value.some((st) => st.agent === 'codex') ? { codexUnrestricted: true } : {}) })
     sending.value = false
     if (!r.ok) { error.value = r.error; return }
     showToast(`Run started: ${STEP_LABEL[steps.value[0].kind]} first`)
@@ -144,7 +147,7 @@ async function submit() {
     if (!r.ok) { sending.value = false; error.value = r.error; return }
     p.hasKey = true; key.value = ''; replacingKey.value = false
   }
-  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...(agent.value ? { agent: agent.value } : {}), ...(p ? { provider: p.id, ...(model.value.trim() ? { model: model.value.trim() } : {}) } : {}), ...(chosen.value?.modes === false ? {} : modeField(mode.value)), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
+  const err = await createSession({ worldId: wid.value, repo: repo.value, task: task.value.trim(), worktree: worktree.value && isGit.value !== false, ...(agent.value ? { agent: agent.value } : {}), ...(p ? { provider: p.id, ...(model.value.trim() ? { model: model.value.trim() } : {}) } : {}), ...(chosen.value?.modes === false ? {} : modeField(mode.value)), ...(codexUnrestricted.value && agent.value === 'codex' ? { codexUnrestricted: true } : {}), ...(isGit.value !== false && branch.value.trim() ? { branch: branch.value.trim() } : {}) })
   sending.value = false
   if (err) error.value = err
   else emit('close')
@@ -188,6 +191,7 @@ async function submit() {
         </div>
         <button v-if="steps.length < 8" type="button" class="btn" @click="addStep">Add a step</button>
       </fieldset>
+      <label v-if="asRun && steps.some((st) => st.agent === 'codex')" class="row"><input v-model="codexUnrestricted" type="checkbox"> Unrestricted file and network access for Codex steps</label>
       <div v-if="agents.length > 1 && !asRun" class="folder-row">
         <label>Agent
           <select v-model="agent" aria-label="Agent"><option v-for="a in agents" :key="a.id" :value="a.id" :disabled="!a.installed">{{ a.name }}{{ a.id === defaultAgent ? ' (default)' : a.installed ? '' : ' (not installed)' }}</option></select>
@@ -244,13 +248,15 @@ async function submit() {
       </template>
       <template v-if="!asRun">
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
-      <p v-else-if="chosen?.id === 'codex'" class="why">Codex starts with full file and network access. It may still ask for approval in its terminal; Needs you mirrors the request.</p>
+      <p v-else-if="chosen?.id === 'codex'" class="why">By default, Codex runs in a workspace sandbox and asks before broader file or network access. Its terminal shows any prompts; Needs you mirrors them.</p>
       <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal. Needs you shows the request; answer it in the terminal.</p>
       <p v-else-if="chosen.id === 'gemini'" class="why">Free with an AI Studio API key: the first time, Gemini CLI asks for it and to trust the folder, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
       <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>
       <p v-if="chosen?.id === 'agy'" class="why">Free with a Google account: the first time, Antigravity CLI asks you to sign in, in its terminal. Your repo and your own Antigravity settings stay as they are. It can't message your other sessions.</p>
+      <label v-if="chosen?.id === 'codex'" class="row"><input v-model="codexUnrestricted" type="checkbox"> Unrestricted file and network access</label>
       <p v-if="chosen?.task === false" class="why">{{ chosen.name }} can't be handed a task when it starts: once it opens, type your first message in its terminal.</p>
       </template>
+      <p v-if="codexUnrestricted && (asRun ? steps.some((st) => st.agent === 'codex') : agent === 'codex')" class="why">Codex can access files outside this folder and use the network without a required approval. Its terminal still shows any prompts it makes.</p>
       <template v-if="isGit !== false">
         <label class="row"><input v-model="worktree" type="checkbox"> Use a new worktree</label>
         <label v-if="!asRun">Branch name (optional)

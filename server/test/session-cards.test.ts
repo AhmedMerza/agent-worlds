@@ -139,7 +139,7 @@ test('permissionMode: argv, validation on both endpoints, /api/claude-defaults',
   writeFileSync(settings, JSON.stringify({ permissions: { defaultMode: 'auto' } }));
   const calls: any[] = [];
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [root] }], userSettingsPath: settings }), port: 0 };
-  const app = startServer(cfg, 't'.repeat(64), { home: root, createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-x', dir: o.repo, branch: null }; } });
+  const app = startServer(cfg, 't'.repeat(64), { home: root, installed: () => true, createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-x', dir: o.repo, branch: null }; } });
   await app.listen();
   const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
   const h = { 'x-aw-token': 't'.repeat(64), 'content-type': 'application/json' };
@@ -150,7 +150,12 @@ test('permissionMode: argv, validation on both endpoints, /api/claude-defaults',
     assert.equal(calls[0].permissionMode, 'acceptEdits');
     assert.equal((await post('/api/sessions', { worldId: 'web', repo: root })).status, 201);
     assert.ok(!('permissionMode' in calls[1]));
+    assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, agent: 'codex', codexUnrestricted: true })).status, 201);
+    assert.equal(calls[2].codexUnrestricted, true);
+    assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, codexUnrestricted: true })).status, 400);
+    assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, agent: 'codex', codexUnrestricted: 'yes' })).status, 400);
     assert.equal((await post('/api/sessions/resume', { sessionId: 'bbbbbbbb-2222-4222-8222-222222222222', permissionMode: 'nope' })).status, 400);
+    assert.equal((await post('/api/sessions/resume', { sessionId: 'bbbbbbbb-2222-4222-8222-222222222222', agent: 'codex', codexUnrestricted: 'yes' })).status, 400);
     assert.deepEqual(await (await fetch(base + '/api/claude-defaults', { headers: h })).json(), { permissionMode: 'auto' });
     writeFileSync(settings, '{}');
     assert.deepEqual(await (await fetch(base + '/api/claude-defaults', { headers: h })).json(), { permissionMode: null });

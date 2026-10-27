@@ -21,6 +21,8 @@ export type Step = {
 };
 export type Run = {
   id: string; task: string; worldId: string; repo: string; worktree: boolean;
+  /** Explicit access choice for user-started Codex steps; lead-started runs stay sandboxed. */
+  codexUnrestricted?: boolean;
   /** The folder every step runs in: the repo, or the worktree the first step made. */
   dir: string | null;
   /** The last handoff written, for the next step; from: the step that wrote it (the one before, unless a review sent the work back). */
@@ -64,9 +66,10 @@ export function stepPrompt(run: Run, i: number): string {
   ].filter(Boolean).join('\n\n');
 }
 
-export function newRun(o: { task: string; worldId: string; repo: string; worktree: boolean; steps: { kind: StepKind; agent: AgentId; checkpoint: boolean }[]; now: number; parent?: string | null }): Run {
+export function newRun(o: { task: string; worldId: string; repo: string; worktree: boolean; steps: { kind: StepKind; agent: AgentId; checkpoint: boolean }[]; now: number; parent?: string | null; codexUnrestricted?: boolean }): Run {
   return {
     ...(o.parent ? { parent: o.parent } : {}),
+    ...(o.codexUnrestricted && !o.parent ? { codexUnrestricted: true } : {}),
     id: randomBytes(3).toString('hex'), task: o.task, worldId: o.worldId, repo: o.repo, worktree: o.worktree, dir: null, handoff: null,
     steps: o.steps.map((s) => ({ ...s, status: 'pending', pane: null, direct: null, sessionId: null, summary: null })),
     current: 0, rounds: 0, earlier: [], status: 'running', note: null, startedAt: o.now,
@@ -96,7 +99,7 @@ export function loadRuns(file: string): Run[] {
   return (Array.isArray(v) ? v : []).filter((r): r is Run => !!r && typeof r.id === 'string' && RUN_STATUSES.includes(r.status)
     && Array.isArray(r.steps) && r.steps.length > 0 && r.steps.every(okStep)
     && Number.isInteger(r.current) && r.current >= 0 && r.current < r.steps.length)
-    .map((r) => ({ ...r, rounds: Number.isInteger(r.rounds) ? r.rounds : 0, earlier: Array.isArray(r.earlier) ? r.earlier : [] })); // runs.json from before rounds
+    .map((r) => ({ ...r, codexUnrestricted: r.codexUnrestricted === true && !r.parent, rounds: Number.isInteger(r.rounds) ? r.rounds : 0, earlier: Array.isArray(r.earlier) ? r.earlier : [] })); // runs.json from before rounds
 }
 
 /** A review's verdict: the first line of its file says APPROVED or CHANGES (markdown around it is fine). Null when there is none. */

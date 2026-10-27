@@ -82,11 +82,11 @@ const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Permiss
  * the command never changes, so it does not ask again. Qwen and Gemini read them from a system
  * settings file we point them at.
  */
-export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; task: string; provider?: Provider; dir?: string; model?: string }): { args: string[]; env: Record<string, string> } {
+export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; permissionMode?: string; codexUnrestricted?: boolean; task: string; provider?: Provider; dir?: string; model?: string }): { args: string[]; env: Record<string, string> } {
   const task = o.task ? ['--', o.task] : [];
   const model = o.model && MODEL_FLAG[agent] ? [`${MODEL_FLAG[agent]}=${o.model}`] : [];
   if (agent === 'codex') {
-    const access = ['--sandbox', 'danger-full-access', '--ask-for-approval', 'on-request'];
+    const access = ['--sandbox', o.codexUnrestricted ? 'danger-full-access' : 'workspace-write', '--ask-for-approval', 'on-request'];
     const cmd = JSON.stringify(hookCommand('codex'));
     const hooks = o.home ? CODEX_EVENTS.flatMap((ev) => ['-c', `hooks.${ev}=[{hooks=[{type="command",command=${cmd},timeout=${ev === 'PermissionRequest' ? HOLD_TIMEOUT : FAST_TIMEOUT}}]}]`]) : [];
     // Codex hands an MCP server only a few env vars unless told: the bridge needs the pane and our home.
