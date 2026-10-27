@@ -133,6 +133,25 @@ function onFrames(socket, handler) {
 const broadcast = (msg) => { const f = frame(JSON.stringify(msg)); for (const s of wsClients) s.write(f) }
 const upsert = (s) => { s.updatedAt = now(); broadcast({ type: 'session', session: s }) }
 
+// Reproducible visual-load fixture: MOCK_SESSIONS=25 MOCK_SINGLE_WORLD=1 MOCK_NOTICK=1.
+if (process.env.MOCK_SESSIONS) {
+  const count = Number(process.env.MOCK_SESSIONS)
+  if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error('MOCK_SESSIONS must be an integer from 1 to 500')
+  sessions.clear(); unmanaged = []; recoverable = []
+  worlds.forEach(w => { w.repos = [] })
+  for (let i = 0; i < count; i++) {
+    const id = `session-${String(i + 1).padStart(2, '0')}`
+    const w = worlds[process.env.MOCK_SINGLE_WORLD ? 0 : i % worlds.length]
+    const state = ['working', 'waiting', 'idle', 'done', 'error'][i % 5]
+    w.repos.push(`/work/${id}`)
+    sessions.set(id, mkSession(id, w.id, {
+      startedAt: 1000 + i, state, task: `Review task ${i + 1}`, now: state === 'waiting' ? 'Waiting for you to allow a command' : state,
+      waitingSince: ['waiting', 'done', 'error'].includes(state) ? now() - (i + 1) * MIN : null,
+      card: state === 'waiting' ? perm('npm test') : state === 'done' ? { kind: 'done', summary: `Finished task ${i + 1}`, review: null } : state === 'error' ? { kind: 'error', summary: `Tests failed for task ${i + 1}` } : null,
+    }))
+  }
+}
+
 // ---- worlds: a session belongs to the first world listing its repo ----
 const inRepo = (repo, root) => repo === root || repo.startsWith(root + '/')
 function regroup() {

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
+import { illustrationReady, officePage, OFFICE_PAGE_SIZE } from '../illustratedRoom'
 import { roomHeight, type Walker } from '../zones'
 import { agentLabel, nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch, stepTags } from '../logic'
 import { state, select, focusTerminal, ui, moveSession, showToast } from '../store'
@@ -16,16 +17,28 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const split = computed(() => splitGhosts(props.group.sessions))
 const real = computed(() => split.value.real)
 const ghostsOpen = ref(false)
+const sessionsOpen = ref(false)
+const query = ref('')
+const page = ref(0)
 /** The scene draws every real session but only a few ghosts; the rest wait in the chip. */
 const drawn = computed(() => drawnSessions(props.group.sessions))
 const steps = computed(() => stepTags(Object.values(state.runs), Object.values(state.sessions)))
-const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: drawn.value.sessions }))
+const pages = computed(() => Math.max(1, Math.ceil(drawn.value.sessions.length / OFFICE_PAGE_SIZE)))
+const illustrated = computed(() => ui.worldDesign === 'illustrated')
+const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: illustrated.value ? officePage(drawn.value.sessions, page.value) : drawn.value.sessions }))
+const filtered = computed(() => real.value.filter(s => `${nameOf(s)} ${s.branch ?? ''} ${s.task ?? ''} ${stateLabel(s, state.now)}`.toLowerCase().includes(query.value.trim().toLowerCase())))
+watch(pages, n => { page.value = Math.min(page.value, n - 1) })
+watch(() => state.selectedId, id => {
+  const sorted = [...drawn.value.sessions].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
+  const i = sorted.findIndex(s => s.id === id)
+  if (i >= 0) page.value = Math.floor(i / OFFICE_PAGE_SIZE)
+})
 const count = (st: (s: string) => boolean) => real.value.filter((s) => st(s.state)).length
 const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))
 const working = computed(() => count((st) => st === 'working'))
 const idle = computed(() => count((st) => st === 'idle'))
 
-const h = computed(() => roomHeight(scene.value.sessions))
+const h = computed(() => Math.max(illustrated.value ? 480 : 0, roomHeight(scene.value.sessions)))
 const walkers = new Map<string, Walker>()
 const arrivals = new Set<string>()
 let hits: Hit[] = []
@@ -33,7 +46,9 @@ let raf = 0
 let k = 1
 let hLog = 250
 let lastStatic = ''
+let revision = 0
 const hoverId = ref<string | null>(null)
+watch([scene, steps, () => state.selectedId, hoverId, () => Math.floor(state.now / 60000)], () => { revision++ }, { deep: true })
 let lastT = 0
 
 /** The canvas fills its box exactly (width AND height). The scene scales by width; spare height is extra floor. */
@@ -59,15 +74,15 @@ function frame(t: number) {
   if (lastT && t - lastT < FRAME_MS - 2) return
   const ctx = c.getContext('2d')
   if (!ctx) return
-  // With reduced motion the picture only changes when data does, so skip identical redraws.
-  if (reduced) {
-    const key = JSON.stringify([scene.value.sessions, state.selectedId, Math.floor(state.now / 60000), c.width, c.height, h.value])
+  // Illustrated artwork is static: repaint only for data, hover, selection, size or asset changes.
+  if (reduced || (illustrated.value && illustrationReady())) {
+    const key = `${revision}/${illustrationReady()}/${c.width}/${c.height}`
     if (key === lastStatic) return
     lastStatic = key
   }
   const dt = lastT ? Math.min(100, t - lastT) : 0
   lastT = t
-  hits = drawRoom(ctx, { group: scene.value, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
+  hits = drawRoom(ctx, { group: scene.value, worldDesign: ui.worldDesign, steps: steps.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
 }
 let ro: ResizeObserver | null = null
 let io: IntersectionObserver | null = null
@@ -135,12 +150,21 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
       <span v-if="group.world.leadSpawn" class="badge mgd" title="Lead sessions here may start and end their own workers (Manage worlds)">leads start workers</span>
       <span class="meta">{{ needN }} need you · {{ working }} working · {{ idle }} idle</span>
       <span v-if="conflictN" class="warn" :title="'Sessions in this room may be working on the same thing'">⚠ {{ conflictN }}</span>
+      <button v-if="illustrated" class="room-btn" :aria-expanded="sessionsOpen" @click="sessionsOpen = !sessionsOpen">Sessions ({{ group.sessions.length }})</button>
       <button v-if="canCreate" class="room-btn" @click="$emit('new-task', group.world.id)">+ New session</button>
     </header>
     <div ref="wrap" class="canvas-wrap"><canvas ref="canvas" :aria-label="`${group.world.name} room`" @click="onClick" @pointerdown="onDown" @pointermove="onPointerMove" @pointerup="onUp" @pointercancel="onCancel" @mouseleave="hoverId = null" /></div>
+    <nav v-if="illustrated && pages > 1" class="room-pages" :aria-label="`${group.world.name} agent pages`">
+      <button class="btn" :disabled="page === 0" aria-label="Previous agents" @click="page--">←</button>
+      <span>Agents {{ page * OFFICE_PAGE_SIZE + 1 }}–{{ Math.min((page + 1) * OFFICE_PAGE_SIZE, drawn.sessions.length) }} of {{ drawn.sessions.length }}</span>
+      <button class="btn" :disabled="page === pages - 1" aria-label="Next agents" @click="page++">→</button>
+    </nav>
+    <div v-if="sessionsOpen || !illustrated" :class="{ 'room-roster': illustrated }">
+      <input v-if="illustrated" v-model="query" type="search" :aria-label="`Search ${group.world.name} sessions`" placeholder="Search sessions…" />
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
-      <button v-for="s in real" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
+      <p v-else-if="query && !filtered.length" class="meta">No matching sessions.</p>
+      <button v-for="s in filtered" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
         <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
@@ -151,6 +175,7 @@ const onClick = (e: MouseEvent) => { if (dropped) { dropped = false; return } co
           <span class="dot ghost" />{{ s.repoName }} <span class="st chip-task" :title="s.task ?? undefined">{{ s.task ?? 'plain terminal' }}</span>
         </button>
       </template>
+    </div>
     </div>
   </article>
 </template>

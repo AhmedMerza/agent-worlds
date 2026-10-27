@@ -1,0 +1,16 @@
+/* Saved alternate layout, intentionally NOT imported by the application.
+ * To revisit: import after style.css and visually verify all viewport sizes.
+ * Keeps worlds, terminal/conversation, and inbox in separate desktop columns.
+ */
+@media (min-width:1000px){
+  .layout{grid-template-columns:minmax(320px,1.4fr) minmax(300px,1fr) clamp(240px,19vw,360px);gap:12px}
+  .main-col,.main-col.chats-mode{display:contents}
+  .worlds{grid-template-columns:minmax(0,1fr);align-content:start;grid-auto-rows:max-content}
+  .term{position:static;height:auto;min-height:0;align-self:stretch}
+  .term-body{flex:1;height:auto;min-height:0}
+  aside{position:static}
+  .layout > .chats{overflow:hidden;align-self:stretch;min-height:0}
+  .layout > .chat{min-height:0}
+}
+@media (min-width:1600px){.worlds.campus{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (min-width:3400px){.layout{grid-template-columns:clamp(700px,26vw,1000px) minmax(0,1fr) 440px}}
