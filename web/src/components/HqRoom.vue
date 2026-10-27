@@ -97,6 +97,8 @@ function onWheel(e: WheelEvent) {
 // Escape closes the card unless the page already used it (a dialog, or the chat drawer on top).
 function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !e.defaultPrevented && openId.value && !ui.chatDrawer) close() }
 onMounted(() => window.addEventListener('keydown', onKey))
+// The card's person left this room (moved or ended): the card closes instead of reopening elsewhere uncentred.
+watch(() => !!ui.card && drawn.value.some(s => s.id === ui.card), (here, was) => { if (was && !here) ui.card = null })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 const variant = (s: Session) => [...s.id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 3

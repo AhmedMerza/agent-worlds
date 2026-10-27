@@ -111,6 +111,8 @@ watch([h, () => cam.value.z], fitCanvas, { flush: 'post' })
 // Escape closes the card unless the page already used it (a dialog, or the chat drawer on top).
 const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && cardId.value && !ui.chatDrawer) closeCard() }
 onMounted(() => window.addEventListener('keydown', onKey))
+// The card's person left this room (moved or ended): the card closes instead of reopening elsewhere uncentred.
+watch(() => !!ui.card && props.group.sessions.some(s => s.id === ui.card), (here, was) => { if (was && !here) ui.card = null })
 onBeforeUnmount(() => { cancelAnimationFrame(raf); ro?.disconnect(); io?.disconnect(); window.removeEventListener('keydown', onKey) })
 
 function at(e: MouseEvent): Hit | undefined {

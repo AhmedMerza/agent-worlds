@@ -70,7 +70,7 @@ export class Insights {
   contextAt = new Map<string, number>();
   usageScans = new Map<string, UsageScan>();
   /** A session's scan in progress: the next one waits for it, since both would read on from the same offset. */
-  usageRuns = new Map<string, Promise<UsageScan | undefined>>();
+  usageRuns = new Map<string, Promise<undefined>>();
   running = 0;
   queue: (() => void)[] = [];
 
@@ -96,12 +96,17 @@ export class Insights {
     this.contextAt.set(s.id, Date.now());
     if (!s.transcriptPath) return;
     try {
-      const ctx = contextOf(await readTail(s.transcriptPath, 256 * 1024), s.model, this.contextLimit);
       const path = s.transcriptPath;
-      const run = (this.usageRuns.get(s.id) ?? Promise.resolve(undefined)).catch(() => undefined)
-        .then(async () => { const scan = await scanUsage(path, this.usageScans.get(s.id)); this.usageScans.set(s.id, scan); return scan; });
-      this.usageRuns.set(s.id, run);
-      const scan = await run;
+      // Context and usage are read in the same queued step, so a slower earlier call can't push older numbers last.
+      // A session removed meanwhile (forget) gets nothing written back: a new one with its id starts clean.
+      const run = (this.usageRuns.get(s.id) ?? Promise.resolve(undefined)).catch(() => undefined).then(async () => {
+        const ctx = contextOf(await readTail(path, 256 * 1024), s.model, this.contextLimit);
+        const scan = await scanUsage(path, this.usageScans.get(s.id));
+        if (this.alive(s)) this.usageScans.set(s.id, scan);
+        return { ctx, scan };
+      });
+      this.usageRuns.set(s.id, run.then(() => undefined));
+      const { ctx, scan } = await run;
       if (!this.alive(s)) return;
       const usage = { ...scan.total };
       if ((ctx && JSON.stringify(ctx) !== JSON.stringify(s.context)) || JSON.stringify(usage) !== JSON.stringify(s.usage)) { s.context = ctx ?? s.context; s.usage = usage; this.store.push(s); }

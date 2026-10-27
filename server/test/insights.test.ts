@@ -235,6 +235,11 @@ test('token usage: overlapping updates still count every line', async () => {
   appendFileSync(f, msg('c', 100, 400) + msg('d', 1000, 400));
   await ins.updateContext(s);
   assert.equal(s.usage!.input, 1111);
+  // Removed while a scan runs: nothing of it is kept for a later session with the same id.
+  const pending = ins.updateContext(s);
+  store.sessions.delete(s.id); ins.forget(s.id);
+  await pending;
+  assert.equal(ins.usageScans.has(s.id), false);
 });
 
 test('context and review are filled on Stop', async () => {
