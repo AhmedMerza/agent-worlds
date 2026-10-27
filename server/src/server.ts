@@ -1128,7 +1128,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       spawnable: () => {
         const usable = Object.entries(spawnRules()) as [AgentId, string[]][];
         if (!usable.length) return 'The user has allowed no agents for it.';
-        return `The user allows, most preferred first: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Use the first that suits each task and a later one only when it does not; within an agent, a cheaper model for simple work.`;
+        return `The user allows, in preference order: ${usable.map(([id, models]) => `${id} (${!MODEL_FLAG[id] ? 'its own model' : models.length ? `models ${models.join(', ')}` : 'any model'})`).join('; ')}. Choose an explicit agent for each task based on its strengths. Distribute independent suitable tasks across enabled CLIs. When several models are listed for an agent, choose one explicitly for the task's difficulty and cost. An omitted agent is spread across allowed CLIs.`;
       },
       send(to: string, text: string): string | Error {
         const from = store.sessions.get(self!)!;
@@ -1202,6 +1202,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** aw_spawn calls still starting, per world: the cap counts them, or two at once could both slip under it. */
   const spawning = new Map<string, number>();
+  /** Agent choices still launching, so simultaneous calls do not all choose the same CLI. */
+  const selecting = new Map<string, Partial<Record<AgentId, number>>>();
   /** aw_spawn: a lead starts a worker session (or a run) in a configured world's folder, if its world allows spawning. */
   async function spawn(self: string, a: SpawnArgs): Promise<string | Error> {
     const lead = store.sessions.get(self);
@@ -1214,23 +1216,26 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const folder = folders.includes(path) ? path : byName.length === 1 ? byName[0] : null;
     if (!folder) return new Error(byName.length ? `"${a.folder}" names ${byName.length} folders: use its full path` : `"${a.folder}" is not one of the configured worlds' folders: ${folders.join(', ')}`);
     if (a.agent !== undefined && !isAgent(a.agent)) return new Error(`agent must be one of ${Object.keys(AGENTS).join(', ')}`);
-    // Left out: the first agent the user allows (their order is their preference), else their default
-    const agent = isAgent(a.agent) ? a.agent : (Object.keys(spawnRules())[0] as AgentId | undefined) ?? defaultAgent(cfg.defaultAgent);
+    // An omitted agent shares work across the allowed CLIs; order breaks ties.
+    const choices = Object.keys(spawnRules()) as AgentId[];
+    const counts = (id: AgentId) => [...store.sessions.values()].filter((s) => s.parent === self && s.agent === id).length + (selecting.get(self)?.[id] ?? 0);
+    const agent = isAgent(a.agent) ? a.agent : choices.reduce((best, id) => counts(id) < counts(best) ? id : best, choices[0] ?? defaultAgent(cfg.defaultAgent));
     if (agent !== 'claude' && !hasBin(AGENTS[agent].bin)) return new Error(`${AGENTS[agent].name} is not installed (no ${AGENTS[agent].bin} on PATH)`);
     const steps = a.steps === undefined ? null : parseSteps(a.steps);
     if (steps && 'err' in steps) return new Error(steps.err[1]);
     const allowed = cfg.spawnAgents, asked = a.model?.trim() || undefined;
     const off = allowed && (steps ? steps.map((st) => st.agent) : [agent]).find((id) => !allowed[id]);
     if (off) return new Error(`the user has not allowed leads to start ${AGENTS[off].name}. ${mcpContext(self).spawnable()}`);
+    const models = allowed?.[agent] ?? [];
     if (asked) {
       if (steps) return new Error('model is for a single session, not a run: leave it out with steps');
       if (!MODEL_FLAG[agent]) return new Error(`Agent Worlds cannot pick a model for ${AGENTS[agent].name}: leave model out`);
       if (!isModelId(asked)) return new Error('model must be a model id like sonnet or gpt-5-codex');
-      const models = allowed?.[agent] ?? [];
       if (models.length && !models.includes(asked)) return new Error(`the user allows ${AGENTS[agent].name} only on ${models.join(', ')}`);
     }
-    // Left out where the user named models: the first of them, not the CLI's own (often the dearest)
-    const model = asked ?? (steps ? undefined : allowed?.[agent]?.[0]);
+    if (!steps && !asked && models.length > 1) return new Error(`choose a model for this task on ${AGENTS[agent].name}: ${models.join(', ')}`);
+    // The sole allowed model is unambiguous; otherwise the CLI picks its own default.
+    const model = asked ?? (steps ? undefined : models[0]);
     const max = world.maxSpawned ?? MAX_SPAWNED;
     // A run takes one place, whatever its steps: it works one step at a time, and its finished steps' sessions stay open
     const places = new Set<string>();
@@ -1246,6 +1251,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const task = a.task.trim(), worktree = a.worktree !== false;
     let released = false;
     try {
+      if (!steps) {
+        const pending = selecting.get(self) ?? {};
+        pending[agent] = (pending[agent] ?? 0) + 1;
+        selecting.set(self, pending);
+      }
       if (steps) {
         const r = await beginRun({ task, worldId: world.id, repo: folder, worktree, steps, parent: self });
         if (r.status === 'failed') return new Error(r.note ?? 'the run could not start');
@@ -1263,7 +1273,14 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         ? `Started ${on} in ${c.dir}: session id ${id}. It shows in aw_agents with you as its parent; message it with aw_send, end it with aw_stop.`
         : `Started ${on} in ${c.dir} (tmux session ${c.tmuxSession}), but its agent is not up yet: it may be asking to trust the folder in its terminal. It shows in aw_agents with you as its parent once it is; until then, aw_stop takes ${c.tmuxSession}.`;
     } catch (e) { return new Error(`could not start it: ${(e as Error).message}`); }
-    finally { if (!released) spawning.set(world.id, spawning.get(world.id)! - 1); }
+    finally {
+      if (!steps) {
+        const pending = selecting.get(self)!;
+        pending[agent] = pending[agent]! - 1;
+        if (Object.values(pending).every((n) => !n)) selecting.delete(self);
+      }
+      if (!released) spawning.set(world.id, spawning.get(world.id)! - 1);
+    }
   }
   /** aw_stop: a lead ends one of its own workers, the way End does (a run it is a step of stops too). */
   async function stopWorker(self: string, which: string): Promise<string | Error> {

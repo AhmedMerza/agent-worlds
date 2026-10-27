@@ -61,8 +61,8 @@ const TOOLS = [
       properties: {
         folder: { type: 'string', description: 'A folder listed in any world: its full path, or its name if unique' },
         task: { type: 'string', description: 'The first message: what the worker should do' },
-        agent: { type: 'string', description: 'The agent CLI: claude, codex, qwen, kimi, gemini or agy. Default: the first agent the user allows, else their default' },
-        model: { type: 'string', description: 'The model to run it on (claude, codex and gemini only), e.g. sonnet for a small task, opus for a hard one. Default: the CLI\'s own' },
+        agent: { type: 'string', description: 'Choose explicitly for the task: claude, codex, qwen, kimi, gemini or agy. If omitted, work is spread across allowed CLIs.' },
+        model: { type: 'string', description: 'Choose for task difficulty and cost on Claude, Codex, Kimi or Gemini. Required when several models are allowed; one allowed model or the CLI default is used otherwise.' },
         worktree: { type: 'boolean', description: 'Work in a new git worktree on its own branch (default true)' },
         steps: {
           type: 'array', description: 'Optional: start a run with these steps (1 to 8) instead of one session',

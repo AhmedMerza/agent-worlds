@@ -17,7 +17,7 @@ onMounted(async () => {
   box.value?.focus()
   const r = await fetchAgents(true) // fresh: another window may have changed the rules
   if (!r.ok) { agentsError.value = r.error; return }
-  // Your default first: with no rules set, that is the agent a lead gets when it names none
+  // Your default first breaks ties when a lead omits the agent.
   agents.value = r.data.agents.filter((a) => a.installed).sort((x, y) => Number(y.id === r.data.default) - Number(x.id === r.data.default))
   loadSpawnRules(r.data.spawn ?? null)
 })
@@ -114,7 +114,7 @@ defineExpose({ escape })
       <template v-else>
         <fieldset class="spawn-agents">
           <legend>Which agents leads may give work to (all worlds)</legend>
-          <p class="why">A lead session can start its own worker sessions. Untick an agent to keep leads off it, and put the one to use first at the top: e.g. Codex first and Claude Code on haiku after it, to save Claude usage. Name the models a lead may pick, or leave the box empty for any. Changes save at once.</p>
+          <p class="why">A lead session can start its own worker sessions. Untick an agent to keep leads off it, and order the rest by preference. The lead chooses an agent and, where supported, a model for each task; if it omits the agent, work is spread across those allowed. Name the models a lead may pick, or leave the box empty for any. Changes save at once.</p>
           <p v-if="agentsError" class="err" role="alert">Could not load the agents: {{ agentsError }}</p>
           <p v-else-if="!agents" class="why">Loading the agents…</p>
           <div v-for="(a, i) in spawnList" :key="a.id" class="spawn">

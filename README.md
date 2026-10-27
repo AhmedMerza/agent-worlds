@@ -359,8 +359,9 @@ that was already running when you updated Agent Worlds sees the new tools only a
 
 - `aw_spawn { folder, task, agent?, model?, worktree?, steps? }` starts a session the same way New session
   does: in `folder` (a folder listed in any world, by full path or by name if unique), on `agent` (your
-  default when left out) and `model` (Claude Code, Codex and Gemini CLI only; the CLI's own when
-  left out), in a new worktree unless `worktree` is false, with `task` as its first
+  an allowed agent with fewer workers when left out) and `model` (Claude Code, Codex, Kimi Code and
+  Gemini CLI; a model must be named when several are allowed, while one allowed model is used automatically), in a new worktree
+  unless `worktree` is false, with `task` as its first
   message. With `steps` it starts a [run](#runs-one-task-several-agents) instead. It answers with
   the new session's id once its agent is up (up to 20 s); an agent still asking to trust the
   folder gets its tmux name instead, which `aw_stop` also takes.
@@ -374,9 +375,9 @@ that was already running when you updated Agent Worlds sees the new tools only a
   `aw_spawn` refuses until one ends. A run counts once, however many step sessions it opens.
 - You choose which agents and models leads may use, for every world at once: in **Manage worlds**,
   untick an agent to keep leads off it (for example, keep Claude for the lead and send workers to
-  Codex to spare Claude usage), order them with the arrows (the lead uses the first that suits a
-  task, and an `aw_spawn` that names no agent gets the first), and list the models a lead may pick,
-  or leave the list empty for any. `aw_spawn`'s description tells the lead what is allowed and in
+  Codex to spare Claude usage), order them with the arrows (the lead chooses for each task, and an
+  `aw_spawn` that names no agent spreads work across those allowed), and list the models a lead may pick,
+  or leave the list empty for any. With several models listed, the lead must choose one for the task. `aw_spawn`'s description tells the lead what is allowed and in
   which order, and it refuses anything else. In `config.json` this is `spawnAgents`.
 - `aw_agents` lists the caller first (marked `you`) and gives every session its `model` and
   `context` (tokens used, the limit and the percentage; null when not known, for now for agents
@@ -547,7 +548,7 @@ server after editing by hand. `bin/agent-worlds init` writes a starter file with
 | `userSettingsPath` | `~/.claude/settings.json` | where "Always allow: everywhere" writes its rule |
 | `claudeBin` | `"claude"` | the Claude Code binary used for new sessions and catch-up summaries |
 | `defaultAgent` | `"claude"` | the CLI new sessions start with: `claude`, `codex`, `qwen`, `kimi`, `gemini` or `agy`. Set it with "Make default" in the New session dialog. Falls back to Claude when the chosen CLI is not installed |
-| `spawnAgents` | unset | the agents leads may start with `aw_spawn`, most preferred first, and their models: `{ "codex": [], "claude": ["haiku"] }` (`[]` for any model; an agent left out is off; the first is used when `aw_spawn` names none). Unset: every installed agent, any model. Set it in Manage worlds |
+| `spawnAgents` | unset | the agents leads may start with `aw_spawn`, in preference order, and their models: `{ "codex": [], "kimi": [] }` (`[]` for any model; an agent left out is off; when `aw_spawn` names none, the agent with fewer workers is used, breaking ties by this order). Unset: every installed agent, any model. Set it in Manage worlds |
 | `contextLimit` | `1000000` | context window used for the context % (usage past it, or a `[1m]` model id, counts as 1M) |
 | `worlds` | `[]` | `{ "id", "name", "color", "repos": [...] }` entries, normally managed in the app. `id` is lower-case letters, digits and `-`; each repo belongs to at most one world |
 | `worlds[].leadSpawn` | `false` | let sessions in this world start and end their own worker sessions (`aw_spawn`, `aw_stop`; see [Leads that start their own workers](#leads-that-start-their-own-workers)). Set it in Manage worlds or by hand |

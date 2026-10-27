@@ -36,7 +36,7 @@ export const isAgent = (a: unknown): a is AgentId => typeof a === 'string' && Ob
  * The flag that picks a model, for the CLIs whose flag we know (Qwen's model comes from its provider). It goes in as
  * one `--model=<id>` argument: Gemini reads a separate value that starts with `-` as a flag of its own.
  */
-export const MODEL_FLAG: Partial<Record<AgentId, string>> = { claude: '--model', codex: '--model', gemini: '--model' };
+export const MODEL_FLAG: Partial<Record<AgentId, string>> = { claude: '--model', codex: '--model', kimi: '--model', gemini: '--model' };
 /** A model id a lead or the user may pick; never one starting with `-`, which a CLI could take for a flag. */
 export const isModelId = (m: unknown): m is string => typeof m === 'string' && MODEL_RE.test(m) && !m.startsWith('-');
 
@@ -98,7 +98,13 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
     // task into a `kimi -p` + `kimi -c` chain; here the task only names the session.
     // KIMI_CODE_TRUST_WORKSPACE skips its trust prompt: trust is per folder and remembered, but every
     // worktree session is a fresh folder, so the prompt would block the -p run before anything starts.
-    return { args: o.resume ? ['--session', o.resume] : [], env: { KIMI_CODE_TRUST_WORKSPACE: 'true', ...(o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {}) } };
+    // Kimi's skill and worktree watchers can exhaust the shared inotify instance limit and exit
+    // with EMFILE. Disable live watching; startup skill discovery still runs.
+    return { args: [...model, ...(o.resume ? ['--session', o.resume] : [])], env: {
+      KIMI_CODE_TRUST_WORKSPACE: 'true',
+      KIMI_CODE_WATCH: process.env.KIMI_CODE_WATCH ?? '0',
+      ...(o.home ? { KIMI_CODE_HOME: writeKimiHome(o.home) } : {}),
+    } };
   }
   if (agent === 'qwen') {
     // `-i` runs the task and stays interactive (a bare prompt would run once and exit).

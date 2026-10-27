@@ -62,6 +62,7 @@ test('kimi gets a home of its own: the user\'s files linked, their config plus o
   assert.deepEqual(launchArgs('kimi', { home, task: '', resume: 'session_x1' }).args, ['--session', 'session_x1'], 'resume names the session');
   assert.deepEqual(args, [], 'kimi takes no starting prompt (the task becomes a -p/-c chain in createSession)');
   assert.equal(env.KIMI_CODE_HOME, dir);
+  assert.equal(env.KIMI_CODE_WATCH, process.env.KIMI_CODE_WATCH ?? '0', 'Kimi avoids native worktree watches at startup');
   assert.equal(AGENTS.kimi.task, true, 'a task reaches kimi as `kimi -p … ; kimi -c`');
 });
 

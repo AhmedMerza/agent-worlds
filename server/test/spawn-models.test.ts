@@ -46,7 +46,7 @@ test('the model goes in as one --model=<id> argument, on the CLIs that take one'
   const home = tmp('aw-gemini-home-'), dir = tmp('aw-gemini-dir-');
   const g = launchArgs('gemini', { home, dir, task: 't', model: 'gemini-2.5-pro' }).args;
   assert.deepEqual(g.slice(-3), ['--model=gemini-2.5-pro', '-i', 't'], 'Gemini reads a separate value starting with - as a flag');
-  assert.deepEqual(launchArgs('kimi', { task: 't', model: 'k2' }).args, [], 'no known flag: nothing added');
+  assert.deepEqual(launchArgs('kimi', { task: 't', model: 'k2' }).args, ['--model=k2']);
   assert.deepEqual(launchArgs('qwen', { task: 't', model: 'x' }).args, ['-i', 't'], 'Qwen takes its model from its provider');
 });
 
@@ -54,7 +54,7 @@ test('model ids: never one a CLI could read as a flag', () => {
   assert.equal(isModelId('claude-haiku-5-5'), true);
   for (const bad of ['--yolo', '-m', '', 'a b', 'x;y']) assert.equal(isModelId(bad), false, bad);
   assert.throws(() => parseSpawnAgents({ gemini: ['--yolo'] }), /list of model ids/);
-  assert.throws(() => parseSpawnAgents({ kimi: ['k2'] }), /cannot pick a model for Kimi/);
+  assert.deepEqual(parseSpawnAgents({ kimi: ['k2'] }), { kimi: ['k2'] });
   assert.throws(() => parseSpawnAgents({ nope: [] }), /unknown agent/);
   assert.throws(() => parseSpawnAgents(['claude']), /must be an object/);
 });
@@ -66,28 +66,29 @@ test('config.json: saved rules load in their order; null or absent is no rules; 
   assert.throws(() => parseConfig({ spawnAgents: { claude: [7] } }), /list of model ids/);
 });
 
-test('with nothing configured, a lead may pick any agent and model, and gets your default when it names none', async () => {
+test('with nothing configured, a lead may pick any agent and model, and omitted agents are spread', async () => {
   const r = await spawn({ agent: 'codex', model: 'gpt-5-codex' });
   assert.equal(launched.at(-1).model, 'gpt-5-codex', r.content[0].text);
   assert.match(r.content[0].text, /Codex \(gpt-5-codex\)/);
-  assert.match((await spawn({ agent: 'kimi', model: 'k2' })).content[0].text, /cannot pick a model for Kimi/);
+  await spawn({ agent: 'kimi', model: 'k2' });
+  assert.deepEqual([launched.at(-1).agent, launched.at(-1).model], ['kimi', 'k2']);
   assert.match((await spawn({ model: 'sonnet; rm -rf /' })).content[0].text, /must be a model id/);
   const n = launched.length;
   assert.match((await spawn({ agent: 'gemini', model: '--yolo' })).content[0].text, /must be a model id/, 'not a flag in disguise');
   assert.equal(launched.length, n);
   await setDefault('codex');
   await spawn({});
-  assert.equal(launched.at(-1).agent, 'codex');
+  assert.equal(launched.at(-1).agent, 'claude', 'codex already has a worker, so the next available CLI is used');
   assert.equal(launched.at(-1).model, undefined, 'no list: the CLI\'s own model');
   const desc = (await rpc('tools/list')).tools.find((t: any) => t.name === 'aw_spawn').description;
-  assert.match(desc, /most preferred first: codex \(any model\); claude/, 'the order shown is the one used: your default first');
+  assert.match(desc, /in preference order: codex \(any model\); claude/, 'the user default breaks ties');
 });
 
 test('the user\'s list turns agents off, orders them, and holds their models even when the lead names none', async () => {
   assert.equal((await allow({ codex: [], claude: ['sonnet', 'opus'] })).status, 200);
   assert.equal(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).spawnAgents.claude[0], 'sonnet', 'saved');
   const n = launched.length;
-  assert.match((await spawn({ agent: 'gemini' })).content[0].text, /not allowed leads to start Gemini CLI.*most preferred first: codex \(any model\); claude \(models sonnet, opus\)/);
+  assert.match((await spawn({ agent: 'gemini' })).content[0].text, /not allowed leads to start Gemini CLI.*in preference order: codex \(any model\); claude \(models sonnet, opus\)/);
   assert.match((await spawn({ agent: 'claude', model: 'haiku' })).content[0].text, /only on sonnet, opus/);
   assert.match((await spawn({ steps: [{ kind: 'plan', agent: 'qwen' }] })).content[0].text, /not allowed leads to start Qwen/);
   assert.match((await spawn({ steps: [{ kind: 'plan', agent: 'claude' }, { kind: 'build', agent: 'qwen' }] })).content[0].text, /not allowed leads to start Qwen/, 'one step off blocks the run');
@@ -95,8 +96,9 @@ test('the user\'s list turns agents off, orders them, and holds their models eve
   assert.equal(launched.length, n, 'nothing refused was started');
   await spawn({ agent: 'claude', model: 'opus' });
   assert.equal(launched.at(-1).model, 'opus');
-  await spawn({ agent: 'claude' });
-  assert.equal(launched.at(-1).model, 'sonnet', 'model left out: the first the user named, not the CLI\'s own');
+  const prior = launched.length;
+  assert.match((await spawn({ agent: 'claude' })).content[0].text, /choose a model for this task on Claude Code: sonnet, opus/);
+  assert.equal(launched.length, prior, 'no worker starts until the lead chooses among allowed models');
   await spawn({});
   assert.equal(launched.at(-1).agent, 'codex', 'no agent named: the first the user allows, not their default (claude)');
   const run = await spawn({ steps: [{ kind: 'plan', agent: 'claude' }] });
@@ -104,8 +106,21 @@ test('the user\'s list turns agents off, orders them, and holds their models eve
   assert.deepEqual([launched.at(-1).agent, launched.at(-1).model], ['claude', 'sonnet'], 'a lead\'s run keeps to the named models too');
 });
 
+test('a sole allowed model is selected without asking', async () => {
+  await allow({ kimi: ['k2'] });
+  await spawn({ agent: 'kimi' });
+  assert.deepEqual([launched.at(-1).agent, launched.at(-1).model], ['kimi', 'k2']);
+});
+
+test('an omitted agent shares comparable work across the allowed CLIs', async () => {
+  await allow({ codex: [], kimi: [] });
+  const before = launched.length;
+  await Promise.all([spawn({}), spawn({})]);
+  assert.deepEqual(launched.slice(before).map((x) => x.agent).sort(), ['codex', 'kimi']);
+});
+
 test('POST /api/agents/spawn refuses bad lists and saves built on rules another window changed', async () => {
-  for (const bad of [{ claude: 'opus' }, { nope: [] }, { kimi: ['k2'] }, { gemini: ['--yolo'] }, ['claude']]) assert.equal((await allow(bad)).status, 400, JSON.stringify(bad));
+  for (const bad of [{ claude: 'opus' }, { nope: [] }, { qwen: ['k2'] }, { gemini: ['--yolo'] }, ['claude']]) assert.equal((await allow(bad)).status, 400, JSON.stringify(bad));
   const post = (spawn: unknown, builtOn: unknown) => fetch(`${base}/api/agents/spawn`, { method: 'POST', headers: H, body: JSON.stringify({ spawn, base: builtOn }) });
   assert.equal((await post({ codex: [] }, null)).status, 200);
   const stale = await post({ claude: [] }, null); // built on "no rules", but codex-only was saved since
