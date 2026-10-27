@@ -239,6 +239,8 @@ On its first start, Codex asks you in the terminal to review the new hooks. Choo
 and continue". It remembers that choice, so later sessions don't ask again. Codex sends no
 event when a turn fails (for example when you hit a usage limit), so Agent Worlds reads Codex's
 own session log instead: a failed turn moves to the Help desk with its error a few seconds later.
+Codex sessions started here use full filesystem and network access. Codex can still request
+approval in its terminal, and Agent Worlds mirrors those requests under **Needs you**.
 
 Kimi Code has two additional details:
 

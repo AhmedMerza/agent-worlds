@@ -244,6 +244,7 @@ async function submit() {
       </template>
       <template v-if="!asRun">
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
+      <p v-else-if="chosen?.id === 'codex'" class="why">Codex starts with full file and network access. It may still ask for approval in its terminal; Needs you mirrors the request.</p>
       <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal. Needs you shows the request; answer it in the terminal.</p>
       <p v-else-if="chosen.id === 'gemini'" class="why">Free with an AI Studio API key: the first time, Gemini CLI asks for it and to trust the folder, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
       <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>

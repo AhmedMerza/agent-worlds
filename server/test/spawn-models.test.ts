@@ -42,7 +42,7 @@ beforeEach(async () => { await allow(null); await setDefault('claude'); });
 
 test('the model goes in as one --model=<id> argument, on the CLIs that take one', () => {
   assert.deepEqual(launchArgs('claude', { task: 't', model: 'sonnet' }).args, ['--model=sonnet', '--', 't']);
-  assert.deepEqual(launchArgs('codex', { task: 't', model: 'gpt-5-codex' }).args, ['--model=gpt-5-codex', '--', 't']);
+  assert.deepEqual(launchArgs('codex', { task: 't', model: 'gpt-5-codex' }).args.slice(-3), ['--model=gpt-5-codex', '--', 't']);
   const home = tmp('aw-gemini-home-'), dir = tmp('aw-gemini-dir-');
   const g = launchArgs('gemini', { home, dir, task: 't', model: 'gemini-2.5-pro' }).args;
   assert.deepEqual(g.slice(-3), ['--model=gemini-2.5-pro', '-i', 't'], 'Gemini reads a separate value starting with - as a flag');
