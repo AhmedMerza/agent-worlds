@@ -8,7 +8,7 @@ const drafts = reactive<Record<string, string>>({})
 import { computed } from 'vue'
 import type { Session, Question, Card } from '../types'
 import { actedLine, cardAsk, permissionDetail, buildAnswers, scopeAvailability, showLearnNudge, cardLive, agentName } from '../logic'
-import { groups, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
+import { worldOf, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
 import QuestionOptions from './QuestionOptions.vue'
 import ContinueIn from './ContinueIn.vue'
@@ -20,7 +20,7 @@ const props = defineProps<{ s: Session; c: Card; noReply?: boolean; onActed?: (l
 const busy = reactive<Record<string, boolean>>({})
 const picked = reactive<Record<string, string[]>>({})
 
-const world = computed(() => groups.value.find((g) => g.sessions.includes(props.s))?.world)
+const world = computed(() => worldOf(props.s))
 const ask = computed(() => cardAsk(props.c))
 /** The pending request a permission or question card answers (narrowing on `c` does not reach into click handlers). */
 const rid = computed(() => ('requestId' in props.c ? props.c.requestId : ''))

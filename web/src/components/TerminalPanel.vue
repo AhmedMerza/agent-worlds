@@ -5,13 +5,13 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive, queueRestart } from '../logic'
-import { state, selected, terminalOf, groups, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession, restartQueued } from '../store'
+import { state, selected, terminalOf, worldOf, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession, restartQueued } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import QuestionOptions from './QuestionOptions.vue'
 import type { Turn } from '../types'
 
 const s = computed(() => selected.value)
-const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
+const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const cu = computed(() => (s.value ? catchupView(s.value, state.now) : null))
 const touch = isTouch()
 /** The key that drags a selection past tmux's mouse mode (xterm.js: Shift, Option on a Mac). */

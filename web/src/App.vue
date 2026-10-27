@@ -16,7 +16,7 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
+import { state, groups, worldOf, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -78,8 +78,7 @@ const termShown = computed(() => (phone.value ? tab.value === 'term' : ui.pane =
 function openNewTask(worldId?: string, run = false) {
   newTaskRun.value = run
   newTaskFixed.value = !!worldId
-  const g = selected.value ? groups.value.find((x) => x.sessions.includes(selected.value!)) : undefined
-  const c = defaultWorld(state.worlds, { explicit: worldId, selectedWorldId: g?.world.id, filter: state.filter })
+  const c = defaultWorld(state.worlds, { explicit: worldId, selectedWorldId: selected.value ? worldOf(selected.value)?.id : undefined, filter: state.filter })
   if (c.kind === 'world') newTaskWorld.value = c.id
   else if (c.kind === 'pick') newTaskWorld.value = ''
   else ui.worldsOpen = true // no worlds yet: creating one is the next step
@@ -111,7 +110,11 @@ function onCtrlClick(e: MouseEvent) { if (phone.value && (e.target as HTMLElemen
 function onMute() { toggleMute(); showToast(prefs.muted ? 'Sounds muted.' : 'Sounds on.') }
 const split = computed(() => needSplit(needsYou.value))
 const shown = computed(() => groups.value.filter((g) => state.filter === 'all' || g.world.id === state.filter))
-const numbers = computed(() => Object.fromEntries(screenSessions.value.slice(0, 9).map((s, i) => [s.id, i + 1])))
+/** The same object until the numbered sessions change, so rooms do not redraw for it. */
+const numbers = computed<Record<string, number>>((prev) => {
+  const ids = screenSessions.value.slice(0, 9).map((s) => s.id)
+  return prev && ids.length === Object.keys(prev).length && ids.every((id, i) => prev[id] === i + 1) ? prev : Object.fromEntries(ids.map((id, i) => [id, i + 1]))
+})
 const count = (st: string) => sessionList.value.filter((s) => s.state === st).length
 
 const dialogOpen = () => help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null || ui.moveSession !== null
@@ -228,7 +231,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
           </div>
           <template v-if="ui.worldDesign === 'hq'"><HqRoom v-for="g in shown" :key="g.world.id" :group="g" @new-task="openNewTask" /></template>
           <Room v-for="g in shown" v-else :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
-          <WorldConnections v-if="ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1" :worlds="shown.map(g => g.world.id)" />
+          <WorldConnections v-if="ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1 && shown.length <= 6" :worlds="shown.map(g => g.world.id)" />
         </section>
         <div v-if="sideBySide" class="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the world and the terminal" tabindex="0" :aria-valuenow="ui.split" aria-valuemin="25" aria-valuemax="75" title="Drag to resize" @pointerdown="onSplitDown" @keydown="onSplitKey" @dblclick="ui.split = 45" />
         <ChatView v-if="chatShown && !chatDrawer" :back="phone" @back="closeChat" />

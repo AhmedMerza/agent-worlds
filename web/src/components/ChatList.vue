@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import type { Session } from '../types'
 import { agentLabel, chatBadge, chatRows, chatTime, inboxOrder, nameOf, stateLabel } from '../logic'
-import { state, groups, needsYou, runsNeedingYou, openChat } from '../store'
+import { state, groups, needsYou, runsNeedingYou, openChat, worldOf } from '../store'
 import RunCard from './RunCard.vue'
 
 // The world filter in the header applies here too; ghosts (Claudes outside Agent Worlds) have no chat.
@@ -21,7 +20,9 @@ const rows = computed(() => {
   const by = new Map(fresh.value.map((r) => [r.s.id, r]))
   return order.value.flatMap((id) => by.get(id) ?? [])
 })
-const worldOf = (s: Session) => shown.value.find((g) => g.sessions.includes(s))?.world
+/** Hundreds of rows would redraw on every update: the list shows its top rows, more on request. */
+const limit = ref(50)
+const visible = computed(() => rows.value.slice(0, limit.value))
 const emit = defineEmits<{ 'new-task': [] }>()
 </script>
 
@@ -35,7 +36,7 @@ const emit = defineEmits<{ 'new-task': [] }>()
     <div v-if="runsNeedingYou.length" class="cards"><RunCard v-for="r in runsNeedingYou" :key="r.id" :run="r" /></div>
     <p v-if="!rows.length" class="empty">{{ state.filter === 'all' ? 'No sessions yet.' : 'No sessions in this world.' }} Start one with <b>+ New chat</b>.</p>
     <ul class="chat-rows">
-      <li v-for="r in rows" :key="r.s.id">
+      <li v-for="r in visible" :key="r.s.id">
         <button :class="['chat-row', { current: state.selectedId === r.s.id, needs: r.needs }]" :style="{ '--tint': worldOf(r.s)?.color ?? 'var(--idle)' }" @click="openChat(r.s.id)">
           <span :class="['dot', r.s.state]" />
           <span class="chat-main">
@@ -44,6 +45,7 @@ const emit = defineEmits<{ 'new-task': [] }>()
           </span>
         </button>
       </li>
+      <li v-if="rows.length > limit"><button class="chat-row chat-more" @click="limit += 100">Show {{ Math.min(100, rows.length - limit) }} more of {{ rows.length - limit }}</button></li>
     </ul>
   </section>
 </template>

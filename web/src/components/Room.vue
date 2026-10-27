@@ -4,8 +4,8 @@ import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { illustrationReady, officePage, OFFICE_PAGE_SIZE } from '../illustratedRoom'
 import { roomHeight, type Walker } from '../zones'
-import { agentLabel, nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch, stepTags } from '../logic'
-import { state, select, openSession, ui, moveSession, showToast } from '../store'
+import { agentLabel, nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
+import { state, select, openSession, ui, moveSession, showToast, steps } from '../store'
 import { cameraOn, viewCentre, usageText, type Camera } from '../hq'
 import AgentCard from './AgentCard.vue'
 
@@ -24,7 +24,6 @@ const query = ref('')
 const page = ref(0)
 /** The scene draws every real session but only a few ghosts; the rest wait in the chip. */
 const drawn = computed(() => drawnSessions(props.group.sessions))
-const steps = computed(() => stepTags(Object.values(state.runs), Object.values(state.sessions)))
 const pages = computed(() => Math.max(1, Math.ceil(drawn.value.sessions.length / OFFICE_PAGE_SIZE)))
 const illustrated = computed(() => ui.worldDesign === 'illustrated')
 /** A right-clicked (on touch: tapped) person gets the camera and their card. */
@@ -35,6 +34,14 @@ const cam = ref<Camera>({ z: 1, x: 0, y: 0 })
 watch(illustrated, () => closeCard())
 const scene = computed<RoomGroup>(() => ({ world: props.group.world, sessions: illustrated.value ? officePage(drawn.value.sessions, page.value) : drawn.value.sessions }))
 const filtered = computed(() => real.value.filter(s => `${nameOf(s)} ${s.branch ?? ''} ${s.task ?? ''} ${stateLabel(s, state.now)}`.toLowerCase().includes(query.value.trim().toLowerCase())))
+/** A busy room lists its first chips; the rest (and anyone past the room's seats) behind "Show all". */
+const CHIP_CAP = 24
+const allChips = ref(false)
+const chips = computed(() => {
+  if (allChips.value || query.value) return filtered.value
+  const top = filtered.value.slice(0, CHIP_CAP), sel = filtered.value.find(s => s.id === state.selectedId)
+  return sel && !top.includes(sel) ? [...top, sel] : top // the session you picked stays in view
+})
 watch(pages, n => { page.value = Math.min(page.value, n - 1) })
 watch(() => state.selectedId, id => {
   const sorted = [...drawn.value.sessions].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
@@ -56,7 +63,7 @@ let hLog = 250
 let lastStatic = ''
 let revision = 0
 const hoverId = ref<string | null>(null)
-watch([scene, steps, () => state.selectedId, hoverId, () => Math.floor(state.now / 60000)], () => { revision++ }, { deep: true })
+watch([scene, steps, () => state.selectedId, hoverId, () => Math.floor(state.now / 60000)], () => { revision++ })
 let lastT = 0
 
 /** The canvas fills its box exactly (width AND height). The scene scales by width; spare height is extra floor. */
@@ -79,9 +86,10 @@ const FRAME_MS = 1000 / 30
 let onScreen = true
 
 function frame(t: number) {
-  raf = requestAnimationFrame(frame)
   const c = canvas.value
-  if (!c || !onScreen || document.hidden || c.offsetParent === null) return
+  if (!c || !onScreen) { raf = 0; return } // off screen the loop stops; coming back on screen restarts it
+  raf = requestAnimationFrame(frame)
+  if (document.hidden || c.offsetParent === null) return
   if (lastT && t - lastT < FRAME_MS - 2) return
   const ctx = c.getContext('2d')
   if (!ctx) return
@@ -102,7 +110,7 @@ onMounted(() => {
   ro = new ResizeObserver(fitCanvas)
   if (wrap.value) ro.observe(wrap.value)
   if (typeof IntersectionObserver !== 'undefined' && wrap.value) {
-    io = new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; lastT = 0; lastStatic = '' })
+    io = new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; lastT = 0; lastStatic = ''; if (onScreen && !raf) raf = requestAnimationFrame(frame) })
     io.observe(wrap.value)
   }
   raf = requestAnimationFrame(frame)
@@ -208,9 +216,10 @@ function onContext(e: MouseEvent) {
     <div class="chips">
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <p v-else-if="query && !filtered.length" class="meta">No matching sessions.</p>
-      <button v-for="s in filtered" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
+      <button v-for="s in chips" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
         <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" />{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.context || s.usage" class="st" title="Context use and tokens this conversation">{{ [s.context ? `${s.context.pct}% ctx` : '', s.usage ? usageText(s.usage) : ''].filter(Boolean).join(' · ') }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
+      <button v-if="filtered.length > CHIP_CAP && !query" class="chip chip-ghosts" :aria-expanded="allChips" @click="allChips = !allChips">{{ allChips ? 'Show fewer' : `Show all ${filtered.length}` }}</button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">
         <span class="dot ghost" />{{ ghostChipText(split.ghosts.length) }} <span class="st">{{ ghostsOpen ? 'Hide' : 'Show' }}</span>
       </button>

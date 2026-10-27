@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { modeField, modeOptions, cardKey } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, runsNeedingYou, runOf, skipped, restartQueued } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, groups, worldOf, runsNeedingYou, runOf, skipped, restartQueued } from '../src/store'
 import type { Run } from '../src/types'
 import { mk, perm } from './helpers'
 
@@ -20,6 +20,17 @@ describe('applyMessage', () => {
     expect(runOf({ id: 'nobody', tmux: null } as never)).toBeNull()
     applyMessage(state, { type: 'snapshot', worlds, sessions: [] })
     expect(state.runs).toEqual({})
+  })
+  it('an update to one room leaves the other rooms\' groups as they were, so they do not redraw', () => {
+    const two = [...worlds, { id: 'app', name: 'App', color: '#000', repos: [] }]
+    applyMessage(state, { type: 'snapshot', worlds: two, sessions: [mk('a', { worldId: 'web' }), mk('b', { worldId: 'app' })] })
+    const [web, app] = groups.value
+    applyMessage(state, { type: 'session', session: mk('a', { worldId: 'web', state: 'idle' }) })
+    expect(groups.value[1]).toBe(app)
+    expect(groups.value[0]).not.toBe(web)
+    expect(groups.value[0].sessions[0].state).toBe('idle')
+    expect(worldOf({ id: 'b' })?.id).toBe('app')
+    applyMessage(state, { type: 'snapshot', worlds, sessions: [] })
   })
   it('snapshot replaces everything and selects the oldest needing you', () => {
     const st = newState()

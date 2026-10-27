@@ -3,7 +3,7 @@ import { usageText } from '../hq'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Turn } from '../types'
 import { NEEDS_YOU, agentLabel, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
-import { state, selected as s, groups, needsYou, sessionConversation, sendInput, focusTerminal, openChat, skipped, chatRun, showToast } from '../store'
+import { state, selected as s, worldOf, needsYou, sessionConversation, sendInput, focusTerminal, openChat, skipped, chatRun, showToast } from '../store'
 import { renderMarkdown } from '../markdown'
 import CardActions from './CardActions.vue'
 
@@ -11,7 +11,7 @@ import CardActions from './CardActions.vue'
 defineProps<{ back?: boolean }>()
 const emit = defineEmits<{ back: [] }>()
 
-const world = computed(() => (s.value ? groups.value.find((g) => g.sessions.includes(s.value!))?.world : undefined))
+const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const turns = ref<Turn[] | null>(null)
 const err = ref('')
 /** No transcript yet: the session is starting, or nothing has been said. The next update tries again. */
