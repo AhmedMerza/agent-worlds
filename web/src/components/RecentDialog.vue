@@ -55,7 +55,7 @@ async function dismiss(id: string) {
             <span class="r-age">{{ g.items.length }} · {{ ageText(g.items[0].lastActivity, state.now) }}</span>
           </button>
           <ul v-if="!folded.has(g.cwd)" class="recent-list">
-            <li v-for="h in g.items" :key="h.sessionId">
+            <li v-for="h in g.items" :key="h.sessionId" :class="{ 'codex-resume': h.agent === 'codex' && !h.managed }">
               <div class="r-main">
                 <span class="r-age">{{ ageText(h.lastActivity, state.now) }}</span>
                 <span v-if="h.agent" class="badge">{{ agentName(h) }}</span>
