@@ -279,7 +279,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const viewId = msg.type === 'session' ? (msg.session as { id?: unknown } | undefined)?.id : undefined;
     if (typeof viewId === 'string') {
       pendingViews.set(viewId, msg);
-      pendingTimer ??= setTimeout(flushViews, VIEW_COALESCE_MS);
+      pendingTimer ??= setTimeout(flushViews, VIEW_COALESCE_MS).unref();
       return;
     }
     flushViews();
@@ -1090,6 +1090,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
+        flushViews(); // a view still waiting is older than the snapshot: it must not arrive after it
         ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()] }));
       });
     }

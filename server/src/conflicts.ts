@@ -13,7 +13,7 @@ export function computeConflicts(list: ConflictInput[]): Map<string, Conflict[]>
   const out = new Map<string, Conflict[]>(list.map((s) => [s.id, []]));
   // Only sessions in one repo can overlap (a folder belongs to one repo): compare within each repo, not all pairs.
   const byRepo = new Map<string, ConflictInput[]>();
-  for (const s of list) byRepo.set(s.repo, [...(byRepo.get(s.repo) ?? []), s]);
+  for (const s of list) { const a = byRepo.get(s.repo); if (a) a.push(s); else byRepo.set(s.repo, [s]); }
   const issues = new Map(list.map((s) => [s.id, issueOf(s.branch)]));
   for (const a of list) {
     for (const b of byRepo.get(a.repo)!) {

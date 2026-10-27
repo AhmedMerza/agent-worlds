@@ -851,8 +851,10 @@ export class Store {
     try { const st = await stat(path); sig = `${st.size}:${st.mtimeMs}`; } catch { return undefined; }
     const hit = this.tails.get(path);
     if (hit?.sig === sig) return hit.entry;
-    const entry = (await readTail(path, bytes).catch(() => [])).findLast(match);
-    this.tails.set(path, { sig, entry });
+    let entries: Entry[];
+    try { entries = await readTail(path, bytes); } catch { return undefined; } // a failed read is tried again next poll
+    const entry = entries.findLast(match);
+    this.tails.delete(path); this.tails.set(path, { sig, entry });
     if (this.tails.size > 1000) this.tails.delete(this.tails.keys().next().value!);
     return entry;
   }

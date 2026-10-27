@@ -88,6 +88,8 @@ test('store recomputes conflicts and broadcasts both sides; removal clears them'
   assert.equal(view('sess-1').conflicts[0].reason, 'same folder; shared database: tests in both');
   await store.handle({ ...ev.postBash, tool_input: { command: 'npm test' }, tool_use_id: 't1', tool_response: { stdout: 'Tests: 12 passed\nDone in 3s', stderr: '' } }, null);
   assert.equal(view('sess-1').conflicts[0].reason, 'same folder');
+  await store.handle({ ...ev.preBash, tool_input: { command: 'ls' }, tool_use_id: 't3' }, null);
+  assert.equal(view('sess-1').conflicts[0].reason, 'same folder', 'a push that moves nothing keeps them');
 
   await store.handle({ ...ev.end, session_id: 'sess-2' }, null);
   assert.deepEqual(view('sess-1').conflicts, []);

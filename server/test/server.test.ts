@@ -109,6 +109,20 @@ test('hook: PermissionRequest with no GUI connected answers {} at once', async (
   await hook(ev.postBash);
 });
 
+test('ws: session views are batched, the newest wins, and a removal is never followed by an older view', async () => {
+  const ws = await openWs('/ws');
+  await new Promise((r) => setTimeout(r, 50));
+  ws.got.length = 0;
+  await hook({ ...ev.start, session_id: 'batch-1' }, '%9');
+  await hook({ ...ev.preBash, session_id: 'batch-1', tool_input: { command: 'ls -la' }, tool_use_id: 'b1' }, '%9');
+  await hook({ ...ev.end, session_id: 'batch-1' }, '%9');
+  await new Promise((r) => setTimeout(r, 200));
+  const mine = ws.got.map((m) => JSON.parse(m)).filter((m) => m.session?.id === 'batch-1' || m.id === 'batch-1');
+  assert.equal(mine.at(-1).type, 'session-removed');
+  assert.match(mine.at(-2).session.now, /ls -la|Running/, 'the last view before it is the newest');
+  ws.close();
+});
+
 test('hook: PermissionRequest is held until POST /permission, broadcast over /ws', async () => {
   const ws = await openWs('/ws');
   await new Promise((r) => setTimeout(r, 50));
@@ -123,7 +137,9 @@ test('hook: PermissionRequest is held until POST /permission, broadcast over /ws
     card = (await state()).sessions[0]?.card;
   }
   assert.equal(card.kind, 'permission');
-  assert.ok(msgs().some((m) => m.type === 'session' && m.session.card?.requestId === card.requestId));
+  const sent = () => msgs().some((m) => m.type === 'session' && m.session.card?.requestId === card.requestId);
+  for (let i = 0; i < 20 && !sent(); i++) await new Promise((r) => setTimeout(r, 20)); // session views go out in batches
+  assert.ok(sent());
 
   assert.equal((await post('/api/sessions/sess-1/permission', { requestId: card.requestId, decision: 'nope' })).status, 400);
   const ok = await post('/api/sessions/sess-1/permission', { requestId: card.requestId, decision: 'allow', scope: 'once' });

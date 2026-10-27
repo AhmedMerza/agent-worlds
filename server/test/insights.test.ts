@@ -200,6 +200,18 @@ test('token usage: each message once, whole lines only, added up across scans', 
   appendFileSync(f, msg('m2', 10).slice(20) + msg('m3', 100));
   scan = await scanUsage(f, scan);
   assert.deepEqual(scan.total, { input: 111, output: 222, cacheRead: 333, cacheWrite: 444 });
+  assert.equal(scan.last?.message.usage.input_tokens, 100, 'context comes from the newest reply');
+  appendFileSync(f, JSON.stringify({ type: 'user', message: { content: 'next' } }) + '\n');
+  assert.equal((await scanUsage(f, scan)).last?.message.usage.input_tokens, 100, 'and a line without usage keeps it');
+});
+
+test('token usage: a long session keeps only recent message ids and still counts each once', async () => {
+  const f = join(tmp(), 'long.jsonl');
+  const msg = (id: string) => JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: 1, output_tokens: 0 } } }) + '\n';
+  writeFileSync(f, Array.from({ length: 1500 }, (_, i) => msg(`m${i}`).repeat(2)).join(''));
+  const scan = await scanUsage(f, undefined);
+  assert.equal(scan.total.input, 1500);
+  assert.ok(scan.seen.size <= 1000);
 });
 
 test('token usage: a rewritten transcript, a new one after /clear, lines without an id, nothing new', async () => {

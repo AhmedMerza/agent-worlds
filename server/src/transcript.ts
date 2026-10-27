@@ -113,7 +113,7 @@ export async function scanUsage(path: string, prev: UsageScan | undefined): Prom
       scan.offset += end;
       for (const e of parseLines(all.subarray(0, end).toString('utf8').split('\n'))) {
         const u = e.type === 'assistant' ? e.message?.usage : null;
-        if (u && contextOf([e], null)) scan.last = e;
+        if (u && contextOf([e], null)) scan.last = { type: 'assistant', message: { usage: u, model: e.message?.model } }; // not the reply's content
         const id = e.message?.id;
         if (!u || (id && scan.seen.has(id))) continue;
         // A message's lines are written together: the newest ids are enough, and a long session's set stays small.
