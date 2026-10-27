@@ -1,6 +1,6 @@
 import { open } from 'node:fs/promises';
 
-type Entry = Record<string, any>;
+export type Entry = Record<string, any>;
 
 /** Parse the last `bytes` of a JSONL file (the first, possibly cut, line is dropped). */
 export async function readTail(path: string, bytes: number): Promise<Entry[]> {

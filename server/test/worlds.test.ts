@@ -57,7 +57,8 @@ const call = async (method: string, path: string, body?: unknown) => {
   return { status: r.status, body: await r.json() as any };
 };
 const saved = () => JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
-const settle = () => new Promise((r) => setTimeout(r, 50));
+// Past the server's 100 ms window for gathering session updates.
+const settle = () => new Promise((r) => setTimeout(r, 200));
 
 test('create: slug id, palette colour, repos validated, persisted with other keys kept', async () => {
   const r = await call('POST', '/api/worlds', { name: '  Web Apps ', repos: [repoA, repoA, wt] });
