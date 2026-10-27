@@ -6,7 +6,8 @@ import type { Review } from './review.ts';
 import { TEST_RE, testLine } from './review.ts';
 import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, WRITE_TOOLS, type Rule } from './rules.ts';
 import { computeConflicts, type Conflict } from './conflicts.ts';
-import { readTail } from './transcript.ts';
+import { readTail, type Entry } from './transcript.ts';
+import { stat } from 'node:fs/promises';
 import { AGENTS, type AgentId } from './agents.ts';
 
 export { riskOf };
@@ -198,6 +199,8 @@ const hookOut = (decision: Record<string, unknown>) =>
 
 export class Store {
   sessions = new Map<string, Session>();
+  private conflictSig = '';
+  private tails = new Map<string, { sig: string; entry: Entry | undefined }>();
   cfg: Config;
   deps: Deps;
   emit: Emit;
@@ -277,10 +280,16 @@ export class Store {
     if (s.catchupAt && !s.catchupStale && s.catchupSig !== this.sigOf(s)) s.catchupStale = true;
     const changed = new Set<Session>([s]);
     const all = [...this.sessions.values()];
-    const next = computeConflicts(all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0 })));
-    for (const x of all) {
-      const c = next.get(x.id) ?? [];
-      if (JSON.stringify(c) !== JSON.stringify(x.conflicts)) { x.conflicts = c; changed.add(x); }
+    const input = all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0 }));
+    // Most pushes (a tool call, a state change) move no folder, branch or test run: the conflicts stay as they are.
+    const sig = JSON.stringify(input);
+    if (sig !== this.conflictSig) {
+      this.conflictSig = sig;
+      const next = computeConflicts(input);
+      for (const x of all) {
+        const c = next.get(x.id) ?? [];
+        if (JSON.stringify(c) !== JSON.stringify(x.conflicts)) { x.conflicts = c; changed.add(x); }
+      }
     }
     for (const x of changed) if (this.sessions.has(x.id)) this.emit({ type: 'session', session: this.view(x) });
   }
@@ -382,7 +391,7 @@ export class Store {
       this.deps.onRenamed?.(prior.id, id);
       this.remove(prior);
     }
-    this.sessions.set(id, s);
+    this.sessions.set(id, s); this.conflictSig = '';
     return s;
   }
 
@@ -667,7 +676,7 @@ export class Store {
 
   remove(s: Session) {
     for (const p of [...s.pending]) this.settle(s, p, '{}');
-    this.sessions.delete(s.id);
+    this.sessions.delete(s.id); this.conflictSig = '';
     this.emit({ type: 'session-removed', id: s.id });
     // conflicts the removed session took part in go away
     const other = this.sessions.values().next().value;
@@ -823,7 +832,7 @@ export class Store {
       if (!s.transcriptPath) continue;
       // The marker is rarely the last line: system, last-prompt, file-history-snapshot or a task notification follow it.
       // Interrupted when it comes after Claude's last reply, and after your prompt (else it is an earlier turn's).
-      const last = (await readTail(s.transcriptPath, 32 * 1024).catch(() => [])).findLast((e) => e.type === 'assistant' || interruptMark(e));
+      const last = await this.tailFind(s.transcriptPath, 32 * 1024, (e) => e.type === 'assistant' || interruptMark(e));
       if (!last || last.type !== 'user') continue;
       if (!(Date.parse(last.timestamp) >= s.promptAt) || s.state !== 'working' || !this.sessions.has(s.id)) continue;
       this.afterPending(s, 'idle');
@@ -836,9 +845,22 @@ export class Store {
    * Codex fires no hook when a turn fails (a usage limit), and none is promised on Esc. Its rollout log still
    * ends every turn: task_complete (with `error` when it failed) or turn_aborted.
    */
+  /** The last entry in a log's tail that `match` picks, re-read only when the file has changed since the last poll. */
+  private async tailFind(path: string, bytes: number, match: (e: Entry) => boolean): Promise<Entry | undefined> {
+    let sig: string;
+    try { const st = await stat(path); sig = `${st.size}:${st.mtimeMs}`; } catch { return undefined; }
+    const hit = this.tails.get(path);
+    if (hit?.sig === sig) return hit.entry;
+    let entries: Entry[];
+    try { entries = await readTail(path, bytes); } catch { return undefined; } // a failed read is tried again next poll
+    const entry = entries.findLast(match);
+    this.tails.delete(path); this.tails.set(path, { sig, entry });
+    if (this.tails.size > 1000) this.tails.delete(this.tails.keys().next().value!);
+    return entry;
+  }
+
   private async checkCodexTurn(s: Session, path: string) {
-    const end = (await readTail(path, 65536).catch(() => []))
-      .findLast((e) => e.type === 'event_msg' && CODEX_TURN.has(e.payload?.type));
+    const end = await this.tailFind(path, 65536, (e) => e.type === 'event_msg' && CODEX_TURN.has(e.payload?.type));
     const at = Date.parse(end?.timestamp);
     // Still running, an ending from before the last hook (an earlier turn), or one so fresh its Stop may be on the way.
     if (!end || end.payload.type === 'task_started' || !(at >= s.hookAt) || this.now() - at < CODEX_GRACE) return;

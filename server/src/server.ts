@@ -121,6 +121,8 @@ function sendHtml(res: ServerResponse, status: number, html: string) {
 const MAIL_NOTICE = '[Agent Worlds]';
 /** How long mail waits for a recipient that has not come back since a restart. */
 const MAIL_WAITS = 24 * 3600_000;
+/** How long session updates are gathered before going out, so a busy session sends one view, not one per tool call. */
+const VIEW_COALESCE_MS = 100;
 
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((ok, fail) => {
@@ -272,9 +274,25 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
       runSessionGone(msg.id); agyPending.delete(msg.id);
     }
-    const text = JSON.stringify(msg);
-    for (const c of wss.clients) if (c.readyState === 1) c.send(text);
+    // A busy session pushes on every tool call: send each session's latest view at most once per window.
+    // Any other message flushes the waiting ones first, so the order the client sees is kept.
+    const viewId = msg.type === 'session' ? (msg.session as { id?: unknown } | undefined)?.id : undefined;
+    if (typeof viewId === 'string') {
+      pendingViews.set(viewId, msg);
+      pendingTimer ??= setTimeout(flushViews, VIEW_COALESCE_MS).unref();
+      return;
+    }
+    flushViews();
+    sendAll(JSON.stringify(msg));
   };
+  const pendingViews = new Map<string, object>();
+  let pendingTimer: NodeJS.Timeout | null = null;
+  const sendAll = (text: string) => { for (const c of wss.clients) if (c.readyState === 1) c.send(text); };
+  function flushViews() {
+    if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    for (const m of pendingViews.values()) sendAll(JSON.stringify(m));
+    pendingViews.clear();
+  }
   const parents = new Placements(join(home, 'parents.json'));
   const store = new Store(cfg, {
     repoInfo: sys.repoInfo, branchOf: sys.branchOf, tmuxSessionOf: sys.tmuxSessionOf,
@@ -1072,6 +1090,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (url.pathname === '/ws') {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
+        flushViews(); // a view still waiting is older than the snapshot: it must not arrive after it
         ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()] }));
       });
     }

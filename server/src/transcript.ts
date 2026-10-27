@@ -1,6 +1,6 @@
 import { open } from 'node:fs/promises';
 
-type Entry = Record<string, any>;
+export type Entry = Record<string, any>;
 
 /** Parse the last `bytes` of a JSONL file (the first, possibly cut, line is dropped). */
 export async function readTail(path: string, bytes: number): Promise<Entry[]> {
@@ -90,12 +90,13 @@ export function contextOf(entries: Entry[], model: string | null, limit = DEFAUL
 }
 
 export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
-export type UsageScan = { path: string; offset: number; seen: Set<string>; total: Usage };
+/** `last` is the newest reply that reports its context use (what contextOf reads), so context needs no second read. */
+export type UsageScan = { path: string; offset: number; seen: Set<string>; total: Usage; last: Entry | null };
 
 /** Adds token use written since the last scan (only whole lines) and returns the scan. Claude writes one line per content
  *  block of a message, each repeating the message's usage, so a message id counts once. A new transcript (after /clear) starts over. */
 export async function scanUsage(path: string, prev: UsageScan | undefined): Promise<UsageScan> {
-  const scan = prev?.path === path ? prev : { path, offset: 0, seen: new Set<string>(), total: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const scan = prev?.path === path ? prev : { path, offset: 0, seen: new Set<string>(), total: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, last: null };
   const fh = await open(path, 'r');
   try {
     const { size } = await fh.stat();
@@ -112,9 +113,11 @@ export async function scanUsage(path: string, prev: UsageScan | undefined): Prom
       scan.offset += end;
       for (const e of parseLines(all.subarray(0, end).toString('utf8').split('\n'))) {
         const u = e.type === 'assistant' ? e.message?.usage : null;
+        if (u && contextOf([e], null)) scan.last = { type: 'assistant', message: { usage: u, model: e.message?.model } }; // not the reply's content
         const id = e.message?.id;
         if (!u || (id && scan.seen.has(id))) continue;
-        if (id) scan.seen.add(id);
+        // A message's lines are written together: the newest ids are enough, and a long session's set stays small.
+        if (id) { scan.seen.add(id); if (scan.seen.size > 1000) scan.seen.delete(scan.seen.values().next().value!); }
         scan.total.input += u.input_tokens ?? 0; scan.total.output += u.output_tokens ?? 0;
         scan.total.cacheRead += u.cache_read_input_tokens ?? 0; scan.total.cacheWrite += u.cache_creation_input_tokens ?? 0;
       }

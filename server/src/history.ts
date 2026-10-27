@@ -31,13 +31,20 @@ function transcripts(dir: string, only?: (project: string) => boolean): File[] {
   return out;
 }
 
+// Where a session's transcript was found: the scan asks again every 10 s, and a transcript does not move.
+const foundTranscripts = new Map<string, string>();
 export function findTranscript(dir: string, sessionId: string): string | null {
   if (!SESSION_ID_RE.test(sessionId)) return null;
+  const known = foundTranscripts.get(`${dir}\0${sessionId}`);
+  if (known && existsSync(known)) return known;
   let projects: string[];
   try { projects = readdirSync(dir); } catch { return null; }
   for (const p of projects) {
     const f = join(dir, p, `${sessionId}.jsonl`);
-    if (existsSync(f)) return f;
+    if (!existsSync(f)) continue;
+    foundTranscripts.set(`${dir}\0${sessionId}`, f);
+    if (foundTranscripts.size > 2000) foundTranscripts.delete(foundTranscripts.keys().next().value!);
+    return f;
   }
   return null;
 }
@@ -269,7 +276,19 @@ function codexRollouts(codexHome: string): { name: string; path: string; mtime: 
     .sort((a, b) => b.mtime - a.mtime);
 }
 
+// A rollout's first line never changes once written: read it once per file, not on every 10 s scan.
+const codexMetas = new Map<string, { id: string; cwd: string }>();
 function codexMeta(path: string): { id: string; cwd: string } | null {
+  const hit = codexMetas.get(path);
+  if (hit) return hit;
+  const meta = readCodexMeta(path);
+  if (meta) {
+    codexMetas.set(path, meta);
+    if (codexMetas.size > 10_000) codexMetas.delete(codexMetas.keys().next().value!);
+  }
+  return meta;
+}
+function readCodexMeta(path: string): { id: string; cwd: string } | null {
   const meta = firstEntry(path);
   if (meta?.type !== 'session_meta') return null;
   const p = meta.payload ?? {};
@@ -303,8 +322,7 @@ export async function codexHistory(codexHome: string, limit: number, repo?: stri
 }
 
 /** A running Codex's session: the newest rollout log whose session_meta names its cwd. */
-function codexSessionFor(cwd: string, codexHome: string): { id: string; path: string } | null {
-  const files = codexRollouts(codexHome);
+function codexSessionFor(cwd: string, files: { path: string; mtime: number }[]): { id: string; path: string } | null {
   // A live process's log is appended to, but an idle one can sit for weeks: look a year back, newest first.
   for (const f of files.filter((f) => f.mtime > Date.now() - 366 * 86400_000).slice(0, 200)) {
     const meta = codexMeta(f.path);
@@ -361,6 +379,9 @@ export function scanAgents(procRoot: string, projectsDir: string, opts: { uid?: 
     agy: opts.homes?.agy ?? join(process.env.GEMINI_CLI_HOME || homedir(), '.gemini', 'antigravity-cli'),
   };
   const out: AgentProc[] = [];
+  // Listed once per scan, not once per process: every Codex process looks through the same folders.
+  let rollouts: ReturnType<typeof codexRollouts> | null = null;
+  const newest = new Map<string, string | null>();
   let pids: string[];
   try { pids = readdirSync(procRoot).filter((p) => /^\d+$/.test(p)); } catch { return out; }
   for (const pid of pids) {
@@ -383,14 +404,15 @@ export function scanAgents(procRoot: string, projectsDir: string, opts: { uid?: 
       if (agent === 'claude') {
         const flag = argv.findIndex((a) => a === '--resume' || a === '-r' || a === '--session-id');
         const named = flag >= 0 && SESSION_ID_RE.test(argv[flag + 1] ?? '') ? argv[flag + 1] : null;
-        sessionId = named ?? newestTranscript(projectsDir, cwd);
+        if (!named && !newest.has(cwd)) newest.set(cwd, newestTranscript(projectsDir, cwd));
+        sessionId = named ?? newest.get(cwd)!;
       } else if (agent === 'kimi') {
         const s = kimiSessionFor(argv, cwd, opts.home);
         sessionId = s?.id ?? null; log = s?.dir ?? null;
       } else if (agent === 'qwen') {
         sessionId = qwenSessionFor(+pid, cwd, homes.qwen);
       } else if (agent === 'codex') {
-        const s = codexSessionFor(cwd, homes.codex);
+        const s = codexSessionFor(cwd, rollouts ??= codexRollouts(homes.codex));
         sessionId = s?.id ?? null; log = s?.path ?? null;
       } else if (agent === 'gemini') {
         const s = geminiSessionFor(cwd, homes.gemini);

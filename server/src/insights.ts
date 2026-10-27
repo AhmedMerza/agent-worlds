@@ -100,8 +100,8 @@ export class Insights {
       // Context and usage are read in the same queued step, so a slower earlier call can't push older numbers last.
       // A session removed meanwhile (forget) gets nothing written back: a new one with its id starts clean.
       const run = (this.usageRuns.get(s.id) ?? Promise.resolve(undefined)).catch(() => undefined).then(async () => {
-        const ctx = contextOf(await readTail(path, 256 * 1024), s.model, this.contextLimit);
         const scan = await scanUsage(path, this.usageScans.get(s.id));
+        const ctx = contextOf(scan.last ? [scan.last] : [], s.model, this.contextLimit);
         if (this.alive(s)) this.usageScans.set(s.id, scan);
         return { ctx, scan };
       });
