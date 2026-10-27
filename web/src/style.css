@@ -27,7 +27,7 @@ kbd{font-family:var(--f-mono);font-size:11.5px;color:var(--ink);background:var(-
 .worlds{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));gap:16px;min-width:0}
 .worlds.single{grid-template-columns:minmax(0,1fr)}
 .worlds.single.illustrated > .room{width:min(100%,480px);justify-self:center}
-.world-design{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.world-design{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap;flex:none}
 .worlds.classic > .room{background:var(--panel);border:1px solid var(--line);border-top:4px solid var(--tint);border-radius:6px;overflow:hidden}
 .room{position:relative;background:transparent;border:0;border-radius:10px;display:flex;flex-direction:column;min-width:0}
 .room header{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;padding:10px 12px 8px}
@@ -304,9 +304,9 @@ pre.diff{max-height:320px;overflow:auto}
 .stat.need{color:var(--ink)}
 @media (min-width:700px){
   .stats{flex:none}
-  .filters{flex:0 1 auto;min-width:80px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-left:0}
+  .filters{flex:0 1 auto;min-width:min(320px,100%);max-width:min(560px,100%);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin;margin-left:0}
   .filters button{white-space:nowrap}
-  .ctrl{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;justify-content:flex-end}
+  .ctrl{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:1 1 auto;min-width:0;justify-content:flex-end}
   .ctrl .hdr-btn{flex:none}
   .brand{flex:none;white-space:nowrap}
 }
@@ -396,6 +396,7 @@ pre.diff{max-height:320px;overflow:auto}
 .chat-rows{list-style:none;margin:0;padding:0;overflow:auto;min-height:0}
 .chat-row{all:unset;box-sizing:border-box;width:100%;display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-left:4px solid var(--tint);border-bottom:1px solid var(--line);cursor:pointer;min-height:56px}
 .chat-row.current{background:var(--panel-2)}
+.chat-row.chat-more{--tint:transparent;justify-content:center;align-items:center;color:var(--muted);font-size:13px;text-decoration:underline}
 @media (hover:hover){.chat-row:hover{background:var(--panel-2)}}
 .chat-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .chat-row .dot{margin-top:7px}
@@ -577,8 +578,9 @@ pre.diff{max-height:320px;overflow:auto}
 .splitter:hover::after,.splitter:focus-visible::after,.splitter:active::after{background:var(--muted);height:72px;margin-top:-36px}
 .splitter:focus-visible{outline:none}
 @media (min-width:1000px){
-  .layout.full{grid-template-columns:minmax(0,1fr)}
-  aside.floating{display:none;position:fixed;z-index:38;right:20px;top:112px;width:min(400px,calc(100vw - 40px));max-height:calc(100vh - 132px);overflow:auto;padding:10px;gap:10px;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(18px) saturate(1.3);border:1px solid color-mix(in srgb,var(--line) 70%,#fff 10%);border-radius:20px;box-shadow:0 24px 60px -12px #000a;animation:hq-pop-panel .35s cubic-bezier(.2,.9,.3,1.05) both}
+  .layout.full{grid-template-columns:minmax(0,1fr);position:relative}
+  /* Pinned to the top of the layout, not the window: a header that wraps (many worlds) pushes it down too. */
+  aside.floating{display:none;position:absolute;z-index:38;right:4px;top:0;width:min(400px,calc(100vw - 40px));max-height:100%;overflow:auto;padding:10px;gap:10px;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(18px) saturate(1.3);border:1px solid color-mix(in srgb,var(--line) 70%,#fff 10%);border-radius:20px;box-shadow:0 24px 60px -12px #000a;animation:hq-pop-panel .35s cubic-bezier(.2,.9,.3,1.05) both}
   aside.floating.open{display:flex}
   aside.floating > .panel{flex:none!important;max-height:none!important;overflow:visible;border-radius:14px}
 }

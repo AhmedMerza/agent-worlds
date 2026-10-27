@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { Session, Card } from '../types'
+import type { Card } from '../types'
 import { agentLabel, fmtWait, permissionWho, waitMinutes, cardLive, inboxOrder, nameOf, cardKey, teamOf } from '../logic'
-import { state, needsYou, runsNeedingYou, groups, select, focusTerminal as focusTerm } from '../store'
+import { state, needsYou, runsNeedingYou, select, worldOf as world, focusTerminal as focusTerm } from '../store'
 import CardActions from './CardActions.vue'
 import RunCard from './RunCard.vue'
 
@@ -22,7 +22,7 @@ const items = computed(() => {
   const by = new Map(needsYou.value.map((s) => [keyOf(s), s]))
   return order.value.flatMap((k) => { const s = by.get(k); return s ? [{ s, c: s.card!, k }] : [] })
 })
-const world = (s: Session) => groups.value.find((g) => g.sessions.includes(s))?.world
+const limit = ref(50)
 const WHO = { question: 'is asking you', asking: 'is asking you', done: 'finished', error: 'hit a problem' } as const
 const who = (c: Card): string => (c.kind === 'permission' ? permissionWho(c) : WHO[c.kind])
 </script>
@@ -33,7 +33,7 @@ const who = (c: Card): string => (c.kind === 'permission' ? permissionWho(c) : W
     <div v-if="runsNeedingYou.length" class="cards"><RunCard v-for="r in runsNeedingYou" :key="r.id" :run="r" /></div>
     <p v-if="!needsYou.length && !runsNeedingYou.length" class="empty">Nothing needs you. Every session is working or idle.</p>
     <TransitionGroup name="card" tag="div" class="cards">
-    <article v-for="{ s, c, k } in items" :key="k" :class="['card', { current: state.selectedId === s.id, fresh: fresh.includes(k) }]" :style="{ '--tint': world(s)?.color ?? '#8a92a0' }">
+    <article v-for="{ s, c, k } in items.slice(0, limit)" :key="k" :class="['card', { current: state.selectedId === s.id, fresh: fresh.includes(k) }]" :style="{ '--tint': world(s)?.color ?? '#8a92a0' }">
       <div class="who">
         <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b><span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span>
         <span v-if="s.branch" class="tag" :title="s.cwd">{{ s.branch }}</span><span v-if="s.worktree" class="tag">worktree</span><span v-if="s.parent" class="tag">{{ teamOf(s, state.sessions) }}</span>
@@ -45,5 +45,6 @@ const who = (c: Card): string => (c.kind === 'permission' ? permissionWho(c) : W
       <button v-if="cardLive(c)" class="linkbtn" @click="select(s.id); focusTerm()">Open its terminal</button>
     </article>
     </TransitionGroup>
+    <button v-if="items.length > limit" class="linkbtn" @click="limit += 100">Show {{ Math.min(100, items.length - limit) }} more of {{ items.length - limit }}</button>
   </section>
 </template>

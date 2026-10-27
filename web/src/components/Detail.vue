@@ -2,14 +2,14 @@
 import { copyText } from '../clipboard'
 import { computed } from 'vue'
 import { nameOf, teamOf, stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
-import { selected, groups, focusTerminal, askClaude, showToast, ui, state, runOf } from '../store'
+import { selected, worldOf, focusTerminal, askClaude, showToast, ui, state, runOf } from '../store'
 import ResumeButton from './ResumeButton.vue'
 import ContinueIn from './ContinueIn.vue'
 import RunCard from './RunCard.vue'
 import { tokenText, usageTotal } from '../hq'
 
 const s = computed(() => selected.value)
-const world = computed(() => groups.value.find((g) => s.value && g.sessions.includes(s.value))?.world)
+const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const touch = isTouch()
 const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value) : null))
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))

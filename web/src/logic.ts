@@ -498,10 +498,10 @@ export const cardKey = (s: Session): string => s.id + ':' + (s.card?.kind === 'p
 export interface ChatRow { s: Session; preview: string; at: number; needs: boolean }
 /** The chats list: sessions needing you first (inbox order), then the rest, latest activity first. */
 export function chatRows(sessions: Session[]): ChatRow[] {
-  const needs = queue(sessions)
-  const rest = sessions.filter((s) => !needs.includes(s)).sort((a, b) => b.updatedAt - a.updatedAt)
+  const needs = queue(sessions), need = new Set(needs)
+  const rest = sessions.filter((s) => !need.has(s)).sort((a, b) => b.updatedAt - a.updatedAt)
   return [...needs, ...rest].map((s) => ({
-    s, needs: needs.includes(s), at: s.waitingSince ?? s.updatedAt,
+    s, needs: need.has(s), at: s.waitingSince ?? s.updatedAt,
     preview: (s.card ? chatPreview(s.card) : '') || s.now || s.lastPrompt || s.task || '',
   }))
 }
@@ -521,11 +521,12 @@ export function chatItems(turns: Turn[]): ChatItem[] {
   return out
 }
 /** "14:05" today, "Mon" this week, else "12 Oct". */
+// Made once: toLocale*String with options builds a new formatter per call, the slowest thing in a long chat list.
+const HM = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' }), WD = new Intl.DateTimeFormat([], { weekday: 'short' }), DM = new Intl.DateTimeFormat([], { day: 'numeric', month: 'short' })
 export function chatTime(at: number, now: number): string {
   const d = new Date(at), n = new Date(now)
-  if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  if (now - at < 6 * 86400000) return d.toLocaleDateString([], { weekday: 'short' })
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+  if (d.toDateString() === n.toDateString()) return HM.format(d)
+  return (now - at < 6 * 86400000 ? WD : DM).format(d)
 }
 /** The pill on a chat row: blocked on you, failed, or finished and waiting for a look. */
 export function chatBadge(c: Card): { label: string; tone: 'wait' | 'err' | 'ok' } {

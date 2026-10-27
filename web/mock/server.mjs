@@ -138,6 +138,8 @@ if (process.env.MOCK_SESSIONS) {
   const count = Number(process.env.MOCK_SESSIONS)
   if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error('MOCK_SESSIONS must be an integer from 1 to 500')
   sessions.clear(); unmanaged = []; recoverable = []
+  // MOCK_WORLDS=10: that many worlds instead of the three above.
+  if (process.env.MOCK_WORLDS) worlds = Array.from({ length: Number(process.env.MOCK_WORLDS) }, (_, i) => ({ id: `w${i + 1}`, name: `World ${i + 1}`, color: `hsl(${(i * 47) % 360} 55% 60%)`, repos: [] }))
   worlds.forEach(w => { w.repos = [] })
   for (let i = 0; i < count; i++) {
     const id = `session-${String(i + 1).padStart(2, '0')}`
@@ -178,6 +180,14 @@ function tick() {
   }
 }
 if (!DEMO && !process.env.MOCK_NOTICK) setInterval(tick, 9000)
+// Load test: MOCK_CHURN=5 sends that many small session updates a second (activity, context, working/idle).
+if (process.env.MOCK_CHURN) setInterval(() => {
+  const list = [...sessions.values()], s = list[Math.floor(Math.random() * list.length)]
+  s.log = [...s.log.slice(-9), { t: now(), text: `Step ${Math.floor(Math.random() * 1000)}` }]
+  s.context = { used: 1000, limit: 200000, pct: Math.floor(Math.random() * 90) }
+  if (s.state === 'working' || s.state === 'idle') { s.state = Math.random() < 0.2 ? (s.state === 'working' ? 'idle' : 'working') : s.state; s.now = s.state }
+  upsert(s)
+}, 1000 / Number(process.env.MOCK_CHURN))
 
 // ---- http ----
 const runs = new Map()

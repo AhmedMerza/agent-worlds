@@ -1,8 +1,8 @@
-import { reactive, computed, ref, watch } from 'vue'
-import type { ServerMessage, Session, World, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId } from './types'
+import { reactive, computed, ref, watch, markRaw } from 'vue'
+import type { ServerMessage, Session, World, RoomGroup, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
-import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey } from './logic'
+import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey, stepTags } from './logic'
 
 export interface StoreState {
   worlds: World[]
@@ -52,7 +52,8 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.worlds = msg.worlds
       st.sessions = {}
       st.order = []
-      for (const s of msg.sessions) { st.sessions[s.id] = s; st.order.push(s.id) }
+      // Sessions are replaced whole on every upsert, so they need no deep proxies (300 of them made every change walk them all).
+      for (const s of msg.sessions) { st.sessions[s.id] = markRaw(s); st.order.push(s.id) }
       st.recoverable = msg.recoverable ?? []
       st.unmanaged = msg.unmanaged ?? []
       st.update = msg.update ?? false
@@ -71,7 +72,7 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       if (claimPending(st, msg.session)) { st.selectedId = msg.session.id; st.autoSelected = false }
       if (startsNeedingYou(st.sessions[msg.session.id], msg.session)) alert = msg.session
       if (!st.sessions[msg.session.id]) st.order.push(msg.session.id)
-      st.sessions[msg.session.id] = msg.session
+      st.sessions[msg.session.id] = markRaw(msg.session)
       break
     case 'recoverable':
       st.recoverable = msg.sessions
@@ -114,8 +115,20 @@ export function keepSelection(st: StoreState, now = Date.now()): void {
 export const state = reactive<StoreState>(newState())
 export const sessionList = computed(() => state.order.map((i) => state.sessions[i]))
 export const ghosts = computed(() => state.unmanaged.map(ghostSession))
-/** Rooms hold the real sessions plus the ghosts of unmanaged ones. */
-export const groups = computed(() => groupSessions(state.worlds, [...sessionList.value, ...ghosts.value]))
+const sameList = <T>(a: T[], b: T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i])
+/** Rooms hold the real sessions plus the ghosts of unmanaged ones. A room whose sessions did not change keeps its object, so it does not redraw. */
+export const groups = computed<RoomGroup[]>((prev) => {
+  const next = groupSessions(state.worlds, [...sessionList.value, ...ghosts.value]).map((g) => prev?.find((o) => o.world === g.world && sameList(o.sessions, g.sessions)) ?? g)
+  return prev && sameList(prev, next) ? prev : next
+})
+/** Session id -> its room's world. */
+const worldById = computed(() => new Map(groups.value.flatMap((g) => g.sessions.map((s) => [s.id, g.world] as const))))
+export const worldOf = (s: Pick<Session, 'id'>): World | undefined => worldById.value.get(s.id)
+/** Run step tags by session id; the same object until a tag changes. */
+export const steps = computed<Record<string, string>>((prev) => {
+  const next = stepTags(Object.values(state.runs), sessionList.value)
+  return prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+})
 export const screenSessions = computed(() => screenOrder(groups.value))
 export const needsYou = computed(() => queue(sessionList.value))
 /** Runs held for you: at a checkpoint, a step that stopped without handing off, or one that failed to start. */
@@ -141,10 +154,8 @@ export const select = (id: string): void => {
   state.selectedId = id
   state.autoSelected = false
   const s = lookup(id)
-  if (state.filter !== 'all' && s) {
-    const g = groups.value.find((g) => g.sessions.includes(s))
-    if (g && g.world.id !== state.filter) state.filter = g.world.id
-  }
+  const w = s && worldOf(s)
+  if (state.filter !== 'all' && w && w.id !== state.filter) state.filter = w.id
 }
 export const selectNext = (): boolean => {
   const n = nextNeedingYou(needsYou.value, state.selectedId, state.autoSelected)
@@ -397,7 +408,7 @@ export function connect(): void {
     if (waiting && !state.pending && state.selectedId) showFollowed(state.selectedId)
     // the selected terminal's next session never came: select another once the wait is over
     if (m.type === 'session-removed' && state.pending) setTimeout(() => keepSelection(state), state.pending.until - Date.now() + 50)
-    if (a) alertNeedsYou(a, groups.value.findIndex((g) => g.sessions.some((x) => x.id === a.id)), groups.value.find((g) => g.sessions.some((x) => x.id === a.id))?.world.name ?? '')
+    if (a) alertNeedsYou(a, groups.value.findIndex((g) => g.world === worldOf(a)), worldOf(a)?.name ?? '')
   }
   ws.onclose = () => {
     state.connected = false
@@ -406,7 +417,8 @@ export function connect(): void {
   }
   ws.onerror = () => ws?.close()
 }
-export function startClock(): void { setInterval(() => { state.now = Date.now() }, 5000) }
+/** Every time on screen is in minutes, so 15 s is close enough and keeps hundreds of rows from redrawing every 5 s. */
+export function startClock(): void { setInterval(() => { state.now = Date.now() }, 15000) }
 
 /** Bumped to ask the terminal panel to scroll into view and take focus. */
 export const termFocusTick = ref(0)
