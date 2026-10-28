@@ -150,8 +150,10 @@ test('permissionMode: argv, validation on both endpoints, /api/claude-defaults',
     assert.equal(calls[0].permissionMode, 'acceptEdits');
     assert.equal((await post('/api/sessions', { worldId: 'web', repo: root })).status, 201);
     assert.ok(!('permissionMode' in calls[1]));
-    assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, agent: 'codex', codexUnrestricted: true })).status, 201);
+    assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, agent: 'codex' })).status, 201);
     assert.equal(calls[2].codexUnrestricted, true);
+    assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, agent: 'codex', codexUnrestricted: false })).status, 201);
+    assert.equal(calls[3].codexUnrestricted, false);
     assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, codexUnrestricted: true })).status, 400);
     assert.equal((await post('/api/sessions', { worldId: 'web', repo: root, agent: 'codex', codexUnrestricted: 'yes' })).status, 400);
     assert.equal((await post('/api/sessions/resume', { sessionId: 'bbbbbbbb-2222-4222-8222-222222222222', permissionMode: 'nope' })).status, 400);

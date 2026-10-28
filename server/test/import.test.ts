@@ -172,7 +172,7 @@ test('codex history endpoint lists and resumes a Codex conversation', async () =
     assert.deepEqual([item.sessionId, item.lastPrompt, item.worldId], [f.codexId, 'check the diff', 'web']);
     const mode = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: f.codexId, agent: 'codex', permissionMode: 'plan' }) });
     assert.equal(mode.status, 400, 'permission modes stay Claude-only');
-    const resumed = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: f.codexId, agent: 'codex', codexUnrestricted: true }) });
+    const resumed = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: f.codexId, agent: 'codex' }) });
     assert.equal(resumed.status, 201);
     assert.equal(calls.length, 1);
     assert.deepEqual({ agent: calls[0].agent, resume: calls[0].resume, repo: calls[0].repo }, { agent: 'codex', resume: f.codexId, repo });

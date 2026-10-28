@@ -69,7 +69,7 @@ test('config.json: saved rules load in their order; null or absent is no rules; 
 test('with nothing configured, a lead may pick any agent and model, and omitted agents are spread', async () => {
   const r = await spawn({ agent: 'codex', model: 'gpt-5-codex' });
   assert.equal(launched.at(-1).model, 'gpt-5-codex', r.content[0].text);
-  assert.equal(launched.at(-1).codexUnrestricted, undefined, 'lead-started Codex workers do not opt in to unrestricted access');
+  assert.equal(launched.at(-1).codexUnrestricted, false, 'lead-started Codex workers stay bounded');
   assert.match(r.content[0].text, /Codex \(gpt-5-codex\)/);
   await spawn({ agent: 'kimi', model: 'k2' });
   assert.deepEqual([launched.at(-1).agent, launched.at(-1).model], ['kimi', 'k2']);
