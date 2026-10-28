@@ -115,6 +115,10 @@ test('kimi with a task starts a `kimi -p` run that `kimi -c` then continues; wit
     assert.deepEqual(calls[0][2], ['-c', `'kimi' -p 'fix it'\\''s bug' && exec 'kimi' -c`]);
     assert.equal((calls[0][4] as any).AGENT_WORLDS_HOME !== undefined, true, 'hooks env still applies');
 
+    calls.length = 0;
+    await createSession({ repo: tmp(), task: 'fix it', worktree: false, agent: 'kimi', model: 'k2', home: tmp(), prefix: 'awtest-', spawnDirect });
+    assert.deepEqual(calls[0][2], ['-c', "'kimi' '--model=k2' -p 'fix it' && exec 'kimi' '--model=k2' -c"]);
+
     // a handoff task (spaced path in double quotes, as /continue builds it) survives the chain quoting
     calls.length = 0;
     const handoffTask = 'Read "/tmp/home dir/handoffs/k1.md" and carry on from there.';
