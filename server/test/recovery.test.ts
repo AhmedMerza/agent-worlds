@@ -30,24 +30,22 @@ test('starting placeholders are never offered as recoverable conversations', () 
   assert.deepEqual(recovery.list(), []);
 });
 
-test('Resume all starts an interrupted Codex worker unrestricted', async () => {
+test('Restore all keeps older Codex sessions in the workspace sandbox', async () => {
   const home = tmp(), repo = tmp();
-  new Recovery(join(home, 'recovery.json')).upsert({ id: 'worker-codex', agent: 'codex', cwd: repo, task: 'help', lastPrompt: null, updatedAt: 1 });
-  writeFileSync(join(home, 'parents.json'), JSON.stringify({ 'worker-codex': 'lead-one' }));
+  new Recovery(join(home, 'recovery.json')).upsert({ id: 'session-codex', agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
   const launched: any[] = [];
   const app = startServer({ ...parseConfig({}), port: 0 }, TOKEN, {
     home, procRoot: join(tmp(), 'missing'), installed: () => true,
-    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
-    createSession: async (o: any) => { launched.push(o); return { tmuxSession: 'aw-worker', dir: o.repo, branch: null, pane: '%12' }; },
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-codex' },
+    createSession: async (o: any) => { launched.push(o); return { tmuxSession: 'aw-codex', dir: o.repo, branch: null, pane: '%2' }; },
   });
   await app.listen();
-  const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
-  const headers = { 'x-aw-token': TOKEN, 'content-type': 'application/json' };
   try {
-    const response = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers, body: '{}' });
+    const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    const response = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers: { 'x-aw-token': TOKEN }, body: '{}' });
     assert.equal(response.status, 200);
-    assert.deepEqual((await response.json() as any).started, ['worker-codex']);
-    assert.equal(launched[0].codexUnrestricted, true);
+    assert.deepEqual((await response.json() as any).started, ['session-codex']);
+    assert.equal(launched[0].codexUnrestricted, false);
   } finally { await app.close(); }
 });
 
