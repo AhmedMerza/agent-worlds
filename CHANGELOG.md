@@ -1,5 +1,7 @@
 # Changelog
 
+- Lead-started workers are now explicitly one-task sessions: the lead is told to end a worker when it finishes and to start a fresh session for any later task instead of reusing the finished one.
+
 Newest first. Dates are commit dates.
 
 ## 2026-10-27
