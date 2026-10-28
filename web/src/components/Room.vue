@@ -4,8 +4,8 @@ import type { RoomGroup } from '../types'
 import { drawRoom, hitTest, W, type Hit } from '../canvas'
 import { illustrationReady, officePage, OFFICE_PAGE_SIZE } from '../illustratedRoom'
 import { roomHeight, type Walker } from '../zones'
-import { agentLabel, nameOf, roleOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
-import { state, select, openSession, ui, moveSession, showToast, steps } from '../store'
+import { agentLabel, nameOf, dropTarget, stateLabel, NEEDS_YOU, roomConflicts, UNSORTED, splitGhosts, drawnSessions, ghostChipText, isTouch } from '../logic'
+import { state, select, openSession, ui, moveSession, showToast, steps, teamRoles } from '../store'
 import { usageText } from '../hq'
 import AgentCard from './AgentCard.vue'
 
@@ -51,8 +51,6 @@ const count = (st: (s: string) => boolean) => real.value.filter((s) => st(s.stat
 const needN = computed(() => count((st) => NEEDS_YOU.includes(st as never)))
 const working = computed(() => count((st) => st === 'working'))
 const idle = computed(() => count((st) => st === 'idle'))
-const roles = computed(() => Object.fromEntries(Object.values(state.sessions).map(s => [s.id, roleOf(s, state.sessions)])))
-
 const h = computed(() => Math.max(illustrated.value ? 480 : 0, roomHeight(scene.value.sessions)))
 const walkers = new Map<string, Walker>()
 const arrivals = new Set<string>()
@@ -63,7 +61,7 @@ let hLog = 250
 let lastStatic = ''
 let revision = 0
 const hoverId = ref<string | null>(null)
-watch([scene, steps, roles, () => state.selectedId, hoverId, () => Math.floor(state.now / 60000)], () => { revision++ })
+watch([scene, steps, teamRoles, () => state.selectedId, hoverId, () => Math.floor(state.now / 60000)], () => { revision++ })
 let lastT = 0
 
 /** The canvas fills its box exactly (width AND height). The scene scales by width; spare height is extra floor. */
@@ -98,7 +96,7 @@ function frame(t: number) {
   }
   const dt = lastT ? Math.min(100, t - lastT) : 0
   lastT = t
-  hits = drawRoom(ctx, { group: scene.value, worldDesign: ui.worldDesign, steps: steps.value, roles: roles.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
+  hits = drawRoom(ctx, { group: scene.value, worldDesign: ui.worldDesign, steps: steps.value, roles: teamRoles.value, selectedId: state.selectedId, t, now: state.now, reduced, walkers, arrivals, k, h: Math.max(h.value, hLog), hoverId: hoverId.value, dt, moreGhosts: drawn.value.hidden })
 }
 let ro: ResizeObserver | null = null
 let io: IntersectionObserver | null = null
@@ -202,7 +200,7 @@ function onContext(e: MouseEvent) {
       <p v-if="!group.sessions.length" class="meta">No sessions yet.</p>
       <p v-else-if="query && !filtered.length" class="meta">No matching sessions.</p>
       <button v-for="s in chips" :key="s.id" class="chip" :aria-pressed="state.selectedId === s.id" @click="open(s.id)">
-        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" /><span v-if="roleOf(s, state.sessions)" class="tag">{{ roleOf(s, state.sessions) }}</span>{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.context || s.usage" class="st" title="Context use and tokens this conversation">{{ [s.context ? `${s.context.pct}% ctx` : '', s.usage ? usageText(s.usage) : ''].filter(Boolean).join(' · ') }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
+        <span class="k">{{ numbers[s.id] ?? '' }}</span><span :class="['dot', s.state]" /><span v-if="teamRoles[s.id]" class="tag">{{ teamRoles[s.id] }}</span>{{ nameOf(s) }}<span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span><span v-if="steps[s.id]" class="st chip-step">{{ steps[s.id] }}</span><span v-if="s.branch" class="st chip-branch">{{ s.branch }}</span> <span class="st">{{ stateLabel(s, state.now) }}</span><span v-if="s.context || s.usage" class="st" title="Context use and tokens this conversation">{{ [s.context ? `${s.context.pct}% ctx` : '', s.usage ? usageText(s.usage) : ''].filter(Boolean).join(' · ') }}</span><span v-if="s.lastPrompt ?? s.task" class="st chip-task" :title="s.lastPrompt ?? s.task ?? undefined">{{ s.lastPrompt ?? s.task }}</span>
       </button>
       <button v-if="filtered.length > CHIP_CAP && !query" class="chip chip-ghosts" :aria-expanded="allChips" @click="allChips = !allChips">{{ allChips ? 'Show fewer' : `Show all ${filtered.length}` }}</button>
       <button v-if="split.ghosts.length" class="chip chip-ghosts" :aria-expanded="ghostsOpen" @click="ghostsOpen = !ghostsOpen">

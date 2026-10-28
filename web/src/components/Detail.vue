@@ -13,7 +13,7 @@ const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const touch = isTouch()
 const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value) : null))
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
-const team = computed(() => s.value && roleOf(s.value, state.sessions) === 'Leader' ? Object.values(state.sessions).filter(c => c.parent === s.value!.id) : [])
+const team = computed(() => s.value ? Object.values(state.sessions).filter(c => c.parent === s.value!.id) : [])
 
 const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))
 async function copyAttach() {

@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { modeField, modeOptions, cardKey } from '../src/logic'
-import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, groups, worldOf, runsNeedingYou, runOf, skipped, restartQueued } from '../src/store'
+import { applyMessage, keepSelection, moveSession, newState, backoffMs, createSession, resumeSession, terminalOf, continueIn, state, groups, teamRoles, worldOf, runsNeedingYou, runOf, skipped, restartQueued } from '../src/store'
 import type { Run } from '../src/types'
 import { mk, perm } from './helpers'
 
@@ -30,6 +30,16 @@ describe('applyMessage', () => {
     expect(groups.value[0]).not.toBe(web)
     expect(groups.value[0].sessions[0].state).toBe('idle')
     expect(worldOf({ id: 'b' })?.id).toBe('app')
+    applyMessage(state, { type: 'snapshot', worlds, sessions: [] })
+  })
+  it('team roles change for parent links, not live status updates', () => {
+    applyMessage(state, { type: 'snapshot', worlds, sessions: [mk('lead'), mk('worker', { parent: 'lead' })] })
+    const roles = teamRoles.value
+    expect(roles).toEqual({ lead: 'Leader', worker: 'Worker' })
+    applyMessage(state, { type: 'session', session: mk('worker', { parent: 'lead', state: 'idle' }) })
+    expect(teamRoles.value).toBe(roles)
+    applyMessage(state, { type: 'session', session: mk('helper', { parent: 'worker' }) })
+    expect(teamRoles.value).toEqual({ lead: 'Leader', worker: 'Leader + Worker', helper: 'Worker' })
     applyMessage(state, { type: 'snapshot', worlds, sessions: [] })
   })
   it('snapshot replaces everything and selects the oldest needing you', () => {

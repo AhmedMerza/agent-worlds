@@ -475,11 +475,13 @@ it('names unnamed sessions by task and identifies the leader and worker', () => 
   const sessions = {
     lead: { id: 'lead', repoName: 'app', task: 'Coordinate the release', parent: null },
     worker: { id: 'worker', repoName: 'app', task: 'Fix the login form', parent: 'lead' },
+    helper: { id: 'helper', repoName: 'app', task: 'Check the tests', parent: 'worker' },
   }
   expect(nameOf(sessions.worker)).toBe('Fix the login form')
   expect(nameOf({ ...sessions.worker, label: 'Login' })).toBe('Login')
   expect(roleOf(sessions.lead, sessions)).toBe('Leader')
-  expect(roleOf(sessions.worker, sessions)).toBe('Worker')
+  expect(roleOf(sessions.worker, sessions)).toBe('Leader + Worker')
+  expect(roleOf(sessions.helper, sessions)).toBe('Worker')
   expect(teamOf(sessions.worker, sessions)).toBe('team of Coordinate the release')
 })
 

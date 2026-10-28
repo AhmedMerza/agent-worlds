@@ -38,8 +38,11 @@ export const nameOf = (s: { label?: string | null; repoName: string; task?: stri
 /** "team of <lead>" for a session a lead started with aw_spawn, else null. */
 export const teamOf = (s: { parent?: string | null }, sessions: Record<string, { label?: string | null; repoName: string; task?: string | null }>): string | null =>
   s.parent ? `team of ${sessions[s.parent] ? nameOf(sessions[s.parent]) : 'a lead that ended'}` : null
-export const roleOf = (s: { id: string; parent?: string | null }, sessions: Record<string, { parent?: string | null }>): 'Leader' | 'Worker' | null =>
-  s.parent ? 'Worker' : Object.values(sessions).some(c => c.parent === s.id) ? 'Leader' : null
+export type TeamRole = 'Leader' | 'Worker' | 'Leader + Worker' | null
+export const roleOf = (s: { id: string; parent?: string | null }, sessions: Record<string, { parent?: string | null }>): TeamRole => {
+  const leads = Object.values(sessions).some(c => c.parent === s.id)
+  return leads ? (s.parent ? 'Leader + Worker' : 'Leader') : s.parent ? 'Worker' : null
+}
 /** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi', gemini: 'Gemini', agy: 'Antigravity' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
 /** The chooser badge for non-default sessions; Claude stays visually quiet. */

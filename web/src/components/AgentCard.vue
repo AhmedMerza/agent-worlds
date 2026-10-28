@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { Session } from '../types'
 import { agentName, ctxColor, nameOf, nowText, roleOf, stateLabel, NEEDS_YOU, teamOf } from '../logic'
 import { state, select, focusTerminal, renameSession, showToast, ui } from '../store'
@@ -13,9 +13,13 @@ const chat = () => { select(props.s.id); ui.chatDrawer = true }
 function terminal() { select(props.s.id); ui.chatDrawer = false; focusTerminal() }
 const renaming = ref(false)
 const draft = ref('')
-function startRename() { draft.value = props.s.label ?? nameOf(props.s); renaming.value = true }
+const renameIn = ref<HTMLInputElement | null>(null)
+const renameButton = ref<HTMLButtonElement | null>(null)
+function startRename() { draft.value = props.s.label ?? ''; renaming.value = true; void nextTick(() => renameIn.value?.select()) }
+function cancelRename() { renaming.value = false; void nextTick(() => renameButton.value?.focus()) }
 async function saveRename() {
   renaming.value = false
+  void nextTick(() => renameButton.value?.focus())
   if (draft.value.trim() === (props.s.label ?? '')) return
   const r = await renameSession(props.s.id, draft.value)
   if (!r.ok) showToast(`Could not rename: ${r.error}`)
@@ -32,9 +36,9 @@ async function saveRename() {
     <p><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span><span v-if="s.branch" class="hq-branch">{{ s.branch }}</span></p>
     <template v-if="s.ghost"><p class="why">It runs in a terminal outside Agent Worlds, so there is no live status, chat or token count here. The panel on the right can move it in.</p></template>
     <template v-else>
-      <div v-if="renaming" class="actions"><input v-model="draft" class="reply-in" maxlength="40" aria-label="Session name" @keydown.enter="saveRename" @keydown.esc="renaming = false"><button class="btn" @click="saveRename">Save name</button></div>
-      <button v-else class="btn" style="align-self:start" @click="startRename">Rename</button>
-      <p v-if="!s.parent && Object.values(state.sessions).some(c => c.parent === s.id)" class="hq-line"><span class="lbl">Team</span>{{ Object.values(state.sessions).filter(c => c.parent === s.id && c.state === 'working').length }} working · {{ Object.values(state.sessions).filter(c => c.parent === s.id).length }} workers</p>
+      <div v-if="renaming" class="actions"><input ref="renameIn" v-model="draft" class="reply-in" maxlength="40" aria-label="Session name" :placeholder="nameOf(s)" @keydown.enter.prevent="saveRename" @keydown.esc.stop.prevent="cancelRename"><button class="btn" @click="saveRename">Save name</button></div>
+      <button v-else ref="renameButton" class="btn" style="align-self:start" @click="startRename">Rename</button>
+      <p v-if="Object.values(state.sessions).some(c => c.parent === s.id)" class="hq-line"><span class="lbl">Team</span>{{ Object.values(state.sessions).filter(c => c.parent === s.id && c.state === 'working').length }} working · {{ Object.values(state.sessions).filter(c => c.parent === s.id).length }} workers</p>
       <p v-if="s.task" class="hq-line"><span class="lbl">Task</span>{{ s.task }}</p>
       <p class="hq-line"><span class="lbl">Now</span>{{ nowText(s.now) }}</p>
       <div v-if="s.context" class="hq-line">
