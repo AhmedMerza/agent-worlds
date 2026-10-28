@@ -69,7 +69,7 @@ test('config.json: saved rules load in their order; null or absent is no rules; 
 test('with nothing configured, a lead may pick any agent and model, and gets your default when it names none', async () => {
   const r = await spawn({ agent: 'codex', model: 'gpt-5-codex' });
   assert.equal(launched.at(-1).model, 'gpt-5-codex', r.content[0].text);
-  assert.equal(launched.at(-1).codexUnrestricted, false, 'lead-started Codex workers stay bounded');
+  assert.equal(launched.at(-1).codexUnrestricted, true, 'lead-started Codex workers use unrestricted access');
   assert.match(r.content[0].text, /Codex \(gpt-5-codex\)/);
   assert.match((await spawn({ agent: 'kimi', model: 'k2' })).content[0].text, /cannot pick a model for Kimi/);
   assert.match((await spawn({ model: 'sonnet; rm -rf /' })).content[0].text, /must be a model id/);
@@ -82,6 +82,13 @@ test('with nothing configured, a lead may pick any agent and model, and gets you
   assert.equal(launched.at(-1).model, undefined, 'no list: the CLI\'s own model');
   const desc = (await rpc('tools/list')).tools.find((t: any) => t.name === 'aw_spawn').description;
   assert.match(desc, /most preferred first: codex \(any model\); claude/, 'the order shown is the one used: your default first');
+});
+
+test('a run started by a lead gives its Codex step unrestricted access', async () => {
+  const r = await spawn({ steps: [{ kind: 'build', agent: 'codex' }] });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(launched.at(-1).agent, 'codex');
+  assert.equal(launched.at(-1).codexUnrestricted, true);
 });
 
 test('the user\'s list turns agents off, orders them, and holds their models even when the lead names none', async () => {
