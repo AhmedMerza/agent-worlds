@@ -815,7 +815,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (resuming.has(b.sessionId)) return send(res, 409, { error: 'that conversation is already being restored', stopFailed: true });
       try {
         resuming.set(b.sessionId, null);
-        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(agent !== 'claude' ? { agent } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), ...(b.codexUnrestricted === true ? { codexUnrestricted: true } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+        const r = await createSession({ repo: cwd, worktree: false, resume: b.sessionId, ...(agent !== 'claude' ? { agent } : {}), ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), ...(codex ? { codexUnrestricted: b.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
         resuming.set(b.sessionId, r.tmuxSession);
         const saved = recovery.get(b.sessionId);
         await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: saved?.lastPrompt ?? saved?.task ?? null, ...(agent !== 'claude' ? { agent } : {}), resuming: true });
@@ -910,7 +910,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         via = `${p.name} · ${provider.model}`;
       }
       try {
-        const r = await launch({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), codexUnrestricted: b.codexUnrestricted === true, via });
+        const r = await launch({ agent, ...(provider ? { provider } : {}), repo: b.repo, task: (b.task as string) ?? '', worktree: b.worktree === true, branch: (b.branch as string) || undefined, ...(b.permissionMode !== undefined ? { permissionMode: b.permissionMode as string } : {}), ...(b.codexUnrestricted !== undefined ? { codexUnrestricted: b.codexUnrestricted as boolean } : {}), via });
         return send(res, 201, { tmuxSession: r.tmuxSession });
       } catch (e) { return send(res, 422, { error: (e as Error).message }); }
     }
@@ -925,7 +925,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const steps = parseSteps(b.steps);
       if ('err' in steps) return send(res, steps.err[0], { error: steps.err[1] });
       if (b.codexUnrestricted !== undefined && (typeof b.codexUnrestricted !== 'boolean' || (b.codexUnrestricted && !steps.some((s) => s.agent === 'codex')))) return send(res, 400, { error: 'codexUnrestricted needs a Codex step and must be a boolean' });
-      const r = await beginRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, steps, codexUnrestricted: b.codexUnrestricted === true });
+      const r = await beginRun({ task: b.task.trim(), worldId: world.id, repo: b.repo, worktree: b.worktree === true, steps, codexUnrestricted: steps.some((s) => s.agent === 'codex') && b.codexUnrestricted !== false });
       return r.status === 'failed' ? send(res, 422, { error: r.note, run: r }) : send(res, 201, { run: r });
     }
     const runm = url.pathname.match(/^\/api\/runs\/([^/]+)\/(next|stop)$/);
@@ -1162,7 +1162,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    */
   async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; codexUnrestricted?: boolean; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null; originWorldId?: string },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
-    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.codexUnrestricted === true && !o.parent ? { codexUnrestricted: true } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.agent === 'codex' ? { codexUnrestricted: !o.parent && o.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
     const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));

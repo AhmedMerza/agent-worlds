@@ -239,11 +239,12 @@ On its first start, Codex asks you in the terminal to review the new hooks. Choo
 and continue". It remembers that choice, so later sessions don't ask again. Codex sends no
 event when a turn fails (for example when you hit a usage limit), so Agent Worlds reads Codex's
 own session log instead: a failed turn moves to the Help desk with its error a few seconds later.
-Codex sessions start with workspace access and on-request approvals. In New session or Recent
-sessions, you can give a Codex session unrestricted file and network access explicitly. A run
-offers the same choice for its Codex steps and remembers it across the run. Workers started by
-other agents stay sandboxed. Unrestricted access removes the enforced file and network boundary;
-Codex may still ask in its terminal, and Agent Worlds mirrors those requests under **Needs you**.
+Codex sessions start with unrestricted file and network access and on-request approvals. In New
+session or Recent sessions, uncheck **Unrestricted file and network access** to use a workspace
+sandbox instead. A run offers the same choice for its Codex steps and remembers it across the
+run. Workers started by other agents stay sandboxed. Unrestricted access removes the enforced
+file and network boundary; Codex may still ask in its terminal, and Agent Worlds mirrors those
+requests under **Needs you**.
 
 Kimi Code has two additional details:
 

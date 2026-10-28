@@ -288,10 +288,10 @@ test('stop can end the run\'s sessions too, also once the run is over', async ()
   assert.equal((await post(`/api/runs/${id}/stop`, { endSessions: true })).status, 200, 'ending what is left of a stopped run is fine');
 });
 
-test('a user-started run keeps its explicit Codex access choice across steps and restarts', async () => {
+test('a user-started run defaults Codex to unrestricted across steps and restarts', async () => {
   const steps = [{ kind: 'plan', agent: 'claude', checkpoint: true }, { kind: 'build', agent: 'codex' }];
   assert.equal((await post('/api/runs', { ...RUN, steps: [{ kind: 'plan', agent: 'claude' }], codexUnrestricted: true })).status, 400);
-  const { status, body } = await post('/api/runs', { ...RUN, steps, codexUnrestricted: true });
+  const { status, body } = await post('/api/runs', { ...RUN, steps });
   assert.equal(status, 201);
   assert.equal(body.run.codexUnrestricted, true);
   const saved = loadRuns(join(home, 'runs.json')).find((r) => r.id === body.run.id);
@@ -303,4 +303,8 @@ test('a user-started run keeps its explicit Codex access choice across steps and
   await post(`/api/runs/${body.run.id}/next`);
   assert.equal(launched.at(-1).agent, 'codex');
   assert.equal(launched.at(-1).codexUnrestricted, true);
+  const bounded = await post('/api/runs', { ...RUN, steps: [{ kind: 'build', agent: 'codex' }], codexUnrestricted: false });
+  assert.equal(bounded.status, 201);
+  assert.equal(bounded.body.run.codexUnrestricted, undefined);
+  assert.equal(launched.at(-1).codexUnrestricted, false);
 });

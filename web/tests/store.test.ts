@@ -198,8 +198,11 @@ describe('permission mode', () => {
     await createSession({ worldId: 'w', repo: '/r', task: '', worktree: true, agent: 'codex', codexUnrestricted: true })
     expect(sent(fn).codexUnrestricted).toBe(true)
     fn = stub()
-    await resumeSession('s1', false, undefined, 'codex', true)
+    await resumeSession('s1', false, undefined, 'codex')
     expect(sent(fn)).toEqual({ sessionId: 's1', agent: 'codex', codexUnrestricted: true })
+    fn = stub()
+    await resumeSession('s1', false, undefined, 'codex', false)
+    expect(sent(fn)).toEqual({ sessionId: 's1', agent: 'codex', codexUnrestricted: false })
   })
 })
 

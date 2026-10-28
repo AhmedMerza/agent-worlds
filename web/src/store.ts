@@ -340,9 +340,9 @@ function followNew(name: unknown): void {
   if (known) { state.pending = null; showFollowed(known.id) } // upsert beat the HTTP response
 }
 /** Opens a past session in a new tmux session here. `stop` first quits the copy still open in another terminal. */
-export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: AgentId, codexUnrestricted = false): Promise<ResumeResult> {
+export async function resumeSession(sessionId: string, stop = false, permissionMode?: PermissionMode, agent?: AgentId, codexUnrestricted = true): Promise<ResumeResult> {
   try {
-    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(agent ? { agent } : {}), ...(stop ? { stop: true } : {}), ...(permissionMode ? { permissionMode } : {}), ...(agent === 'codex' && codexUnrestricted ? { codexUnrestricted: true } : {}) }) })
+    const r = await fetch('/api/sessions/resume', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, ...(agent ? { agent } : {}), ...(stop ? { stop: true } : {}), ...(permissionMode ? { permissionMode } : {}), ...(agent === 'codex' ? { codexUnrestricted } : {}) }) })
     let body: unknown = null
     try { body = await r.json() } catch { /* empty body */ }
     const res = resumeOutcome(r.status, body)
