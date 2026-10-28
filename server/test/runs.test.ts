@@ -308,3 +308,14 @@ test('a user-started run defaults Codex to unrestricted across steps and restart
   assert.equal(bounded.body.run.codexUnrestricted, undefined);
   assert.equal(launched.at(-1).codexUnrestricted, false);
 });
+
+test('a lead-started Codex run saves unrestricted access across restarts', () => {
+  const r = newRun({ task: 'build', worldId: 'web', repo: '/work/repo-a', worktree: false, now: 1, parent: 'lead-one', steps: [{ kind: 'build', agent: 'codex', checkpoint: false }] });
+  assert.equal(r.codexUnrestricted, true);
+  const file = join(tmp(), 'runs.json');
+  saveRuns(file, new Map([[r.id, r]]), 1);
+  assert.equal(loadRuns(file)[0].codexUnrestricted, true);
+  const old = { ...r }; delete old.codexUnrestricted;
+  writeFileSync(file, JSON.stringify([old]));
+  assert.equal(loadRuns(file)[0].codexUnrestricted, false, 'old lead runs keep their previous sandbox behavior');
+});

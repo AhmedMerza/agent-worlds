@@ -181,6 +181,27 @@ test('codex history endpoint lists and resumes a Codex conversation', async () =
   } finally { await app.close(); }
 });
 
+test('resuming a Codex worker defaults to unrestricted access', async () => {
+  const root = tmp(), repo = join(root, 'repo-a');
+  mkdirSync(repo);
+  const f = agentHomes(root, repo, 402);
+  writeFileSync(join(root, 'parents.json'), JSON.stringify({ [f.codexId]: 'lead-one' }));
+  const calls: any[] = [];
+  const app = startServer({ ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: [repo] }] }), port: 0 }, 'c'.repeat(64), {
+    home: root, procRoot: join(root, 'no-proc'), homes: f.homes, installed: () => true,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => null },
+    createSession: async (o) => { calls.push(o); return { tmuxSession: 'aw-worker-codex', dir: o.repo, branch: null, pane: '%43' }; },
+  });
+  await app.listen();
+  const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  const H = { 'x-aw-token': 'c'.repeat(64), 'content-type': 'application/json' };
+  try {
+    const resumed = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: f.codexId, agent: 'codex' }) });
+    assert.equal(resumed.status, 201);
+    assert.equal(calls[0].codexUnrestricted, true);
+  } finally { await app.close(); }
+});
+
 test('process scan: codex, qwen, kimi, gemini and agy too, each session from its own files', () => {
   const root = tmp();
   const repo = join(root, 'repo-a');

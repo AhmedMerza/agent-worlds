@@ -1162,7 +1162,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    */
   async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; codexUnrestricted?: boolean; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null; originWorldId?: string },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
-    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.agent === 'codex' ? { codexUnrestricted: !o.parent && o.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.agent === 'codex' ? { codexUnrestricted: o.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
     const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));
@@ -1326,7 +1326,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       // A worktree's branch is named after the run, not after the step's long first message.
       // A lead's run keeps to the models the user named for each step's agent
       const model = r.parent ? cfg.spawnAgents?.[step.agent]?.[0] : undefined;
-      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), codexUnrestricted: r.codexUnrestricted === true && !r.parent, card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null, originWorldId: r.worldId }, async (c) => {
+      await launch({ agent: step.agent, repo: r.dir ?? r.repo, task, worktree: first && r.worktree, ...(first && r.worktree ? { branch: `aw/run-${r.id}` } : {}), ...(model ? { model } : {}), codexUnrestricted: r.codexUnrestricted === true, card: `${STEP_KINDS[step.kind].label}: ${r.task}`, parent: r.parent ?? null, originWorldId: r.worldId }, async (c) => {
         if (first) { r.dir = c.dir; await excludeRunFiles(c.dir).catch(() => {}); }
         step.pane = c.pane ?? null; step.direct = c.direct ? c.tmuxSession : null;
       });

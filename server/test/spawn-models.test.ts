@@ -69,7 +69,7 @@ test('config.json: saved rules load in their order; null or absent is no rules; 
 test('with nothing configured, a lead may pick any agent and model, and omitted agents are spread', async () => {
   const r = await spawn({ agent: 'codex', model: 'gpt-5-codex' });
   assert.equal(launched.at(-1).model, 'gpt-5-codex', r.content[0].text);
-  assert.equal(launched.at(-1).codexUnrestricted, false, 'lead-started Codex workers stay bounded');
+  assert.equal(launched.at(-1).codexUnrestricted, true, 'lead-started Codex workers use unrestricted access');
   assert.match(r.content[0].text, /Codex \(gpt-5-codex\)/);
   await spawn({ agent: 'kimi', model: 'k2' });
   assert.deepEqual([launched.at(-1).agent, launched.at(-1).model], ['kimi', 'k2']);
@@ -83,6 +83,13 @@ test('with nothing configured, a lead may pick any agent and model, and omitted 
   assert.equal(launched.at(-1).model, undefined, 'no list: the CLI\'s own model');
   const desc = (await rpc('tools/list')).tools.find((t: any) => t.name === 'aw_spawn').description;
   assert.match(desc, /in preference order: codex \(any model\); claude/, 'the user default breaks ties');
+});
+
+test('a run started by a lead gives its Codex step unrestricted access', async () => {
+  const r = await spawn({ steps: [{ kind: 'build', agent: 'codex' }] });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(launched.at(-1).agent, 'codex');
+  assert.equal(launched.at(-1).codexUnrestricted, true);
 });
 
 test('the user\'s list turns agents off, orders them, and holds their models even when the lead names none', async () => {
