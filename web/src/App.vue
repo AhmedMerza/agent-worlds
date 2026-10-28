@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Room from './components/Room.vue'
-import HqRoom from './components/HqRoom.vue'
 import WorldConnections from './components/WorldConnections.vue'
 import Inbox from './components/Inbox.vue'
 import ChatList from './components/ChatList.vue'
@@ -179,7 +178,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
           <select v-model="ui.worldDesign" class="hdr-btn" aria-label="World design">
             <option value="classic">Classic</option>
             <option value="illustrated">Illustrated</option>
-            <option value="hq">HQ</option>
           </select>
         </label>
         <label v-if="!phone" class="world-design" title="Full height: the world and the terminal or chat side by side at full height; Needs you and the details open from a button">Layout
@@ -229,8 +227,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
             <p class="why">A world is a named group of repos. Its sessions get their own room.</p>
             <button class="btn primary" @click="ui.worldsOpen = true">Create your first world</button>
           </div>
-          <template v-if="ui.worldDesign === 'hq'"><HqRoom v-for="g in shown" :key="g.world.id" :group="g" @new-task="openNewTask" /></template>
-          <Room v-for="g in shown" v-else :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
+          <Room v-for="g in shown" :key="g.world.id" :group="g" :numbers="numbers" @new-task="openNewTask" />
           <WorldConnections v-if="ui.worldDesign === 'illustrated' && state.filter === 'all' && shown.length > 1 && shown.length <= 6" :worlds="shown.map(g => g.world.id)" />
         </section>
         <div v-if="sideBySide" class="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the world and the terminal" tabindex="0" :aria-valuenow="ui.split" aria-valuemin="25" aria-valuemax="75" title="Drag to resize" @pointerdown="onSplitDown" @keydown="onSplitKey" @dblclick="ui.split = 45" />

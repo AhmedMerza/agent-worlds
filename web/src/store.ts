@@ -446,12 +446,12 @@ const showFollowed = (id: string): void => { if (ui.pane === 'chat') openChat(id
 
 /** layout: 'stacked' is the original page; 'full' puts the world beside the terminal/chat at full height, with Needs you in a floating panel.
  *  split: the world's share (%) of the width when side by side. */
-type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated' | 'hq'; layout: 'stacked' | 'full'; split: number }
+type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated'; layout: 'stacked' | 'full'; split: number }
 export const clampSplit = (n: number): number => Math.min(75, Math.max(25, Math.round(n)))
 function savedViews(): Views {
   try {
     const v = JSON.parse(localStorage.getItem('aw-views') ?? '{}') as Partial<Views>
-    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'illustrated' || v.worldDesign === 'hq' ? v.worldDesign : 'classic', layout: v.layout === 'stacked' ? 'stacked' : 'full', split: typeof v.split === 'number' && isFinite(v.split) ? clampSplit(v.split) : 45 }
+    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'illustrated' ? 'illustrated' : 'classic', layout: v.layout === 'stacked' ? 'stacked' : 'full', split: typeof v.split === 'number' && isFinite(v.split) ? clampSplit(v.split) : 45 }
   } catch { return { left: 'world', pane: 'term', worldDesign: 'classic', layout: 'full', split: 45 } }
 }
 

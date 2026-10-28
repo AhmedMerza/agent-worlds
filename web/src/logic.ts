@@ -32,11 +32,14 @@ export function stepTags(runs: Run[], sessions: Session[]): Record<string, strin
   }
   return out
 }
-/** What a session is called: the name you gave it, else its repo. */
-export const nameOf = (s: { label?: string | null; repoName: string }): string => s.label || s.repoName
+/** A useful name before the user gives a session its own name. The first task stays stable as work progresses. */
+export const nameOf = (s: { label?: string | null; repoName: string; task?: string | null }): string =>
+  s.label || (s.task ? (s.task.length > 48 ? `${s.task.slice(0, 47).trimEnd()}…` : s.task) : s.repoName)
 /** "team of <lead>" for a session a lead started with aw_spawn, else null. */
-export const teamOf = (s: { parent?: string | null }, sessions: Record<string, { label?: string | null; repoName: string }>): string | null =>
+export const teamOf = (s: { parent?: string | null }, sessions: Record<string, { label?: string | null; repoName: string; task?: string | null }>): string | null =>
   s.parent ? `team of ${sessions[s.parent] ? nameOf(sessions[s.parent]) : 'a lead that ended'}` : null
+export const roleOf = (s: { id: string; parent?: string | null }, sessions: Record<string, { parent?: string | null }>): 'Leader' | 'Worker' | null =>
+  s.parent ? 'Worker' : Object.values(sessions).some(c => c.parent === s.id) ? 'Leader' : null
 /** The short name of the CLI a session runs, for labels ("Typing into Kimi"). */
 export const agentName = (s: Pick<Session, 'agent'>): string => ({ codex: 'Codex', qwen: 'Qwen', kimi: 'Kimi', gemini: 'Gemini', agy: 'Antigravity' } as Record<string, string>)[s.agent ?? ''] ?? 'Claude'
 /** The chooser badge for non-default sessions; Claude stays visually quiet. */
