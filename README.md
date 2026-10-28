@@ -41,13 +41,11 @@ room, and each session stands in the zone that matches what it is doing:
 | **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, including one you sent to the background mid-run with Ctrl+B, background commands, a scheduled wake-up) runs on after its turn. Only work started since your last prompt counts: a dev server or artifact watcher left from an earlier turn, or a helper that already finished, does not keep it there. If that work never reports back, it moves to the Help desk as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
 | **Help desk** (right, amber) | sessions that need you: waiting, finished or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
 
-Each character wears a name tag with its project and branch; hover or select one to read both in full,
-and the chips under the room list them too. Faces show the state: smiling at work, asleep when idle,
+Each character wears a name tag with its first task (or the project for a blank session); leader and worker tags show who started whom. Open a character's card to rename it and see its task, team, context and tokens. The chips under the room list the branch and state too. Faces show the state: smiling at work, asleep when idle,
 frowning on error. A busy zone widens and a quiet one gives way, so a crowded help desk keeps its
 tags readable, and on a phone the tags stay at a readable size.
 
-Characters walk between zones when their state changes. Click a character (or its chip) to select it
-and type straight into its terminal; `1`-`9` select it and keep the keyboard shortcuts.
+Characters walk between zones when their state changes. Click a character (or its chip) to open its conversation or terminal. Right-click a character for a floating card with its task, team and stats; tap on touch screens. `1`-`9` select a session and keep the keyboard shortcuts.
 
 Press `W` to create, rename, recolour, reorder or delete worlds, and to pick each world's repos
 with a folder browser. Nothing is fixed: a fresh install has no worlds, and sessions whose folder

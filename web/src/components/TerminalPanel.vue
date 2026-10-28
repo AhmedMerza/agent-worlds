@@ -214,7 +214,7 @@ watch(termFocusTick, async () => {
   <section ref="root" :class="['term', { typing: hasTmux && termFocused }]" aria-label="Session terminal" :style="{ '--tint': world?.color ?? '#8a92a0' }">
     <div class="term-head">
       <template v-if="s">
-        <span :class="['dot', s.state]" /><input v-if="renaming !== null" ref="renameIn" v-model="renaming" class="rename-in" maxlength="40" :placeholder="s.repoName" aria-label="Name this session (empty: its repo name)" @keydown.enter.prevent="saveRename" @keydown.esc.prevent="renaming = null" @blur="saveRename" /><b v-else :title="s.label ? s.repoName : undefined">{{ nameOf(s) }}</b> {{ world?.name }} · {{ stateLabel(s, state.now) }}
+        <span :class="['dot', s.state]" /><input v-if="renaming !== null" ref="renameIn" v-model="renaming" class="rename-in" maxlength="40" :placeholder="nameOf(s)" aria-label="Name this session (empty: its first task or repo name)" @keydown.enter.prevent="saveRename" @keydown.esc.prevent="renaming = null" @blur="saveRename" /><b v-else :title="s.label ? s.repoName : undefined">{{ nameOf(s) }}</b> {{ world?.name }} · {{ stateLabel(s, state.now) }}
         <span v-if="s.context"> · {{ s.context.pct }}% context</span><span v-if="s.usage" title="Tokens this conversation (in, out and cache)"> · {{ usageText(s.usage) }}</span>
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into {{ s ? agentName(s) : 'Claude' }}</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Review, Unmanaged } from '../src/types'
 import { applyMessage, newState } from '../src/store'
-import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentLabel, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho, resumePermissionMode, teamOf } from '../src/logic'
+import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes, buildAnswers, type KeyInfo, drawnSessions, ghostChipText, ghostSession, inboxOrder, meaningful, needSplit, nowText, stateLabel, groupByFolder, dropTarget, reviewView, screenOrder, agentLabel, agentName, otherAgents, openHttp, permissionAsk, permissionDetail, permissionWho, resumePermissionMode, nameOf, roleOf, teamOf } from '../src/logic'
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
@@ -469,6 +469,20 @@ it('teamOf names the lead that started a session, or none', () => {
   expect(teamOf({ parent: null }, sessions)).toBe(null)
   expect(teamOf({ parent: 'lead' }, sessions)).toBe('team of Manager')
   expect(teamOf({ parent: 'gone' }, sessions)).toBe('team of a lead that ended')
+})
+
+it('names unnamed sessions by task and identifies the leader and worker', () => {
+  const sessions = {
+    lead: { id: 'lead', repoName: 'app', task: 'Coordinate the release', parent: null },
+    worker: { id: 'worker', repoName: 'app', task: 'Fix the login form', parent: 'lead' },
+    helper: { id: 'helper', repoName: 'app', task: 'Check the tests', parent: 'worker' },
+  }
+  expect(nameOf(sessions.worker)).toBe('Fix the login form')
+  expect(nameOf({ ...sessions.worker, label: 'Login' })).toBe('Login')
+  expect(roleOf(sessions.lead, sessions)).toBe('Leader')
+  expect(roleOf(sessions.worker, sessions)).toBe('Leader + Worker')
+  expect(roleOf(sessions.helper, sessions)).toBe('Worker')
+  expect(teamOf(sessions.worker, sessions)).toBe('team of Coordinate the release')
 })
 
 describe('lead spawn rules', () => {

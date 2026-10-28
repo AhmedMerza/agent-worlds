@@ -2,7 +2,7 @@ import { reactive, computed, ref, watch, markRaw } from 'vue'
 import type { ServerMessage, Session, World, RoomGroup, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
-import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey, stepTags } from './logic'
+import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, type TeamRole, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey, stepTags } from './logic'
 
 export interface StoreState {
   worlds: World[]
@@ -116,6 +116,13 @@ export const state = reactive<StoreState>(newState())
 export const sessionList = computed(() => state.order.map((i) => state.sessions[i]))
 export const ghosts = computed(() => state.unmanaged.map(ghostSession))
 const sameList = <T>(a: T[], b: T[]): boolean => a.length === b.length && a.every((x, i) => x === b[i])
+/** Session id -> team role. Live status/token updates keep the same object, so rooms do not repaint. */
+export const teamRoles = computed<Record<string, TeamRole>>((prev) => {
+  const all = Object.values(state.sessions), leaders = new Set(all.map((s) => s.parent).filter(Boolean))
+  const next = Object.fromEntries(all.map((s) => [s.id, leaders.has(s.id) ? (s.parent ? 'Leader + Worker' : 'Leader') : s.parent ? 'Worker' : null])) as Record<string, TeamRole>
+  const same = prev && Object.keys(prev).length === all.length && all.every((s) => prev[s.id] === next[s.id])
+  return same ? prev : next
+})
 /** Rooms hold the real sessions plus the ghosts of unmanaged ones. A room whose sessions did not change keeps its object, so it does not redraw. */
 export const groups = computed<RoomGroup[]>((prev) => {
   const next = groupSessions(state.worlds, [...sessionList.value, ...ghosts.value]).map((g) => prev?.find((o) => o.world === g.world && sameList(o.sessions, g.sessions)) ?? g)
@@ -446,12 +453,12 @@ const showFollowed = (id: string): void => { if (ui.pane === 'chat') openChat(id
 
 /** layout: 'stacked' is the original page; 'full' puts the world beside the terminal/chat at full height, with Needs you in a floating panel.
  *  split: the world's share (%) of the width when side by side. */
-type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated' | 'hq'; layout: 'stacked' | 'full'; split: number }
+type Views = { left: 'world' | 'chats'; pane: 'term' | 'chat'; worldDesign: 'classic' | 'illustrated'; layout: 'stacked' | 'full'; split: number }
 export const clampSplit = (n: number): number => Math.min(75, Math.max(25, Math.round(n)))
 function savedViews(): Views {
   try {
     const v = JSON.parse(localStorage.getItem('aw-views') ?? '{}') as Partial<Views>
-    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'illustrated' || v.worldDesign === 'hq' ? v.worldDesign : 'classic', layout: v.layout === 'stacked' ? 'stacked' : 'full', split: typeof v.split === 'number' && isFinite(v.split) ? clampSplit(v.split) : 45 }
+    return { left: v.left === 'chats' ? 'chats' : 'world', pane: v.pane === 'chat' ? 'chat' : 'term', worldDesign: v.worldDesign === 'illustrated' ? 'illustrated' : 'classic', layout: v.layout === 'stacked' ? 'stacked' : 'full', split: typeof v.split === 'number' && isFinite(v.split) ? clampSplit(v.split) : 45 }
   } catch { return { left: 'world', pane: 'term', worldDesign: 'classic', layout: 'full', split: 45 } }
 }
 

@@ -65,7 +65,7 @@ export function illustratedRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit
       ctx.beginPath(); ctx.roundRect(x - width / 2, feet - 3, width, labelHeight, 5); ctx.fill(); ctx.stroke()
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.fillStyle = color; ctx.font = `600 ${8 * textScale}px system-ui`
-      ctx.fillText(stateLabel(s, o.now), x, feet + 6 * textScale, width - 8)
+      ctx.fillText([o.roles?.[s.id], stateLabel(s, o.now)].filter(Boolean).join(' · '), x, feet + 6 * textScale, width - 8)
       ctx.fillStyle = '#f1f5ff'; ctx.font = `600 ${10 * textScale}px system-ui`
       ctx.fillText(label, x, feet + 19 * textScale, width - 8)
     })

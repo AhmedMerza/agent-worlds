@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { copyText } from '../clipboard'
 import { computed } from 'vue'
-import { nameOf, teamOf, stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
+import { nameOf, roleOf, teamOf, stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
 import { selected, worldOf, focusTerminal, askClaude, showToast, ui, state, runOf } from '../store'
 import ResumeButton from './ResumeButton.vue'
 import ContinueIn from './ContinueIn.vue'
@@ -13,6 +13,7 @@ const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const touch = isTouch()
 const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value) : null))
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
+const team = computed(() => s.value ? Object.values(state.sessions).filter(c => c.parent === s.value!.id) : [])
 
 const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))
 async function copyAttach() {
@@ -39,7 +40,8 @@ async function copyAttach() {
       <div class="d-head"><h3>{{ nameOf(s) }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
       <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p v-if="(s.agent && s.agent !== 'claude') || s.via" class="path">Runs on {{ agentName(s) }}<template v-if="s.via"> · {{ s.via }}</template></p>
-      <p v-if="s.parent" class="path">On the {{ teamOf(s, state.sessions) }}</p>
+      <p v-if="roleOf(s, state.sessions)" class="path">{{ roleOf(s, state.sessions) }}<template v-if="s.parent"> · on the {{ teamOf(s, state.sessions) }}</template></p>
+      <p v-if="team.length" class="path">Team: {{ team.filter(c => c.state === 'working').length }} working · {{ team.length }} workers</p>
       <p class="path" :title="s.cwd">{{ s.cwd }}</p>
       <RunCard v-if="run" :run="run.run" :here="run.step" />
       <p v-if="s.task" class="now"><span class="lbl">Task (first prompt)</span>{{ s.task }}</p>

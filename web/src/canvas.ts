@@ -7,10 +7,10 @@ export const W = ROOM_W
 const WALL_H = 48
 
 export interface Hit { id: string; x: number; y: number; w: number; h: number; exact?: boolean }
-export interface DrawOpts { group: RoomGroup; selectedId: string | null; /** Run step tags by session id, shown in place of the branch. */ steps?: Record<string, string>; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; /** Desk arrival order, kept between frames. */ arrivals?: Set<string>; k: number; h: number
+export interface DrawOpts { group: RoomGroup; selectedId: string | null; /** Run step tags by session id, shown in place of the branch. */ steps?: Record<string, string>; roles?: Record<string, string | null>; t: number; now: number; reduced: boolean; walkers: Map<string, Walker>; /** Desk arrival order, kept between frames. */ arrivals?: Set<string>; k: number; h: number
   /** Session under the pointer: its walk is held still. */
   hoverId?: string | null
-  worldDesign?: 'classic' | 'illustrated' | 'hq'
+  worldDesign?: 'classic' | 'illustrated'
   /** ms since the previous frame (used to hold a walk). */
   dt?: number
   /** Ghosts left out of the scene by the cap; drawn as "+N" in the lounge. */
@@ -188,11 +188,11 @@ function pill(ctx: Ctx, text: string, x: number, y: number, maxW: number, fg = I
   ctx.fillStyle = fg; ctx.fillText(t, x, y + 0.3)
 }
 /** Project and branch (or its run step) on two lines; `full` (hovered or selected) never truncates and draws on top. */
-function nameTag(ctx: Ctx, s: Session, step: string | undefined, x: number, y: number, maxW: number, full: boolean) {
+function nameTag(ctx: Ctx, s: Session, step: string | undefined, role: string | null | undefined, x: number, y: number, maxW: number, full: boolean) {
   ctx.save(); ctx.translate(x, y); ctx.scale(ts, ts) // never smaller than ~10 CSS px, whatever the screen
   const lim = full ? 1e9 : maxW / ts - 8
   font(ctx, 7); const name = fit(ctx, nameOf(s), lim), nw = ctx.measureText(name).width
-  font(ctx, 6); const sub = step ?? s.branch, branch = sub ? fit(ctx, sub, lim) : '', bw = branch ? ctx.measureText(branch).width : 0
+  font(ctx, 6); const sub = [role, step ?? s.branch].filter(Boolean).join(' · '), branch = sub ? fit(ctx, sub, lim) : '', bw = branch ? ctx.measureText(branch).width : 0
   const w = Math.max(nw, bw) + 8, h = branch ? 17 : 11
   ctx.fillStyle = full ? 'rgba(10,13,18,.94)' : 'rgba(10,13,18,.8)'; rr(ctx, -w / 2, -5.5, w, h, 5.5); ctx.fill()
   if (full) { ctx.strokeStyle = 'rgba(236,230,217,.35)'; ctx.lineWidth = 0.6; ctx.stroke() }
@@ -225,11 +225,11 @@ function brackets(ctx: Ctx, x: number, y: number, w: number, h: number) {
 // ---- stations ----
 /** The name tag under a person; the hovered or selected one is drawn last and in full. */
 function tag(f: Frame, ctx: Ctx, s: Session, x: number, y: number, maxW: number) {
-  if (f.focus === s.id) f.top.push(() => nameTag(ctx, s, f.steps[s.id], x, y, maxW, true))
-  else f.ui.push(() => nameTag(ctx, s, f.steps[s.id], x, y, maxW, false))
+  if (f.focus === s.id) f.top.push(() => nameTag(ctx, s, f.steps[s.id], f.roles[s.id], x, y, maxW, true))
+  else f.ui.push(() => nameTag(ctx, s, f.steps[s.id], f.roles[s.id], x, y, maxW, false))
 }
 
-interface Frame { tt: number; steps: Record<string, string>; zx: ReturnType<typeof zoneBounds>; focus: string | null; top: (() => void)[]; ui: (() => void)[]; lights: [number, number, number, string, number][] }
+interface Frame { tt: number; steps: Record<string, string>; roles: Record<string, string | null>; zx: ReturnType<typeof zoneBounds>; focus: string | null; top: (() => void)[]; ui: (() => void)[]; lights: [number, number, number, string, number][] }
 
 function drawDesk(ctx: Ctx, x: number, y: number, w: number, s: Session, l: Look, f: Frame) {
   const hw = Math.round(w / 2)
@@ -245,7 +245,7 @@ function drawDesk(ctx: Ctx, x: number, y: number, w: number, s: Session, l: Look
   f.ui.push(() => {
     if (f.focus !== s.id) { // the focused one gets a full tag on top instead
       ctx.save(); ctx.translate(x, y + 12); ctx.scale(ts, ts)
-      const step = f.steps[s.id], sub = step ?? s.branch
+      const step = f.steps[s.id], sub = [f.roles[s.id], step ?? s.branch].filter(Boolean).join(' · ')
       font(ctx, 7); ctx.fillStyle = INK; ctx.fillText(fit(ctx, nameOf(s), hw * 2 / ts - 8), 0, sub ? -3 : 0)
       if (sub) { font(ctx, 6); ctx.fillStyle = step ? '#d9a441' : '#b8ad9c'; ctx.fillText(fit(ctx, sub, hw * 2 / ts - 8), 0, 4) }
       ctx.restore()
@@ -270,7 +270,7 @@ function drawStation(ctx: Ctx, s: Session, zone: Zone, x: number, top: number, d
       ? person(ctx, x, feet, l, { t: tt, walk: true, mood: 'smile' })
       : person(ctx, x, feet, l, { t: tt, mood: s.busy ? 'flat' : 'smile', typing: !s.busy, bob: s.busy ? 0 : Math.sin(tt / 700 + l.seed) * 0.5, noShadow: true })
     drawDesk(ctx, dx, deskY, Math.min(64, slotWidth('desks', n, f.zx) - 6), s, l, f)
-    if (f.focus === s.id) f.top.push(() => nameTag(ctx, s, f.steps[s.id], dx, deskY + 9, 0, true))
+    if (f.focus === s.id) f.top.push(() => nameTag(ctx, s, f.steps[s.id], f.roles[s.id], dx, deskY + 9, 0, true))
     if (s.busy && !moving) {
       const busy = s.busy
       f.ui.push(() => busy.kind === 'compact' ? bubble(ctx, x, head - 2, '…', STATE_COLOR.working) : clockBubble(ctx, x, head - 2, tt))
@@ -416,7 +416,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   ts = Math.min(1.6, Math.max(1, 10 / (7 * o.k / (globalThis.devicePixelRatio || 1))))
   ctx.clearRect(0, 0, W, o.h)
   const zones = assignZones(o.group.sessions, o.arrivals)
-  const f: Frame = { tt: o.reduced ? 0 : o.t, steps: o.steps ?? {}, zx: zoneBounds(countZones(zones)), focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
+  const f: Frame = { tt: o.reduced ? 0 : o.t, steps: o.steps ?? {}, roles: o.roles ?? {}, zx: zoneBounds(countZones(zones)), focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
   drawScenery(ctx, o.group.world.color, o.h, f)
 
   const live = new Set(o.group.sessions.map((s) => s.id))
