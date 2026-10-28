@@ -242,7 +242,9 @@ own session log instead: a failed turn moves to the Help desk with its error a f
 Codex sessions start with unrestricted file and network access and on-request approvals. In New
 session or Recent sessions, uncheck **Unrestricted file and network access** to use a workspace
 sandbox instead. A run offers the same choice for its Codex steps and remembers it across the
-run. Workers started by other agents stay sandboxed. Unrestricted access removes the enforced
+run. Bulk **Resume all** uses the workspace sandbox for older Codex conversations because their
+previous access scope was not recorded; use Recent sessions to choose unrestricted access. Workers
+started by other agents stay sandboxed. Unrestricted access removes the enforced
 file and network boundary; Codex may still ask in its terminal, and Agent Worlds mirrors those
 requests under **Needs you**.
 

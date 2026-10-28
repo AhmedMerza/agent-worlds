@@ -752,7 +752,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (resuming.has(s.id)) { failed.push({ id: s.id, error: 'already being restored' }); continue; }
         resuming.set(s.id, null);
         try {
-          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: false } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
           resuming.set(s.id, r.tmuxSession);
           await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: s.lastPrompt ?? s.task, agent: s.agent, resuming: true });
           started.push(s.id);
