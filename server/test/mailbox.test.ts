@@ -57,8 +57,12 @@ test('/mcp: sessions find each other, mail waits until the recipient is free, th
   assert.equal((await fetch(`${base}/mcp`, { headers: H })).status, 405);
   const init = await rpc('%1', 'initialize', { protocolVersion: '2025-03-26' });
   assert.equal(init.result.protocolVersion, '2025-03-26');
+  assert.match(init.result.instructions, /workers? finishes, end it with aw_stop.*start a new worker/);
   assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: H, body: '{"jsonrpc":"2.0","method":"notifications/initialized"}' })).status, 202);
-  assert.deepEqual((await rpc('%1', 'tools/list')).result.tools.map((t: any) => t.name), ['aw_agents', 'aw_send', 'aw_inbox', 'aw_handoff', 'aw_spawn', 'aw_stop']);
+  const tools = (await rpc('%1', 'tools/list')).result.tools;
+  assert.deepEqual(tools.map((t: any) => t.name), ['aw_agents', 'aw_send', 'aw_inbox', 'aw_handoff', 'aw_spawn', 'aw_stop']);
+  assert.match(tools.find((t: any) => t.name === 'aw_spawn').description, /one-task worker.*Do not reuse a finished worker/);
+  assert.match(tools.find((t: any) => t.name === 'aw_agents').description, /workers? finishes, end it with aw_stop.*start a new worker/);
   assert.equal((await rpc('%1', 'resources/list')).error.code, -32601);
   assert.equal((await tool('%1', 'aw_agents')).isError, true, 'no session in that pane yet');
   await rpc('%5', 'initialize', {}); // a CLI whose MCP handshake beats its first hook
