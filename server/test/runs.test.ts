@@ -317,5 +317,5 @@ test('a lead-started Codex run saves unrestricted access across restarts', () =>
   assert.equal(loadRuns(file)[0].codexUnrestricted, true);
   const old = { ...r }; delete old.codexUnrestricted;
   writeFileSync(file, JSON.stringify([old]));
-  assert.equal(loadRuns(file)[0].codexUnrestricted, true, 'old lead runs have no explicit access choice');
+  assert.equal(loadRuns(file)[0].codexUnrestricted, false, 'old lead runs keep their previous sandbox behavior');
 });

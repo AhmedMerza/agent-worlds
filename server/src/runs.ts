@@ -99,7 +99,7 @@ export function loadRuns(file: string): Run[] {
   return (Array.isArray(v) ? v : []).filter((r): r is Run => !!r && typeof r.id === 'string' && RUN_STATUSES.includes(r.status)
     && Array.isArray(r.steps) && r.steps.length > 0 && r.steps.every(okStep)
     && Number.isInteger(r.current) && r.current >= 0 && r.current < r.steps.length)
-    .map((r) => ({ ...r, codexUnrestricted: r.codexUnrestricted === true || (!!r.parent && r.steps.some((s) => s.agent === 'codex')), rounds: Number.isInteger(r.rounds) ? r.rounds : 0, earlier: Array.isArray(r.earlier) ? r.earlier : [] })); // runs.json from before rounds
+    .map((r) => ({ ...r, codexUnrestricted: r.codexUnrestricted === true, rounds: Number.isInteger(r.rounds) ? r.rounds : 0, earlier: Array.isArray(r.earlier) ? r.earlier : [] })); // runs.json from before rounds
 }
 
 /** A review's verdict: the first line of its file says APPROVED or CHANGES (markdown around it is fine). Null when there is none. */
