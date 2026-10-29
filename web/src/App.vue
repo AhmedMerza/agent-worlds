@@ -15,7 +15,7 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, worldOf, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
+import { state, groups, worldOf, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll, dismissRecovery } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -97,7 +97,10 @@ async function onRecover() {
   recovering.value = true
   const r = await resumeAll()
   recovering.value = false
-  if (r) showToast(r.failed.length ? `Restoring ${r.started.length}; ${r.failed.length} could not be resumed.` : `Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
+  if (r) showToast(r.failed.length ? `Restoring ${r.started.length}; ${r.failed.length} could not be resumed: ${[...new Set(r.failed.map((f) => f.error))].join('; ')}. Dismiss to clear the reminder.` : `Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
+}
+async function onDismissRecovery() {
+  for (const s of [...state.recoverable]) await dismissRecovery(s.id)
 }
 watch(phone, () => { menuOpen.value = false })
 async function onNotify() {
@@ -205,6 +208,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       <span><b>{{ state.recoverable.length }}</b> session{{ state.recoverable.length === 1 ? '' : 's' }} interrupted when this computer or Agent Worlds stopped.</span>
       <button class="btn primary" :disabled="recovering" @click="onRecover">{{ recovering ? 'Resuming…' : 'Resume all' }}</button>
       <button class="btn" @click="ui.recentRepo = null; ui.recentOpen = true">Review individually</button>
+      <button class="btn" :disabled="recovering" title="Remove this restart reminder without deleting the agents' saved conversations" @click="onDismissRecovery">Dismiss</button>
     </div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
     <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
