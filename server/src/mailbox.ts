@@ -88,6 +88,10 @@ export class Mailbox {
     return out;
   }
 
+  hasUnread(to: string): boolean {
+    return this.messages.some((m) => m.to === to && !m.read);
+  }
+
   /** Unread messages `to` has not been told about yet. */
   unnotified(to: string): Message[] {
     return this.messages.filter((m) => m.to === to && !m.read && !m.notified);
