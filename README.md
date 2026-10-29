@@ -590,7 +590,9 @@ Other environment variables: `AGENT_WORLDS_HOME` (config folder) and `AGENT_WORL
   in `<home>/recovery.json`. A server restart re-adopts agents still running; after a computer
   restart, the page offers to resume the interrupted conversations.
 If a conversation no longer belongs in the recovery list (for example, its folder was removed),
-**Dismiss** removes the reminder without deleting the CLI's saved conversation.
+**Dismiss reminder** (on the banner for all of them, or per row in **Review individually**) removes
+the reminder without deleting the CLI's saved conversation. When **Resume all** leaves sessions
+behind, the banner says why.
 
 ## Troubleshooting
 
