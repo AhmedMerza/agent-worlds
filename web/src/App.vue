@@ -85,6 +85,8 @@ function openNewTask(worldId?: string, run = false) {
 const menuOpen = ref(false)
 const updating = ref(false)
 const recovering = ref(false)
+/** Why the last Resume all left sessions behind: shown on the banner, where the click was. */
+const recoverFailed = ref<string[]>([])
 const updateError = ref('')
 /** The session the update refusal names: only permission and question cards hold the server's pending requests. */
 const unanswered = computed(() => needsYou.value.find((s) => s.card?.kind === 'permission' || s.card?.kind === 'question'))
@@ -97,11 +99,14 @@ async function onRecover() {
   recovering.value = true
   const r = await resumeAll()
   recovering.value = false
-  if (r) showToast(r.failed.length ? `Restoring ${r.started.length}; ${r.failed.length} could not be resumed: ${[...new Set(r.failed.map((f) => f.error))].join('; ')}. Dismiss to clear the reminder.` : `Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
+  if (!r) return
+  recoverFailed.value = [...new Set(r.failed.map((f) => f.error))]
+  if (r.started.length) showToast(`Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
 }
 async function onDismissRecovery() {
   for (const s of [...state.recoverable]) await dismissRecovery(s.id)
 }
+watch(() => state.recoverable.length, (n) => { if (!n) recoverFailed.value = [] })
 watch(phone, () => { menuOpen.value = false })
 async function onNotify() {
   const r = await toggleNotifications()
@@ -208,7 +213,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       <span><b>{{ state.recoverable.length }}</b> session{{ state.recoverable.length === 1 ? '' : 's' }} interrupted when this computer or Agent Worlds stopped.</span>
       <button class="btn primary" :disabled="recovering" @click="onRecover">{{ recovering ? 'Resuming…' : 'Resume all' }}</button>
       <button class="btn" @click="ui.recentRepo = null; ui.recentOpen = true">Review individually</button>
-      <button class="btn" :disabled="recovering" title="Remove this restart reminder without deleting the agents' saved conversations" @click="onDismissRecovery">Dismiss</button>
+      <button class="btn" :disabled="recovering" title="Remove this restart reminder without deleting the agents' saved conversations" @click="onDismissRecovery">Dismiss reminder</button>
+      <p v-if="recoverFailed.length" class="err">Could not resume: {{ recoverFailed.join('; ') }}. <b>Dismiss reminder</b> keeps the conversation in Recent sessions.</p>
     </div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
     <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
