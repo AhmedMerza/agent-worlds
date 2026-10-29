@@ -213,6 +213,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   };
   /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
   const earlyMcp = new Set<string>();
+  /** Successful Stop hooks wait here until their HTTP response has finished before their pane is closed. */
+  const pendingCompletions = new Map<string, { session: Session; result: string | null }>();
+  /** Successful workers retained until their result can be delivered to a stable lead and their pane closes. */
+  const completedWorkers = new Map<string, { session: Session; result: string | null; sent?: boolean }>();
   /**
    * The agy session a conversation it has not seen is a subagent of (agy runs each subagent as a conversation of its
    * own, in the same pane). Its invoke_subagent calls count the subagents still to start (agyPending: the hook runs
@@ -304,6 +308,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     parents,
     onRenamed: (from, to) => {
       recovery.rename(from, to);
+      mailbox.rename(from, to);
       const origin = spawnOrigins.get(from);
       if (origin) { spawnOrigins.set(to, origin); spawnOrigins.set(from, null); }
       const pending = launchPending.get(from);
@@ -325,6 +330,14 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       runEvent(s, ev);
     },
     ...opts.deps,
+    onCompleted: (s, result, source) => {
+      opts.deps?.onCompleted?.(s, result, source);
+      if (source === 'hook') pendingCompletions.set(s.id, { session: s, result });
+      else {
+        completedWorkers.set(s.id, { session: s, result });
+        void retireCompletedWorker(s, result);
+      }
+    },
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
   const createSession = opts.createSession ?? sys.createSession;
@@ -594,7 +607,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
       let out: string;
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
+      const completedId = body.hook_event_name === 'Stop' && typeof body.session_id === 'string' ? body.session_id : null;
       if (res.destroyed) return;
+      if (completedId) res.once('finish', () => {
+        const completed = pendingCompletions.get(completedId);
+        if (!completed) return;
+        pendingCompletions.delete(completedId);
+        completedWorkers.set(completedId, completed);
+        void retireCompletedWorker(completed.session, completed.result);
+      });
       // agy takes Gemini's reply to a held tool
       if (held) out = toGemini(out);
       else if (agent === 'agy') out = toAgy(event, agyCwd, agyDir);
@@ -940,7 +961,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (!over) { r.status = 'stopped'; r.note = null; pushRun(r); }
         if (ending) {
           const ofRun = [...store.sessions.values()].filter((s) => inRun(r, s));
-          const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
+          const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s, true); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
           if (failed.length) return send(res, 502, { error: `could not end ${failed.join('; ')}`, run: r });
         }
         return send(res, 200, { run: r });
@@ -968,7 +989,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if ((s.state === 'working' || s.state === 'waiting') && body.force !== true) {
         return send(res, 409, { error: s.state === 'working' ? 'it is in the middle of a turn: ending stops that turn' : 'it is waiting on you: ending drops what it asked', working: true });
       }
-      const err = await endSession(s);
+      const err = await endSession(s, body.force === true);
       return err ? send(res, 502, { error: `could not end it: ${err}` }) : send(res, 200, { ok: true });
     }
     // Restart: a fresh claude resumes the same conversation and draws it from scratch (fixes a wrecked screen for good).
@@ -1137,6 +1158,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         const from = store.sessions.get(self!)!;
         const hits = [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (s.parent === self && !s.id.startsWith('starting:'))) && s.id.startsWith(to));
         if (hits.length !== 1) return new Error(hits.length ? `"${to}" matches ${hits.length} sessions: use more of the id` : `no session "${to}": see aw_agents`);
+        if (retiring.has(hits[0].id) || ending.has(hits[0].id)) return new Error(`${label(hits[0])} is ending now: start a new worker if more work is needed`);
         const r = mailbox.send(from.id, hits[0].id, text);
         if (typeof r === 'string') return new Error(r);
         store.log(from, `Message to ${label(hits[0])}: ${text}`);
@@ -1304,6 +1326,49 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Whether a session is one of a run's steps, this round or an earlier one (by id, or by its pane before its first hook). */
   const inRun = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id
     || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct));
+  const retiring = new Set<string>();
+  const ending = new Set<string>();
+  /** Exact ids stay run sessions forever; pane/direct fallback is only safe for the current step of a live run. */
+  const isRunSession = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id)
+    || (!r.steps[r.current].sessionId && ['running', 'waiting'].includes(r.status) && ((r.steps[r.current].pane && s.tmux?.pane === r.steps[r.current].pane)
+      || (r.steps[r.current].direct && s.direct === r.steps[r.current].direct)));
+  /** Preserve a one-task worker's result for its lead, then retire it and free its spawn slot. */
+  async function retireCompletedWorker(s: Session, result: string | null) {
+    if (store.sessions.get(s.id) !== s || !s.parent || s.state !== 'done') { completedWorkers.delete(s.id); return; }
+    if (retiring.has(s.id)) return;
+    if ([...runs.values()].some((r) => isRunSession(r, s))) { completedWorkers.delete(s.id); return; }
+    if (mailbox.hasUnread(s.id)) return;
+    const lead = store.sessions.get(s.parent);
+    if (!lead) { completedWorkers.delete(s.id); return; } // keep the done card without a recipient
+    if (retiring.has(lead.id) || ending.has(lead.id)) return; // retry after its end attempt settles
+    retiring.add(s.id);
+    try {
+      const heading = `${label(s)} finished its task.`;
+      const body = result?.trim() || 'It did not provide a final summary.';
+      const completed = completedWorkers.get(s.id);
+      if (!completed?.sent) {
+        const queued = mailbox.sendSystem(s.id, s.parent, `${heading}\n\n${body}`.slice(0, 10_000));
+        if (typeof queued === 'string') return; // keep the result on its worker card until the lead makes room
+        if (completed) completed.sent = true;
+      }
+      const err = await endSession(s);
+      if (err) {
+        if (!mailbox.hasUnreadSystem(s.id)) completedWorkers.delete(s.id);
+        store.log(lead, `Could not end ${label(s)}: ${err}`); store.push(lead);
+        await deliverMail();
+        return;
+      }
+      completedWorkers.delete(s.id);
+      store.log(lead, `${heading} Ended it automatically.`); store.push(lead);
+      await deliverMail();
+    } finally {
+      retiring.delete(s.id);
+      retryCompletedChildren(s.id);
+    }
+  }
+  function retryCompletedChildren(parent: string) {
+    for (const completed of completedWorkers.values()) if (completed.session.parent === parent) void retireCompletedWorker(completed.session, completed.result);
+  }
   const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
   /** Runs with a handoff or a step start in flight: a second "next" or handoff meanwhile would skip a step. */
   const moving = new Set<string>();
@@ -1395,18 +1460,29 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     pushRecoverable();
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
-  async function endSession(s: Session): Promise<string | null> {
-    parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
-    if (spawnOrigins.get(s.id)) spawnOrigins.set(s.id, null);
-    if (launchPending.get(s.id)) launchPending.set(s.id, null);
-    mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
-    if (s.direct) { forgetRecovery(s); direct.kill(s.direct); return null; } // its exit removes the card
-    if (!s.tmux) return 'it does not run in tmux or under this server';
-    const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
-    if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
-    forgetRecovery(s);
-    if (store.sessions.get(s.id) === s) store.remove(s);
-    return null;
+  async function endSession(s: Session, discardUnreadResults = false): Promise<string | null> {
+    if (ending.has(s.id)) return 'it is already ending';
+    if (!discardUnreadResults && mailbox.hasUnreadSystem(s.id)) return 'it has an unread completed-worker result: read aw_inbox before ending it, or force End to discard it';
+    ending.add(s.id);
+    try {
+      if (s.direct) direct.kill(s.direct); // its exit removes the card
+      else {
+        if (!s.tmux) return 'it does not run in tmux or under this server';
+        const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
+        if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
+      }
+      // Forget it only after the terminal ended: a failed End remains a worker and can be retried safely.
+      parents.set(s.id, null);
+      if (spawnOrigins.get(s.id)) spawnOrigins.set(s.id, null);
+      if (launchPending.get(s.id)) launchPending.set(s.id, null);
+      mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
+      forgetRecovery(s);
+      if (store.sessions.get(s.id) === s) store.remove(s);
+      return null;
+    } finally {
+      ending.delete(s.id);
+      if (!retiring.has(s.id)) retryCompletedChildren(s.id);
+    }
   }
   function runSessionGone(id: string) {
     const r = stepOf(id);
@@ -1422,7 +1498,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   async function deliverMail() {
     if (delivering) return;
     delivering = true;
-    try { await deliverPass(); } finally { delivering = false; }
+    try {
+      for (const completed of [...completedWorkers.values()]) await retireCompletedWorker(completed.session, completed.result);
+      await deliverPass();
+    } finally { delivering = false; }
   }
   /** Free to read mail: its turn is over, even if background work or a wake-up will bring it back. */
   function atPrompt(s: Session) {

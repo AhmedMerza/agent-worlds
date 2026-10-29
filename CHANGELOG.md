@@ -1,6 +1,6 @@
 # Changelog
 
-- Lead-started workers are now explicitly one-task sessions: the lead is told to end a worker when it finishes and to start a fresh session for any later task instead of reusing the finished one.
+- Lead-started workers are one-task sessions: after a successful finish, Agent Worlds sends the final result to the lead, closes the worker and frees its place automatically. Waiting, failed and run-step sessions stay open; later work starts in a fresh worker.
 
 Newest first. Dates are commit dates.
 

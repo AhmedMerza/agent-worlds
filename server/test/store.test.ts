@@ -7,7 +7,7 @@ import { ev, QUESTION, tmp } from './fixtures.ts';
 const tick = () => new Promise((r) => setImmediate(r));
 
 /** Fixtures use cwd /work/repo-a; `root` relocates that repo (and a sibling repo-b) for tests that write files. */
-function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string; now?: () => number; placements?: Map<string, string> } = {}) {
+function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSettingsPath?: string; now?: () => number; placements?: Map<string, string>; onCompleted?: (result: string | null, source: 'hook' | 'poll') => void } = {}) {
   const emitted: any[] = [];
   const root = opts.root ?? '/work';
   const cfg = parseConfig({
@@ -28,6 +28,7 @@ function setup(opts: { clients?: boolean; holdMs?: number; root?: string; userSe
     holdMs: opts.holdMs ?? 10_000,
     now: opts.now,
     placements: opts.placements && { get: (id) => opts.placements!.get(id), set: (id, w) => { if (w) opts.placements!.set(id, w); else opts.placements!.delete(id); } },
+    onCompleted: (_s, result, source) => opts.onCompleted?.(result, source),
     stats: {
       get: (r, k) => counts.get(r + '|' + k) ?? 0,
       inc: (r, k) => { const n = (counts.get(r + '|' + k) ?? 0) + 1; counts.set(r + '|' + k, n); return n; },
@@ -297,6 +298,25 @@ test('a turn that ends with background work running stays at the desks until it 
   assert.equal(view().busy, null);
 });
 
+test('only a confirmed successful turn emits completion, not a background timeout', async () => {
+  let t = 1_000;
+  const completed: [string | null, 'hook' | 'poll'][] = [];
+  const { store, view } = setup({ now: () => t, onCompleted: (result, source) => completed.push([result, source]) });
+  await store.handle(ev.start, '%5');
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting for the helper', background_tasks: [{ id: 'b1' }] }, '%5');
+  assert.equal(view().state, 'working');
+  t += 31 * 60_000;
+  store.checkBusy();
+  assert.equal(view().state, 'done');
+  assert.deepEqual(completed, [], 'a timeout is not proof that the worker completed its task');
+
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Actually finished' }, '%5');
+  assert.deepEqual(completed, [['Actually finished', 'hook']]);
+});
+
 test('only background work started since your prompt keeps a session at its desk', async () => {
   const { store, view } = setup();
   const server = { id: 'byqi1f1o8', type: 'shell', status: 'running', description: 'Serve the APK folder on port 8090 for the phone' };
@@ -477,7 +497,8 @@ test('Esc mid-turn (no Stop hook) is read from the transcript; idle_prompt is th
 test('a Codex turn that ends without a hook is read from its rollout log', async () => {
   const { writeFileSync, appendFileSync } = await import('node:fs');
   let t = Date.parse('2026-10-18T10:00:00Z');
-  const { store, view } = setup({ now: () => t });
+  const completed: [string | null, 'hook' | 'poll'][] = [];
+  const { store, view } = setup({ now: () => t, onCompleted: (result, source) => completed.push([result, source]) });
   const log = `${tmp('awcodex-')}/rollout.jsonl`;
   const entry = (payload: object, at: number) => JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'event_msg', payload }) + '\n';
   const prompt = async () => { await store.handle({ ...ev.prompt, transcript_path: log }, '%5', undefined, null, 'codex'); };
@@ -514,6 +535,7 @@ test('a Codex turn that ends without a hook is read from its rollout log', async
   await store.checkInterrupts();
   assert.equal(view().state, 'done');
   assert.equal(view().card.summary, 'All set.');
+  assert.deepEqual(completed, [['All set.', 'poll']], 'only a successful fallback completion is reported');
 });
 
 test('moving one session to another world: its repo stays, /clear keeps the move, moving back clears it', async () => {

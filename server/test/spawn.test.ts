@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
@@ -120,6 +120,167 @@ test('aw_stop ends only the caller\'s own workers, which frees a place under the
   assert.equal(s.sessions.find((x: any) => x.id === `starting:awtest-spawn-${launched.length}`).parent, LEAD);
 });
 
+test('a finished one-task worker reports its result, ends, and frees its place', async () => {
+  const h = tmp('aw-spawn-retire-');
+  writeFileSync(join(h, 'runs.json'), JSON.stringify([{
+    id: 'old-run', task: 'old', worldId: 'w', repo: '/work/x', worktree: false, dir: '/work/x', handoff: null,
+    steps: [{ kind: 'plan', agent: 'claude', checkpoint: false, status: 'handed', pane: '%61', direct: null, sessionId: 'old-run-worker', summary: 'done' }],
+    current: 0, rounds: 0, earlier: [], status: 'done', note: null, startedAt: Date.now(),
+  }, {
+    id: 'live-run', task: 'live', worldId: 'w', repo: '/work/x', worktree: false, dir: '/work/x', handoff: null,
+    steps: [{ kind: 'plan', agent: 'claude', checkpoint: false, status: 'running', pane: '%61', direct: null, sessionId: 'old-live-worker', summary: null }],
+    current: 0, rounds: 0, earlier: [], status: 'waiting', note: 'waiting', startedAt: Date.now(),
+  }]));
+  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 1 }] }), port: 0 };
+  const stopped: string[] = [], notices: [string, string][] = [];
+  let launches = 0, failSecondEnd = false;
+  const server = startServer(cfg, TOKEN, {
+    home: h, spawnIdMs: 30,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    createSession: (async (o: any) => ({ tmuxSession: `awtest-retire-${++launches}`, dir: o.repo, branch: null, pane: `%${60 + launches}` })) as any,
+    typeInto: async (pane, text) => { notices.push([pane, text]); return true; },
+    endPane: async (pane) => {
+      if (pane === '%62' && failSecondEnd) { failSecondEnd = false; return 'pane is busy'; }
+      stopped.push(pane); return null;
+    },
+  });
+  await server.listen();
+  const url = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+  const hk = (body: object, id: string, pane: string) => fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id, cwd: '/work/x' }) });
+  const call = async (pane: string, name: string, args: object = {}) => ((await (await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()) as any).result;
+  try {
+    await hk(ev.start, 'lead-1', '%59');
+    const first = call('%59', 'aw_spawn', { folder: 'x', task: 'do one thing' });
+    for (let i = 0; i < 40 && !launches; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'worker-1', '%61');
+    assert.equal((await first).isError, undefined);
+
+    const response = await hk({ ...ev.stop, last_assistant_message: 'Finished.\n\nThe detailed result is here.' }, 'worker-1', '%61');
+    assert.equal(response.status, 204, 'the Stop hook receives its response before cleanup');
+    for (let i = 0; i < 40 && !stopped.length; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(stopped, ['%61']);
+    assert.equal(server.store.sessions.has('worker-1'), false);
+    assert.equal(notices.at(-1)?.[0], '%59', 'the lead is woken for the result');
+    const inbox = await call('%59', 'aw_inbox');
+    assert.match(inbox.content[0].text, /finished its task[\s\S]*The detailed result is here/);
+
+    const replacement = await call('%59', 'aw_spawn', { folder: 'x', task: 'the next thing' });
+    for (let i = 0; i < 40 && launches < 2; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'worker-2', '%62');
+    assert.equal((await replacement).isError, undefined);
+    await call('%59', 'aw_send', { to: 'worker-2', text: 'Check one more thing' });
+    await hk({ ...ev.stop, last_assistant_message: 'First result' }, 'worker-2', '%62');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(stopped, ['%61'], 'unread follow-up mail keeps the worker open');
+    assert.match((await call('%62', 'aw_inbox')).content[0].text, /Check one more thing/);
+    failSecondEnd = true;
+    await hk(ev.prompt, 'worker-2', '%62');
+    await hk({ ...ev.stop, last_assistant_message: 'Result after the follow-up' }, 'worker-2', '%62');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(stopped, ['%61'], 'a failed pane close leaves the worker open');
+    await hk(ev.prompt, 'worker-2', '%62');
+    await hk({ ...ev.stop, last_assistant_message: 'Newest result' }, 'worker-2', '%62');
+    for (let i = 0; i < 40 && stopped.length < 2; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(stopped, ['%61', '%62']);
+    assert.match((await call('%59', 'aw_inbox')).content[0].text, /Result after the follow-up[\s\S]*Newest result/);
+
+    const orphan = call('%59', 'aw_spawn', { folder: 'x', task: 'work after the lead exits' });
+    for (let i = 0; i < 40 && launches < 3; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'worker-3', '%63');
+    assert.equal((await orphan).isError, undefined);
+    await hk({ ...ev.end, reason: 'prompt_input_exit' }, 'lead-1', '%59');
+    await hk({ ...ev.stop, last_assistant_message: 'Result with no live lead' }, 'worker-3', '%63');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(stopped, ['%61', '%62'], 'without a live lead, the result stays on the worker card');
+    assert.equal(server.store.sessions.get('worker-3')?.state, 'done');
+  } finally { await server.close(); }
+});
+
+test('a child finishing while its parent ends keeps its result card', async () => {
+  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 6 }] }), port: 0 };
+  let launches = 0, parentEnding = false, failHeldEnd = false, heldPane = '%71', releaseParent!: () => void;
+  const stopped: string[] = [];
+  const server = startServer(cfg, TOKEN, {
+    home: tmp('aw-spawn-nested-retire-'), spawnIdMs: 500,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    createSession: (async (o: any) => ({ tmuxSession: `awtest-nested-${++launches}`, dir: o.repo, branch: null, pane: `%${70 + launches}` })) as any,
+    typeInto: async () => true,
+    endPane: async (pane) => {
+      if (pane === heldPane) { parentEnding = true; await new Promise<void>((r) => { releaseParent = r; }); }
+      if (pane === heldPane && failHeldEnd) return 'pane is busy';
+      stopped.push(pane); return null;
+    },
+  });
+  await server.listen();
+  const url = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+  const hk = (body: object, id: string, pane: string) => fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id, cwd: '/work/x' }) });
+  const call = async (pane: string, name: string, args: object = {}) => ((await (await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()) as any).result;
+  try {
+    await hk(ev.start, 'root-lead', '%69');
+    const parent = call('%69', 'aw_spawn', { folder: 'x', task: 'parent work' });
+    for (let i = 0; i < 40 && launches < 1; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'parent-worker', '%71');
+    assert.equal((await parent).isError, undefined);
+    const child = call('%71', 'aw_spawn', { folder: 'x', task: 'child work' });
+    for (let i = 0; i < 40 && launches < 2; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'child-worker', '%72');
+    assert.equal((await child).isError, undefined);
+
+    await hk({ ...ev.stop, last_assistant_message: 'Parent result' }, 'parent-worker', '%71');
+    for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(parentEnding, true);
+    await hk({ ...ev.stop, last_assistant_message: 'Child result' }, 'child-worker', '%72');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(server.store.sessions.get('child-worker')?.state, 'done');
+    assert.doesNotMatch(stopped.join(','), /%72/, 'the child is not retired into a disappearing parent');
+    releaseParent();
+    for (let i = 0; i < 40 && !stopped.includes('%71'); i++) await new Promise((r) => setTimeout(r, 5));
+
+    heldPane = '%73'; parentEnding = false;
+    const parent2 = call('%69', 'aw_spawn', { folder: 'x', task: 'manually ended parent' });
+    for (let i = 0; i < 40 && launches < 3; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'parent-worker-2', '%73');
+    assert.equal((await parent2).isError, undefined);
+    const child2 = call('%73', 'aw_spawn', { folder: 'x', task: 'second child' });
+    for (let i = 0; i < 40 && launches < 4; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'child-worker-2', '%74');
+    assert.equal((await child2).isError, undefined);
+    const manualEnd = fetch(`${url}/api/sessions/parent-worker-2/end`, { method: 'POST', headers: H, body: '{"force":true}' });
+    for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(parentEnding, true);
+    await hk({ ...ev.stop, last_assistant_message: 'Second child result' }, 'child-worker-2', '%74');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(server.store.sessions.get('child-worker-2')?.state, 'done');
+    assert.doesNotMatch(stopped.join(','), /%74/, 'manual End also keeps the child result visible');
+    failHeldEnd = true;
+    releaseParent();
+    assert.equal((await manualEnd).status, 502);
+    for (let i = 0; i < 40 && !stopped.includes('%74'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(stopped.includes('%74'), 'a child deferred during a failed parent End is retried');
+    assert.match((await call('%73', 'aw_inbox')).content[0].text, /Second child result/);
+
+    heldPane = '%76'; parentEnding = false; failHeldEnd = false;
+    const parent3 = call('%69', 'aw_spawn', { folder: 'x', task: 'parent with a queued result' });
+    for (let i = 0; i < 40 && launches < 5; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'parent-worker-3', '%75');
+    assert.equal((await parent3).isError, undefined);
+    const child3 = call('%75', 'aw_spawn', { folder: 'x', task: 'third child' });
+    for (let i = 0; i < 40 && launches < 6; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'child-worker-3', '%76');
+    const child3Result = await child3;
+    assert.equal(child3Result.isError, undefined, child3Result.content[0].text);
+    const childEnd = hk({ ...ev.stop, last_assistant_message: 'Queued child result' }, 'child-worker-3', '%76');
+    for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(parentEnding, true);
+    const blockedEnd = await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{}' });
+    assert.equal(blockedEnd.status, 502, 'manual End cannot discard an unread completed-worker result');
+    assert.match((await blockedEnd.json() as any).error, /read aw_inbox/);
+    assert.equal((await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{"force":true}' })).status, 200, 'the user can explicitly discard unread results to force cleanup');
+    releaseParent();
+    assert.equal((await childEnd).status, 204);
+  } finally { await server.close(); }
+});
+
 test('a lead that /clears keeps its workers: it still lists and ends them', async () => {
   await hook(ev.start, 'eeee5555-0000', '%4', '/work/repo-a');
   const r = await tool('%4', 'aw_spawn', { folder: 'repo-b', task: 'worker of a lead that clears' });
@@ -146,6 +307,11 @@ test('a run takes one place under maxSpawned however many step sessions it opens
   assert.equal(run.isError, undefined, run.content[0].text);
   const pane = `%${10 + launched.length}`;
   await hook(ev.start, '99997777-0000', pane, '/work/repo-a');
+  const endedBefore = ended.length;
+  await hook(ev.stop, '99997777-0000', pane, '/work/repo-a');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ended.length, endedBefore, 'a run step is not automatically retired');
+  assert.ok((await state()).sessions.some((x: any) => x.id === '99997777-0000'));
   const h = await tool(pane, 'aw_handoff', { summary: 'planned' });
   assert.match(h.content[0].text, /next step has started/);
   const s = await state();

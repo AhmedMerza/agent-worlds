@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
  * Messages between sessions. Knows nothing of Agent Worlds beyond session ids, so it can be lifted out whole.
  * A message is `notified` once its recipient was told it has mail, and `read` once it fetched it.
  */
-export type Message = { id: number; from: string; to: string; text: string; at: number; notified: boolean; read: boolean };
+export type Message = { id: number; from: string; to: string; text: string; at: number; notified: boolean; read: boolean; system?: boolean };
 
 /** Messages two sessions may trade with no human prompt to either of them before sending is refused.
  *  A manager session driving several workers needs more headroom than a peer pair; override with AW_PING_PONG. */
@@ -44,14 +44,52 @@ export class Mailbox {
     const key = [from, to].sort().join('|');
     const n = this.streak.get(key) ?? 0;
     if (n >= PING_PONG) return `you and this session have traded ${n} messages with no word from the user: stop and ask the user how to go on`;
+    const queued = this.queue(from, to, text);
+    if (typeof queued === 'string') return queued;
     this.streak.set(key, n + 1);
-    const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false };
+    return queued;
+  }
+
+  /** Queue a lifecycle notice that must not be refused by the agent-to-agent conversation limit. */
+  sendSystem(from: string, to: string, text: string): Message | string {
+    return this.queue(from, to, text, true);
+  }
+
+  private queue(from: string, to: string, text: string, system = false): Message | string {
+    const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false, ...(system ? { system: true } : {}) };
     this.messages.push(m);
     // Full: drop what was read before anything unread
     if (this.messages.length > KEEP) this.messages = this.messages.filter((x) => !x.read);
-    if (this.messages.length > KEEP) this.messages.splice(0, this.messages.length - KEEP);
+    // A completion result may be the only surviving copy after its worker closes: discard ordinary mail first.
+    for (let i = 0; this.messages.length > KEEP && i < this.messages.length;) {
+      if (this.messages[i].system) i++;
+      else this.messages.splice(i, 1);
+    }
+    if (this.messages.length > KEEP || !this.messages.includes(m)) {
+      const i = this.messages.indexOf(m);
+      if (i >= 0) this.messages.splice(i, 1);
+      this.save();
+      return 'the mailbox is full of unread completed-worker results: read aw_inbox before sending more';
+    }
     this.save();
     return m;
+  }
+
+  /** A conversation got a new id after /clear or /resume: its queued mail follows it. */
+  rename(from: string, to: string) {
+    let changed = false;
+    for (const m of this.messages) {
+      if (m.from === from) { m.from = to; changed = true; }
+      if (m.to === from) { m.to = to; changed = true; }
+    }
+    if (changed) this.save();
+    const next = new Map<string, number>();
+    for (const [pair, n] of this.streak) {
+      const ids = pair.split('|').map((id) => id === from ? to : id).sort();
+      const key = ids.join('|');
+      next.set(key, (next.get(key) ?? 0) + n);
+    }
+    this.streak = next;
   }
 
   /** Unread messages for `to`, oldest first, now marked read. */
@@ -60,6 +98,14 @@ export class Mailbox {
     for (const m of out) { m.read = true; m.notified = true; }
     if (out.length) this.save();
     return out;
+  }
+
+  hasUnread(to: string): boolean {
+    return this.messages.some((m) => m.to === to && !m.read);
+  }
+
+  hasUnreadSystem(to: string): boolean {
+    return this.messages.some((m) => m.to === to && !m.read && m.system === true);
   }
 
   /** Unread messages `to` has not been told about yet. */

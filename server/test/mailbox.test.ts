@@ -52,17 +52,42 @@ test('Mailbox: read once, a long exchange with no human prompt is refused, a pro
   assert.deepEqual([...box.waiting()], ['c']);
 });
 
+test('Mailbox: lifecycle mail bypasses the conversation limit and follows /clear', () => {
+  const file = join(tmp('aw-mail-rename-'), 'mailbox.json');
+  const box = new Mailbox(Date.now, file);
+  for (let i = 0; i < PING_PONG; i++) box.send('lead-old', 'worker', `m${i}`);
+  assert.equal(typeof box.send('lead-old', 'worker', 'blocked'), 'string');
+  box.sendSystem('worker', 'lead-old', 'finished');
+  assert.equal(box.hasUnreadSystem('lead-old'), true);
+  box.rename('lead-old', 'lead-new');
+  const restored = new Mailbox(Date.now, file);
+  assert.equal(restored.hasUnreadSystem('lead-new'), true);
+  assert.equal(restored.take('lead-new').at(-1)?.text, 'finished');
+  assert.equal(restored.hasUnreadSystem('lead-new'), false);
+
+  const full = new Mailbox();
+  for (let i = 0; i < 499; i++) assert.equal(typeof full.sendSystem(`worker-${i}`, 'lead', `result ${i}`), 'object');
+  assert.equal(typeof full.send('peer', 'lead', 'ordinary mail'), 'object');
+  assert.equal(typeof full.sendSystem('worker-500', 'lead', 'last durable result'), 'object', 'lifecycle mail evicts ordinary mail first');
+  assert.equal(typeof full.sendSystem('worker-501', 'lead', 'cannot fit'), 'string', 'a worker stays open when no durable result slot remains');
+  for (let i = 0; i < PING_PONG; i++) assert.equal(typeof full.send('retry-peer', 'lead', `retry ${i}`), 'string');
+  const kept = full.take('lead');
+  assert.equal(kept.length, 500);
+  assert.equal(kept.every((m) => m.system), true);
+  assert.equal(typeof full.send('retry-peer', 'lead', 'works after room is made'), 'object', 'failed queue attempts do not consume the conversation limit');
+});
+
 test('/mcp: sessions find each other, mail waits until the recipient is free, then it is told once', async () => {
   assert.equal((await fetch(`${base}/mcp`, { method: 'POST', body: '{}' })).status, 401);
   assert.equal((await fetch(`${base}/mcp`, { headers: H })).status, 405);
   const init = await rpc('%1', 'initialize', { protocolVersion: '2025-03-26' });
   assert.equal(init.result.protocolVersion, '2025-03-26');
-  assert.match(init.result.instructions, /workers? finishes, end it with aw_stop.*start a new worker/);
+  assert.match(init.result.instructions, /worker finishes successfully.*final result.*ends it automatically.*start a new worker/);
   assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: H, body: '{"jsonrpc":"2.0","method":"notifications/initialized"}' })).status, 202);
   const tools = (await rpc('%1', 'tools/list')).result.tools;
   assert.deepEqual(tools.map((t: any) => t.name), ['aw_agents', 'aw_send', 'aw_inbox', 'aw_handoff', 'aw_spawn', 'aw_stop']);
   assert.match(tools.find((t: any) => t.name === 'aw_spawn').description, /one-task worker.*Do not reuse a finished worker/);
-  assert.match(tools.find((t: any) => t.name === 'aw_agents').description, /workers? finishes, end it with aw_stop.*start a new worker/);
+  assert.match(tools.find((t: any) => t.name === 'aw_agents').description, /final result.*ends automatically.*start a new worker/);
   assert.equal((await rpc('%1', 'resources/list')).error.code, -32601);
   assert.equal((await tool('%1', 'aw_agents')).isError, true, 'no session in that pane yet');
   await rpc('%5', 'initialize', {}); // a CLI whose MCP handshake beats its first hook

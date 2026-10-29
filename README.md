@@ -377,8 +377,9 @@ that was already running when you updated Agent Worlds sees the new tools only a
   and `aw_agents` shows the lead as its `parent`. This survives a restart (`<home>/parents.json`).
 - `aw_stop { session }` ends one of the lead's own workers, as **End** does (a run it is a step of
   stops too). A lead cannot end sessions it did not start.
-- Workers are one-task sessions. When one finishes, the lead ends it with `aw_stop`; if more work is
-  needed later, the lead starts a fresh worker with `aw_spawn` instead of reusing the finished session.
+- Workers are one-task sessions. When one finishes successfully, Agent Worlds sends its final result
+  to the lead and ends it automatically. If more work is needed later, the lead starts a fresh worker
+  with `aw_spawn` instead of reusing the finished session. Waiting, failed and run-step sessions stay open.
 - At most `maxSpawned` (default 6) workers started by leads in a world are open at once; past that
   `aw_spawn` refuses until one ends. A run counts once, however many step sessions it opens.
 - You choose which agents and models leads may use, for every world at once: in **Manage worlds**,
