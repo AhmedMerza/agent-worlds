@@ -197,8 +197,8 @@ test('a finished one-task worker reports its result, ends, and frees its place',
 });
 
 test('a child finishing while its parent ends keeps its result card', async () => {
-  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 3 }] }), port: 0 };
-  let launches = 0, parentEnding = false, heldPane = '%71', releaseParent!: () => void;
+  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 6 }] }), port: 0 };
+  let launches = 0, parentEnding = false, failHeldEnd = false, heldPane = '%71', releaseParent!: () => void;
   const stopped: string[] = [];
   const server = startServer(cfg, TOKEN, {
     home: tmp('aw-spawn-nested-retire-'), spawnIdMs: 500,
@@ -207,6 +207,7 @@ test('a child finishing while its parent ends keeps its result card', async () =
     typeInto: async () => true,
     endPane: async (pane) => {
       if (pane === heldPane) { parentEnding = true; await new Promise<void>((r) => { releaseParent = r; }); }
+      if (pane === heldPane && failHeldEnd) return 'pane is busy';
       stopped.push(pane); return null;
     },
   });
@@ -251,8 +252,33 @@ test('a child finishing while its parent ends keeps its result card', async () =
     await new Promise((r) => setImmediate(r));
     assert.equal(server.store.sessions.get('child-worker-2')?.state, 'done');
     assert.doesNotMatch(stopped.join(','), /%74/, 'manual End also keeps the child result visible');
+    failHeldEnd = true;
     releaseParent();
-    assert.equal((await manualEnd).status, 200);
+    assert.equal((await manualEnd).status, 502);
+    for (let i = 0; i < 40 && !stopped.includes('%74'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(stopped.includes('%74'), 'a child deferred during a failed parent End is retried');
+    assert.match((await call('%73', 'aw_inbox')).content[0].text, /Second child result/);
+
+    heldPane = '%76'; parentEnding = false; failHeldEnd = false;
+    const parent3 = call('%69', 'aw_spawn', { folder: 'x', task: 'parent with a queued result' });
+    for (let i = 0; i < 40 && launches < 5; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'parent-worker-3', '%75');
+    assert.equal((await parent3).isError, undefined);
+    const child3 = call('%75', 'aw_spawn', { folder: 'x', task: 'third child' });
+    for (let i = 0; i < 40 && launches < 6; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'child-worker-3', '%76');
+    const child3Result = await child3;
+    assert.equal(child3Result.isError, undefined, child3Result.content[0].text);
+    const childEnd = hk({ ...ev.stop, last_assistant_message: 'Queued child result' }, 'child-worker-3', '%76');
+    for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(parentEnding, true);
+    const blockedEnd = await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{"force":true}' });
+    assert.equal(blockedEnd.status, 502, 'manual End cannot discard an unread completed-worker result');
+    assert.match((await blockedEnd.json() as any).error, /read aw_inbox/);
+    assert.match((await call('%75', 'aw_inbox')).content[0].text, /Queued child result/);
+    releaseParent();
+    assert.equal((await childEnd).status, 204);
+    assert.equal((await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{"force":true}' })).status, 200);
   } finally { await server.close(); }
 });
 

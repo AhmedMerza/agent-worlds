@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
  * Messages between sessions. Knows nothing of Agent Worlds beyond session ids, so it can be lifted out whole.
  * A message is `notified` once its recipient was told it has mail, and `read` once it fetched it.
  */
-export type Message = { id: number; from: string; to: string; text: string; at: number; notified: boolean; read: boolean };
+export type Message = { id: number; from: string; to: string; text: string; at: number; notified: boolean; read: boolean; system?: boolean };
 
 /** Messages two sessions may trade with no human prompt to either of them before sending is refused.
  *  A manager session driving several workers needs more headroom than a peer pair; override with AW_PING_PONG. */
@@ -50,11 +50,11 @@ export class Mailbox {
 
   /** Queue a lifecycle notice that must not be refused by the agent-to-agent conversation limit. */
   sendSystem(from: string, to: string, text: string): Message {
-    return this.queue(from, to, text);
+    return this.queue(from, to, text, true);
   }
 
-  private queue(from: string, to: string, text: string): Message {
-    const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false };
+  private queue(from: string, to: string, text: string, system = false): Message {
+    const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false, ...(system ? { system: true } : {}) };
     this.messages.push(m);
     // Full: drop what was read before anything unread
     if (this.messages.length > KEEP) this.messages = this.messages.filter((x) => !x.read);
@@ -90,6 +90,10 @@ export class Mailbox {
 
   hasUnread(to: string): boolean {
     return this.messages.some((m) => m.to === to && !m.read);
+  }
+
+  hasUnreadSystem(to: string): boolean {
+    return this.messages.some((m) => m.to === to && !m.read && m.system === true);
   }
 
   /** Unread messages `to` has not been told about yet. */

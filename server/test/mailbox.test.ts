@@ -58,8 +58,12 @@ test('Mailbox: lifecycle mail bypasses the conversation limit and follows /clear
   for (let i = 0; i < PING_PONG; i++) box.send('lead-old', 'worker', `m${i}`);
   assert.equal(typeof box.send('lead-old', 'worker', 'blocked'), 'string');
   box.sendSystem('worker', 'lead-old', 'finished');
+  assert.equal(box.hasUnreadSystem('lead-old'), true);
   box.rename('lead-old', 'lead-new');
-  assert.equal(new Mailbox(Date.now, file).take('lead-new').at(-1)?.text, 'finished');
+  const restored = new Mailbox(Date.now, file);
+  assert.equal(restored.hasUnreadSystem('lead-new'), true);
+  assert.equal(restored.take('lead-new').at(-1)?.text, 'finished');
+  assert.equal(restored.hasUnreadSystem('lead-new'), false);
 });
 
 test('/mcp: sessions find each other, mail waits until the recipient is free, then it is told once', async () => {

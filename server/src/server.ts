@@ -215,6 +215,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const earlyMcp = new Set<string>();
   /** Successful Stop hooks wait here until their HTTP response has finished before their pane is closed. */
   const pendingCompletions = new Map<string, { session: Session; result: string | null }>();
+  /** Successful workers retained until their result can be delivered to a stable lead and their pane closes. */
+  const completedWorkers = new Map<string, { session: Session; result: string | null; sent?: boolean }>();
   /**
    * The agy session a conversation it has not seen is a subagent of (agy runs each subagent as a conversation of its
    * own, in the same pane). Its invoke_subagent calls count the subagents still to start (agyPending: the hook runs
@@ -330,6 +332,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     ...opts.deps,
     onCompleted: (s, result, source) => {
       opts.deps?.onCompleted?.(s, result, source);
+      completedWorkers.set(s.id, { session: s, result });
       if (source === 'hook') pendingCompletions.set(s.id, { session: s, result });
       else void retireCompletedWorker(s, result);
     },
@@ -1328,24 +1331,39 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       || (r.steps[r.current].direct && s.direct === r.steps[r.current].direct)));
   /** Preserve a one-task worker's result for its lead, then retire it and free its spawn slot. */
   async function retireCompletedWorker(s: Session, result: string | null) {
-    if (store.sessions.get(s.id) !== s || !s.parent || s.state !== 'done' || retiring.has(s.id)) return;
-    if ([...runs.values()].some((r) => isRunSession(r, s)) || mailbox.hasUnread(s.id)) return;
+    if (store.sessions.get(s.id) !== s || !s.parent || s.state !== 'done') { completedWorkers.delete(s.id); return; }
+    if (retiring.has(s.id)) return;
+    if ([...runs.values()].some((r) => isRunSession(r, s))) { completedWorkers.delete(s.id); return; }
+    if (mailbox.hasUnread(s.id)) return;
     const lead = store.sessions.get(s.parent);
-    if (!lead || retiring.has(lead.id) || ending.has(lead.id)) return; // keep the done card without a stable recipient
+    if (!lead) { completedWorkers.delete(s.id); return; } // keep the done card without a recipient
+    if (retiring.has(lead.id) || ending.has(lead.id)) return; // retry after its end attempt settles
     retiring.add(s.id);
     try {
       const heading = `${label(s)} finished its task.`;
       const body = result?.trim() || 'It did not provide a final summary.';
-      mailbox.sendSystem(s.id, s.parent, `${heading}\n\n${body}`.slice(0, 10_000));
+      const completed = completedWorkers.get(s.id);
+      if (!completed?.sent) {
+        mailbox.sendSystem(s.id, s.parent, `${heading}\n\n${body}`.slice(0, 10_000));
+        if (completed) completed.sent = true;
+      }
       const err = await endSession(s);
       if (err) {
+        if (!mailbox.hasUnreadSystem(s.id)) completedWorkers.delete(s.id);
         store.log(lead, `Could not end ${label(s)}: ${err}`); store.push(lead);
         await deliverMail();
         return;
       }
+      completedWorkers.delete(s.id);
       store.log(lead, `${heading} Ended it automatically.`); store.push(lead);
       await deliverMail();
-    } finally { retiring.delete(s.id); }
+    } finally {
+      retiring.delete(s.id);
+      retryCompletedChildren(s.id);
+    }
+  }
+  function retryCompletedChildren(parent: string) {
+    for (const completed of completedWorkers.values()) if (completed.session.parent === parent) void retireCompletedWorker(completed.session, completed.result);
   }
   const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
   /** Runs with a handoff or a step start in flight: a second "next" or handoff meanwhile would skip a step. */
@@ -1440,6 +1458,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
     if (ending.has(s.id)) return 'it is already ending';
+    if (mailbox.hasUnreadSystem(s.id)) return 'it has an unread completed-worker result: read aw_inbox before ending it';
     ending.add(s.id);
     try {
       if (s.direct) direct.kill(s.direct); // its exit removes the card
@@ -1456,7 +1475,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       forgetRecovery(s);
       if (store.sessions.get(s.id) === s) store.remove(s);
       return null;
-    } finally { ending.delete(s.id); }
+    } finally {
+      ending.delete(s.id);
+      if (!retiring.has(s.id)) retryCompletedChildren(s.id);
+    }
   }
   function runSessionGone(id: string) {
     const r = stepOf(id);
@@ -1472,7 +1494,10 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   async function deliverMail() {
     if (delivering) return;
     delivering = true;
-    try { await deliverPass(); } finally { delivering = false; }
+    try {
+      for (const completed of [...completedWorkers.values()]) await retireCompletedWorker(completed.session, completed.result);
+      await deliverPass();
+    } finally { delivering = false; }
   }
   /** Free to read mail: its turn is over, even if background work or a wake-up will bring it back. */
   function atPrompt(s: Session) {
