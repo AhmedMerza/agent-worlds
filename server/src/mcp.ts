@@ -27,7 +27,7 @@ export type McpContext = {
 const TOOLS = [
   {
     name: 'aw_agents',
-    description: 'List the coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, model, context (how full its context window is: used and limit tokens, pct; null when not known), repo, branch, task, state, and parent (the session that started it with aw_spawn). The first entry, marked you, is yourself: check your own context before taking on more. When one of your workers finishes, end it with aw_stop; start a new worker with aw_spawn if you later have another task.',
+    description: 'List the coding-agent sessions (Claude Code, Codex, Qwen Code, Kimi Code, Gemini CLI) running under Agent Worlds that you can message: id, agent, model, context (how full its context window is: used and limit tokens, pct; null when not known), repo, branch, task, state, and parent (the session that started it with aw_spawn). The first entry, marked you, is yourself: check your own context before taking on more. A one-task worker sends its final result to its lead and ends automatically; start a new worker with aw_spawn if you later have another task.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -55,7 +55,7 @@ const TOOLS = [
   },
   {
     name: 'aw_spawn',
-    description: 'Start a one-task worker session in a folder listed in any world, as part of your team (only when the user enabled spawning for your world). It gets the task as its first message; message it with aw_send while it works, then end it with aw_stop when it finishes. Do not reuse a finished worker for more work: start a new worker instead. With `steps`, start an Agent Worlds run instead: the task goes through those steps, each a session on its own agent.',
+    description: 'Start a one-task worker session in a folder listed in any world, as part of your team (only when the user enabled spawning for your world). It gets the task as its first message; message it with aw_send while it works. When it finishes successfully, its final result is sent to you and its session ends automatically. Do not reuse a finished worker for more work: start a new worker instead. With `steps`, start an Agent Worlds run instead: the task goes through those steps, each a session on its own agent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -101,7 +101,7 @@ export async function handleMcp(msg: Record<string, unknown>, ctx: McpContext): 
         protocolVersion: typeof m.params?.protocolVersion === 'string' ? m.params.protocolVersion : '2025-06-18',
         capabilities: { tools: {} },
         serverInfo: { name: 'agent-worlds', version: '1' },
-        instructions: 'Message the other coding agents working under Agent Worlds: aw_agents lists them, aw_send sends, aw_inbox reads what they sent you. Where the user allows it, aw_spawn starts a one-task worker session. When that worker finishes, end it with aw_stop; if you need more work later, start a new worker instead of reusing the finished session.',
+        instructions: 'Message the other coding agents working under Agent Worlds: aw_agents lists them, aw_send sends, aw_inbox reads what they sent you. Where the user allows it, aw_spawn starts a one-task worker session. When that worker finishes successfully, Agent Worlds sends its final result to its lead and ends it automatically; if you need more work later, start a new worker.',
       });
     case 'ping':
       return ok({});

@@ -120,6 +120,50 @@ test('aw_stop ends only the caller\'s own workers, which frees a place under the
   assert.equal(s.sessions.find((x: any) => x.id === `starting:awtest-spawn-${launched.length}`).parent, LEAD);
 });
 
+test('a finished one-task worker reports its result, ends, and frees its place', async () => {
+  const h = tmp('aw-spawn-retire-');
+  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 1 }] }), port: 0 };
+  const stopped: string[] = [], notices: [string, string][] = [];
+  let launches = 0;
+  const server = startServer(cfg, TOKEN, {
+    home: h, spawnIdMs: 30,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    createSession: (async (o: any) => ({ tmuxSession: `awtest-retire-${++launches}`, dir: o.repo, branch: null, pane: `%${60 + launches}` })) as any,
+    typeInto: async (pane, text) => { notices.push([pane, text]); return true; },
+    endPane: async (pane) => { stopped.push(pane); return null; },
+  });
+  await server.listen();
+  const url = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+  const hk = (body: object, id: string, pane: string) => fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id, cwd: '/work/x' }) });
+  const call = async (pane: string, name: string, args: object = {}) => ((await (await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()) as any).result;
+  try {
+    await hk(ev.start, 'lead-1', '%59');
+    const first = call('%59', 'aw_spawn', { folder: 'x', task: 'do one thing' });
+    for (let i = 0; i < 40 && !launches; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'worker-1', '%61');
+    assert.equal((await first).isError, undefined);
+
+    const response = await hk({ ...ev.stop, last_assistant_message: 'Finished.\n\nThe detailed result is here.' }, 'worker-1', '%61');
+    assert.equal(response.status, 204, 'the Stop hook receives its response before cleanup');
+    for (let i = 0; i < 40 && !stopped.length; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(stopped, ['%61']);
+    assert.equal(server.store.sessions.has('worker-1'), false);
+    assert.equal(notices.at(-1)?.[0], '%59', 'the lead is woken for the result');
+    const inbox = await call('%59', 'aw_inbox');
+    assert.match(inbox.content[0].text, /finished its task and was ended automatically[\s\S]*The detailed result is here/);
+
+    const replacement = await call('%59', 'aw_spawn', { folder: 'x', task: 'the next thing' });
+    for (let i = 0; i < 40 && launches < 2; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'worker-2', '%62');
+    assert.equal((await replacement).isError, undefined);
+    await hk({ ...ev.end, reason: 'prompt_input_exit' }, 'lead-1', '%59');
+    await hk({ ...ev.stop, last_assistant_message: 'Result with no live lead' }, 'worker-2', '%62');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(stopped, ['%61'], 'without a live lead, the result stays on the worker card');
+    assert.equal(server.store.sessions.get('worker-2')?.state, 'done');
+  } finally { await server.close(); }
+});
+
 test('a lead that /clears keeps its workers: it still lists and ends them', async () => {
   await hook(ev.start, 'eeee5555-0000', '%4', '/work/repo-a');
   const r = await tool('%4', 'aw_spawn', { folder: 'repo-b', task: 'worker of a lead that clears' });
@@ -146,6 +190,11 @@ test('a run takes one place under maxSpawned however many step sessions it opens
   assert.equal(run.isError, undefined, run.content[0].text);
   const pane = `%${10 + launched.length}`;
   await hook(ev.start, '99997777-0000', pane, '/work/repo-a');
+  const endedBefore = ended.length;
+  await hook(ev.stop, '99997777-0000', pane, '/work/repo-a');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ended.length, endedBefore, 'a run step is not automatically retired');
+  assert.ok((await state()).sessions.some((x: any) => x.id === '99997777-0000'));
   const h = await tool(pane, 'aw_handoff', { summary: 'planned' });
   assert.match(h.content[0].text, /next step has started/);
   const s = await state();

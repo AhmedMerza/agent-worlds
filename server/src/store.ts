@@ -132,6 +132,8 @@ export type Deps = {
   onEnded?: (id: string, reason: unknown) => void;
   /** Called after every handled event, for derived data (catch-up, context, review). */
   onEvent?: (s: Session, ev: string, p: Record<string, unknown>) => void;
+  /** A turn definitely completed successfully, either through its Stop hook or Codex rollout fallback. */
+  onCompleted?: (s: Session, result: string | null, source: 'hook' | 'poll') => void;
   now?: () => number;
 };
 
@@ -629,6 +631,7 @@ export class Store {
         }
         s.state = 'done'; s.waitingSince = null; s.now = 'Done';
         s.card = { kind: 'done', summary: oneLine(p.last_assistant_message), review: null };
+        this.deps.onCompleted?.(s, typeof p.last_assistant_message === 'string' ? p.last_assistant_message : null, 'hook');
         break;
       }
       case 'Interrupt': // Kimi: the turn was cancelled (Esc) and it sits at its prompt
@@ -879,6 +882,7 @@ export class Store {
     } else {
       s.state = 'done'; s.now = 'Done';
       s.card = { kind: 'done', summary: oneLine(p.last_agent_message), review: null };
+      this.deps.onCompleted?.(s, typeof p.last_agent_message === 'string' ? p.last_agent_message : null, 'poll');
     }
     this.push(s);
   }

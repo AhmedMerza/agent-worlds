@@ -213,6 +213,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   };
   /** Panes/ptys whose CLI reached /mcp before their first hook named the session (its MCP handshake races the hook). */
   const earlyMcp = new Set<string>();
+  /** Successful Stop hooks wait here until their HTTP response has finished before their pane is closed. */
+  const pendingCompletions = new Map<string, { session: Session; result: string | null }>();
   /**
    * The agy session a conversation it has not seen is a subagent of (agy runs each subagent as a conversation of its
    * own, in the same pane). Its invoke_subagent calls count the subagents still to start (agyPending: the hook runs
@@ -304,6 +306,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     parents,
     onRenamed: (from, to) => {
       recovery.rename(from, to);
+      mailbox.rename(from, to);
       const origin = spawnOrigins.get(from);
       if (origin) { spawnOrigins.set(to, origin); spawnOrigins.set(from, null); }
       const pending = launchPending.get(from);
@@ -325,6 +328,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       runEvent(s, ev);
     },
     ...opts.deps,
+    onCompleted: (s, result, source) => {
+      opts.deps?.onCompleted?.(s, result, source);
+      if (source === 'hook') pendingCompletions.set(s.id, { session: s, result });
+      else void retireCompletedWorker(s, result);
+    },
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
   const createSession = opts.createSession ?? sys.createSession;
@@ -595,6 +603,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       let out: string;
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
       if (res.destroyed) return;
+      const completedId = body.hook_event_name === 'Stop' && typeof body.session_id === 'string' ? body.session_id : null;
+      if (completedId) res.once('finish', () => {
+        const completed = pendingCompletions.get(completedId);
+        if (!completed) return;
+        pendingCompletions.delete(completedId);
+        void retireCompletedWorker(completed.session, completed.result);
+      });
       // agy takes Gemini's reply to a held tool
       if (held) out = toGemini(out);
       else if (agent === 'agy') out = toAgy(event, agyCwd, agyDir);
@@ -1304,6 +1319,32 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   /** Whether a session is one of a run's steps, this round or an earlier one (by id, or by its pane before its first hook). */
   const inRun = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id
     || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct));
+  const retiring = new Set<string>();
+  const completionQueued = new Set<string>();
+  /** Preserve a one-task worker's result for its lead, then retire it and free its spawn slot. */
+  async function retireCompletedWorker(s: Session, result: string | null) {
+    if (store.sessions.get(s.id) !== s || !s.parent || s.state !== 'done' || retiring.has(s.id)) return;
+    if ([...runs.values()].some((r) => inRun(r, s))) return;
+    const lead = store.sessions.get(s.parent);
+    if (!lead) return; // no live recipient: keep the done card for the user instead of losing its result
+    retiring.add(s.id);
+    try {
+      if (!completionQueued.has(s.id)) {
+        const heading = `${label(s)} finished its task and was ended automatically.`;
+        const body = result?.trim() || 'It did not provide a final summary.';
+        mailbox.sendSystem(s.id, s.parent, `${heading}\n\n${body}`.slice(0, 10_000));
+        completionQueued.add(s.id);
+        store.log(lead, heading); store.push(lead);
+      }
+      await deliverMail();
+      const err = await endSession(s);
+      if (err) {
+        store.log(lead, `Could not end ${label(s)}: ${err}`); store.push(lead);
+        return;
+      }
+      completionQueued.delete(s.id);
+    } finally { retiring.delete(s.id); }
+  }
   const pushRun = (r: Run) => { saveRuns(runsFile, runs, Date.now()); broadcast({ type: 'run', run: r }); };
   /** Runs with a handoff or a step start in flight: a second "next" or handoff meanwhile would skip a step. */
   const moving = new Set<string>();
@@ -1396,14 +1437,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
-    parents.set(s.id, null); // ended for good (End, aw_stop, a run's sessions): not resumed on its team
+    if (s.direct) direct.kill(s.direct); // its exit removes the card
+    else {
+      if (!s.tmux) return 'it does not run in tmux or under this server';
+      const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
+      if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
+    }
+    // Forget it only after the terminal ended: a failed End remains a worker and can be retried safely.
+    parents.set(s.id, null);
     if (spawnOrigins.get(s.id)) spawnOrigins.set(s.id, null);
     if (launchPending.get(s.id)) launchPending.set(s.id, null);
     mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
-    if (s.direct) { forgetRecovery(s); direct.kill(s.direct); return null; } // its exit removes the card
-    if (!s.tmux) return 'it does not run in tmux or under this server';
-    const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
-    if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
     forgetRecovery(s);
     if (store.sessions.get(s.id) === s) store.remove(s);
     return null;

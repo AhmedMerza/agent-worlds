@@ -45,6 +45,15 @@ export class Mailbox {
     const n = this.streak.get(key) ?? 0;
     if (n >= PING_PONG) return `you and this session have traded ${n} messages with no word from the user: stop and ask the user how to go on`;
     this.streak.set(key, n + 1);
+    return this.queue(from, to, text);
+  }
+
+  /** Queue a lifecycle notice that must not be refused by the agent-to-agent conversation limit. */
+  sendSystem(from: string, to: string, text: string): Message {
+    return this.queue(from, to, text);
+  }
+
+  private queue(from: string, to: string, text: string): Message {
     const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false };
     this.messages.push(m);
     // Full: drop what was read before anything unread
@@ -52,6 +61,23 @@ export class Mailbox {
     if (this.messages.length > KEEP) this.messages.splice(0, this.messages.length - KEEP);
     this.save();
     return m;
+  }
+
+  /** A conversation got a new id after /clear or /resume: its queued mail follows it. */
+  rename(from: string, to: string) {
+    let changed = false;
+    for (const m of this.messages) {
+      if (m.from === from) { m.from = to; changed = true; }
+      if (m.to === from) { m.to = to; changed = true; }
+    }
+    if (changed) this.save();
+    const next = new Map<string, number>();
+    for (const [pair, n] of this.streak) {
+      const ids = pair.split('|').map((id) => id === from ? to : id).sort();
+      const key = ids.join('|');
+      next.set(key, (next.get(key) ?? 0) + n);
+    }
+    this.streak = next;
   }
 
   /** Unread messages for `to`, oldest first, now marked read. */
