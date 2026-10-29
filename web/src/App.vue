@@ -15,7 +15,7 @@ import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
-import { state, groups, worldOf, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll } from './store'
+import { state, groups, worldOf, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll, dismissRecovery } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
 
 const help = ref(false)
@@ -85,6 +85,10 @@ function openNewTask(worldId?: string, run = false) {
 const menuOpen = ref(false)
 const updating = ref(false)
 const recovering = ref(false)
+const dismissing = ref(false)
+/** Why the last Resume all left sessions behind: shown on the banner, where the click was. */
+const recoverFailed = ref<{ id: string; error: string }[]>([])
+const recoverReasons = computed(() => [...new Set(recoverFailed.value.filter((f) => state.recoverable.some((s) => s.id === f.id)).map((f) => f.error))])
 const updateError = ref('')
 /** The session the update refusal names: only permission and question cards hold the server's pending requests. */
 const unanswered = computed(() => needsYou.value.find((s) => s.card?.kind === 'permission' || s.card?.kind === 'question'))
@@ -97,7 +101,14 @@ async function onRecover() {
   recovering.value = true
   const r = await resumeAll()
   recovering.value = false
-  if (r) showToast(r.failed.length ? `Restoring ${r.started.length}; ${r.failed.length} could not be resumed.` : `Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
+  if (!r) return
+  recoverFailed.value = r.failed
+  if (r.started.length) showToast(`Restoring ${r.started.length} saved conversation${r.started.length === 1 ? '' : 's'}…`)
+}
+async function onDismissRecovery() {
+  dismissing.value = true
+  for (const s of [...state.recoverable]) await dismissRecovery(s.id)
+  dismissing.value = false
 }
 watch(phone, () => { menuOpen.value = false })
 async function onNotify() {
@@ -203,8 +214,10 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
     <div v-else-if="!state.connected" class="banner" role="alert">Disconnected from the server. Reconnecting… what you see may be out of date.</div>
     <div v-if="state.connected && state.recoverable.length" class="banner recovery" role="status">
       <span><b>{{ state.recoverable.length }}</b> session{{ state.recoverable.length === 1 ? '' : 's' }} interrupted when this computer or Agent Worlds stopped.</span>
-      <button class="btn primary" :disabled="recovering" @click="onRecover">{{ recovering ? 'Resuming…' : 'Resume all' }}</button>
+      <button class="btn primary" :disabled="recovering || dismissing" @click="onRecover">{{ recovering ? 'Resuming…' : 'Resume all' }}</button>
       <button class="btn" @click="ui.recentRepo = null; ui.recentOpen = true">Review individually</button>
+      <button class="btn" :disabled="recovering || dismissing" title="Remove this restart reminder without deleting the agents' saved conversations" @click="onDismissRecovery">Dismiss reminder</button>
+      <p v-if="recoverReasons.length" class="err">Could not resume: {{ recoverReasons.join('; ') }}. <b>Dismiss reminder</b> keeps the conversation in Recent sessions.</p>
     </div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
     <nav v-if="phone && state.loaded" class="tabs" aria-label="View">

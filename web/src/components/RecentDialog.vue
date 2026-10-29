@@ -66,7 +66,7 @@ async function dismiss(id: string) {
               </div>
               <button v-if="h.managed && state.sessions[h.sessionId]" class="btn" @click="show(h.sessionId)">Show</button>
               <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" :agent="h.agent" @started="emit('close')" />
-              <button v-if="h.interrupted" class="btn" title="Remove this restart reminder without deleting the agent's saved conversation" @click="dismiss(h.sessionId)">Dismiss</button>
+              <button v-if="h.interrupted" class="btn" title="Remove this restart reminder without deleting the agent's saved conversation" @click="dismiss(h.sessionId)">Dismiss reminder</button>
             </li>
           </ul>
         </section>

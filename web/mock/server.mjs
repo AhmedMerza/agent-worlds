@@ -208,6 +208,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/agents/spawn') return json(200, { spawn: { claude: ['sonnet'], codex: [] } })
   if (req.method === 'GET' && url.pathname === '/api/history') return json(200, { sessions: history })
   if (req.method === 'POST' && url.pathname === '/api/sessions/resume-all') {
+    // MOCK_RECOVERY=gone: the interrupted session's worktree was deleted, so nothing resumes.
+    if (process.env.MOCK_RECOVERY === 'gone') return json(200, { started: [], failed: recoverable.map((s) => ({ id: s.id, error: `folder no longer exists: ${s.cwd}` })) })
     const started = recoverable.map((s) => s.id)
     for (const r of recoverable) {
       const h = history.find((x) => x.sessionId === r.id)
@@ -254,6 +256,7 @@ const server = http.createServer(async (req, res) => {
     console.log('resume', JSON.stringify(b))
     const h = history.find((x) => x.sessionId === b.sessionId)
     if (!h) return json(404, { error: 'No transcript for that session.' })
+    if (process.env.MOCK_RECOVERY === 'gone' && recoverable.some((s) => s.id === h.sessionId)) return json(422, { error: `the session's folder no longer exists: ${h.cwd}` })
     if (h.running && !b.force && !b.stop) return json(409, { error: 'that session is still running', pid: unmanaged.find((u) => u.sessionId === h.sessionId)?.pid ?? null })
     unmanaged = unmanaged.filter((u) => u.sessionId !== h.sessionId); pushUnmanaged()
     h.running = true; h.managed = true
