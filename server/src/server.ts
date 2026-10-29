@@ -1323,14 +1323,14 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const retiring = new Set<string>();
   /** Exact ids stay run sessions forever; pane/direct fallback is only safe for the current step of a live run. */
   const isRunSession = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id)
-    || (['running', 'waiting'].includes(r.status) && ((r.steps[r.current].pane && s.tmux?.pane === r.steps[r.current].pane)
+    || (!r.steps[r.current].sessionId && ['running', 'waiting'].includes(r.status) && ((r.steps[r.current].pane && s.tmux?.pane === r.steps[r.current].pane)
       || (r.steps[r.current].direct && s.direct === r.steps[r.current].direct)));
   /** Preserve a one-task worker's result for its lead, then retire it and free its spawn slot. */
   async function retireCompletedWorker(s: Session, result: string | null) {
     if (store.sessions.get(s.id) !== s || !s.parent || s.state !== 'done' || retiring.has(s.id)) return;
     if ([...runs.values()].some((r) => isRunSession(r, s)) || mailbox.hasUnread(s.id)) return;
     const lead = store.sessions.get(s.parent);
-    if (!lead) return; // no live recipient: keep the done card for the user instead of losing its result
+    if (!lead || retiring.has(lead.id)) return; // no stable recipient: keep the done card instead of losing its result
     retiring.add(s.id);
     try {
       const heading = `${label(s)} finished its task.`;

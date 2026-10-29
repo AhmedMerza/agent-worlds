@@ -126,6 +126,10 @@ test('a finished one-task worker reports its result, ends, and frees its place',
     id: 'old-run', task: 'old', worldId: 'w', repo: '/work/x', worktree: false, dir: '/work/x', handoff: null,
     steps: [{ kind: 'plan', agent: 'claude', checkpoint: false, status: 'handed', pane: '%61', direct: null, sessionId: 'old-run-worker', summary: 'done' }],
     current: 0, rounds: 0, earlier: [], status: 'done', note: null, startedAt: Date.now(),
+  }, {
+    id: 'live-run', task: 'live', worldId: 'w', repo: '/work/x', worktree: false, dir: '/work/x', handoff: null,
+    steps: [{ kind: 'plan', agent: 'claude', checkpoint: false, status: 'running', pane: '%61', direct: null, sessionId: 'old-live-worker', summary: null }],
+    current: 0, rounds: 0, earlier: [], status: 'waiting', note: 'waiting', startedAt: Date.now(),
   }]));
   const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 1 }] }), port: 0 };
   const stopped: string[] = [], notices: [string, string][] = [];
@@ -189,6 +193,46 @@ test('a finished one-task worker reports its result, ends, and frees its place',
     await new Promise((r) => setImmediate(r));
     assert.deepEqual(stopped, ['%61', '%62'], 'without a live lead, the result stays on the worker card');
     assert.equal(server.store.sessions.get('worker-3')?.state, 'done');
+  } finally { await server.close(); }
+});
+
+test('a child finishing while its parent retires keeps its result card', async () => {
+  const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 3 }] }), port: 0 };
+  let launches = 0, parentEnding = false, releaseParent!: () => void;
+  const stopped: string[] = [];
+  const server = startServer(cfg, TOKEN, {
+    home: tmp('aw-spawn-nested-retire-'), spawnIdMs: 500,
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
+    createSession: (async (o: any) => ({ tmuxSession: `awtest-nested-${++launches}`, dir: o.repo, branch: null, pane: `%${70 + launches}` })) as any,
+    typeInto: async () => true,
+    endPane: async (pane) => {
+      if (pane === '%71') { parentEnding = true; await new Promise<void>((r) => { releaseParent = r; }); }
+      stopped.push(pane); return null;
+    },
+  });
+  await server.listen();
+  const url = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
+  const hk = (body: object, id: string, pane: string) => fetch(`${url}/api/hook`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ ...body, session_id: id, cwd: '/work/x' }) });
+  const call = async (pane: string, name: string, args: object = {}) => ((await (await fetch(`${url}/mcp`, { method: 'POST', headers: { ...H, 'x-aw-pane': pane }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })).json()) as any).result;
+  try {
+    await hk(ev.start, 'root-lead', '%69');
+    const parent = call('%69', 'aw_spawn', { folder: 'x', task: 'parent work' });
+    for (let i = 0; i < 40 && launches < 1; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'parent-worker', '%71');
+    assert.equal((await parent).isError, undefined);
+    const child = call('%71', 'aw_spawn', { folder: 'x', task: 'child work' });
+    for (let i = 0; i < 40 && launches < 2; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'child-worker', '%72');
+    assert.equal((await child).isError, undefined);
+
+    await hk({ ...ev.stop, last_assistant_message: 'Parent result' }, 'parent-worker', '%71');
+    for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(parentEnding, true);
+    await hk({ ...ev.stop, last_assistant_message: 'Child result' }, 'child-worker', '%72');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(server.store.sessions.get('child-worker')?.state, 'done');
+    assert.doesNotMatch(stopped.join(','), /%72/, 'the child is not retired into a disappearing parent');
+    releaseParent();
   } finally { await server.close(); }
 });
 
