@@ -49,16 +49,26 @@ export class Mailbox {
   }
 
   /** Queue a lifecycle notice that must not be refused by the agent-to-agent conversation limit. */
-  sendSystem(from: string, to: string, text: string): Message {
+  sendSystem(from: string, to: string, text: string): Message | string {
     return this.queue(from, to, text, true);
   }
 
-  private queue(from: string, to: string, text: string, system = false): Message {
+  private queue(from: string, to: string, text: string, system = false): Message | string {
     const m: Message = { id: ++this.seq, from, to, text, at: this.now(), notified: false, read: false, ...(system ? { system: true } : {}) };
     this.messages.push(m);
     // Full: drop what was read before anything unread
     if (this.messages.length > KEEP) this.messages = this.messages.filter((x) => !x.read);
-    if (this.messages.length > KEEP) this.messages.splice(0, this.messages.length - KEEP);
+    // A completion result may be the only surviving copy after its worker closes: discard ordinary mail first.
+    for (let i = 0; this.messages.length > KEEP && i < this.messages.length;) {
+      if (this.messages[i].system) i++;
+      else this.messages.splice(i, 1);
+    }
+    if (this.messages.length > KEEP || !this.messages.includes(m)) {
+      const i = this.messages.indexOf(m);
+      if (i >= 0) this.messages.splice(i, 1);
+      this.save();
+      return 'the mailbox is full of unread completed-worker results: read aw_inbox before sending more';
+    }
     this.save();
     return m;
   }

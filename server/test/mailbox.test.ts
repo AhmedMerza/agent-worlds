@@ -64,6 +64,15 @@ test('Mailbox: lifecycle mail bypasses the conversation limit and follows /clear
   assert.equal(restored.hasUnreadSystem('lead-new'), true);
   assert.equal(restored.take('lead-new').at(-1)?.text, 'finished');
   assert.equal(restored.hasUnreadSystem('lead-new'), false);
+
+  const full = new Mailbox();
+  for (let i = 0; i < 499; i++) assert.equal(typeof full.sendSystem(`worker-${i}`, 'lead', `result ${i}`), 'object');
+  assert.equal(typeof full.send('peer', 'lead', 'ordinary mail'), 'object');
+  assert.equal(typeof full.sendSystem('worker-500', 'lead', 'last durable result'), 'object', 'lifecycle mail evicts ordinary mail first');
+  assert.equal(typeof full.sendSystem('worker-501', 'lead', 'cannot fit'), 'string', 'a worker stays open when no durable result slot remains');
+  const kept = full.take('lead');
+  assert.equal(kept.length, 500);
+  assert.equal(kept.every((m) => m.system), true);
 });
 
 test('/mcp: sessions find each other, mail waits until the recipient is free, then it is told once', async () => {

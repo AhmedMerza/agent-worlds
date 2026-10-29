@@ -332,9 +332,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     ...opts.deps,
     onCompleted: (s, result, source) => {
       opts.deps?.onCompleted?.(s, result, source);
-      completedWorkers.set(s.id, { session: s, result });
       if (source === 'hook') pendingCompletions.set(s.id, { session: s, result });
-      else void retireCompletedWorker(s, result);
+      else {
+        completedWorkers.set(s.id, { session: s, result });
+        void retireCompletedWorker(s, result);
+      }
     },
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
@@ -605,12 +607,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       }
       let out: string;
       try { out = await reply; } catch (e) { return send(res, 400, { error: (e as Error).message }); }
-      if (res.destroyed) return;
       const completedId = body.hook_event_name === 'Stop' && typeof body.session_id === 'string' ? body.session_id : null;
+      if (res.destroyed) return;
       if (completedId) res.once('finish', () => {
         const completed = pendingCompletions.get(completedId);
         if (!completed) return;
         pendingCompletions.delete(completedId);
+        completedWorkers.set(completedId, completed);
         void retireCompletedWorker(completed.session, completed.result);
       });
       // agy takes Gemini's reply to a held tool
@@ -958,7 +961,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (!over) { r.status = 'stopped'; r.note = null; pushRun(r); }
         if (ending) {
           const ofRun = [...store.sessions.values()].filter((s) => inRun(r, s));
-          const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
+          const failed = (await Promise.all(ofRun.map(async (s) => { const e = await endSession(s, true); return e && `${s.label ?? s.repoName}: ${e}`; }))).filter(Boolean);
           if (failed.length) return send(res, 502, { error: `could not end ${failed.join('; ')}`, run: r });
         }
         return send(res, 200, { run: r });
@@ -986,7 +989,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if ((s.state === 'working' || s.state === 'waiting') && body.force !== true) {
         return send(res, 409, { error: s.state === 'working' ? 'it is in the middle of a turn: ending stops that turn' : 'it is waiting on you: ending drops what it asked', working: true });
       }
-      const err = await endSession(s);
+      const err = await endSession(s, body.force === true);
       return err ? send(res, 502, { error: `could not end it: ${err}` }) : send(res, 200, { ok: true });
     }
     // Restart: a fresh claude resumes the same conversation and draws it from scratch (fixes a wrecked screen for good).
@@ -1344,7 +1347,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const body = result?.trim() || 'It did not provide a final summary.';
       const completed = completedWorkers.get(s.id);
       if (!completed?.sent) {
-        mailbox.sendSystem(s.id, s.parent, `${heading}\n\n${body}`.slice(0, 10_000));
+        const queued = mailbox.sendSystem(s.id, s.parent, `${heading}\n\n${body}`.slice(0, 10_000));
+        if (typeof queued === 'string') return; // keep the result on its worker card until the lead makes room
         if (completed) completed.sent = true;
       }
       const err = await endSession(s);
@@ -1456,9 +1460,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     pushRecoverable();
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
-  async function endSession(s: Session): Promise<string | null> {
+  async function endSession(s: Session, discardUnreadResults = false): Promise<string | null> {
     if (ending.has(s.id)) return 'it is already ending';
-    if (mailbox.hasUnreadSystem(s.id)) return 'it has an unread completed-worker result: read aw_inbox before ending it';
+    if (!discardUnreadResults && mailbox.hasUnreadSystem(s.id)) return 'it has an unread completed-worker result: read aw_inbox before ending it, or force End to discard it';
     ending.add(s.id);
     try {
       if (s.direct) direct.kill(s.direct); // its exit removes the card

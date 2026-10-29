@@ -272,13 +272,12 @@ test('a child finishing while its parent ends keeps its result card', async () =
     const childEnd = hk({ ...ev.stop, last_assistant_message: 'Queued child result' }, 'child-worker-3', '%76');
     for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
     assert.equal(parentEnding, true);
-    const blockedEnd = await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{"force":true}' });
+    const blockedEnd = await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{}' });
     assert.equal(blockedEnd.status, 502, 'manual End cannot discard an unread completed-worker result');
     assert.match((await blockedEnd.json() as any).error, /read aw_inbox/);
-    assert.match((await call('%75', 'aw_inbox')).content[0].text, /Queued child result/);
+    assert.equal((await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{"force":true}' })).status, 200, 'the user can explicitly discard unread results to force cleanup');
     releaseParent();
     assert.equal((await childEnd).status, 204);
-    assert.equal((await fetch(`${url}/api/sessions/parent-worker-3/end`, { method: 'POST', headers: H, body: '{"force":true}' })).status, 200);
   } finally { await server.close(); }
 });
 
