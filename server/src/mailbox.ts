@@ -44,8 +44,10 @@ export class Mailbox {
     const key = [from, to].sort().join('|');
     const n = this.streak.get(key) ?? 0;
     if (n >= PING_PONG) return `you and this session have traded ${n} messages with no word from the user: stop and ask the user how to go on`;
+    const queued = this.queue(from, to, text);
+    if (typeof queued === 'string') return queued;
     this.streak.set(key, n + 1);
-    return this.queue(from, to, text);
+    return queued;
   }
 
   /** Queue a lifecycle notice that must not be refused by the agent-to-agent conversation limit. */

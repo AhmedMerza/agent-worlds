@@ -70,9 +70,11 @@ test('Mailbox: lifecycle mail bypasses the conversation limit and follows /clear
   assert.equal(typeof full.send('peer', 'lead', 'ordinary mail'), 'object');
   assert.equal(typeof full.sendSystem('worker-500', 'lead', 'last durable result'), 'object', 'lifecycle mail evicts ordinary mail first');
   assert.equal(typeof full.sendSystem('worker-501', 'lead', 'cannot fit'), 'string', 'a worker stays open when no durable result slot remains');
+  for (let i = 0; i < PING_PONG; i++) assert.equal(typeof full.send('retry-peer', 'lead', `retry ${i}`), 'string');
   const kept = full.take('lead');
   assert.equal(kept.length, 500);
   assert.equal(kept.every((m) => m.system), true);
+  assert.equal(typeof full.send('retry-peer', 'lead', 'works after room is made'), 'object', 'failed queue attempts do not consume the conversation limit');
 });
 
 test('/mcp: sessions find each other, mail waits until the recipient is free, then it is told once', async () => {
