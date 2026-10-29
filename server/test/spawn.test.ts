@@ -196,9 +196,9 @@ test('a finished one-task worker reports its result, ends, and frees its place',
   } finally { await server.close(); }
 });
 
-test('a child finishing while its parent retires keeps its result card', async () => {
+test('a child finishing while its parent ends keeps its result card', async () => {
   const cfg = { ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: ['/work/x'], leadSpawn: true, maxSpawned: 3 }] }), port: 0 };
-  let launches = 0, parentEnding = false, releaseParent!: () => void;
+  let launches = 0, parentEnding = false, heldPane = '%71', releaseParent!: () => void;
   const stopped: string[] = [];
   const server = startServer(cfg, TOKEN, {
     home: tmp('aw-spawn-nested-retire-'), spawnIdMs: 500,
@@ -206,7 +206,7 @@ test('a child finishing while its parent retires keeps its result card', async (
     createSession: (async (o: any) => ({ tmuxSession: `awtest-nested-${++launches}`, dir: o.repo, branch: null, pane: `%${70 + launches}` })) as any,
     typeInto: async () => true,
     endPane: async (pane) => {
-      if (pane === '%71') { parentEnding = true; await new Promise<void>((r) => { releaseParent = r; }); }
+      if (pane === heldPane) { parentEnding = true; await new Promise<void>((r) => { releaseParent = r; }); }
       stopped.push(pane); return null;
     },
   });
@@ -233,6 +233,26 @@ test('a child finishing while its parent retires keeps its result card', async (
     assert.equal(server.store.sessions.get('child-worker')?.state, 'done');
     assert.doesNotMatch(stopped.join(','), /%72/, 'the child is not retired into a disappearing parent');
     releaseParent();
+    for (let i = 0; i < 40 && !stopped.includes('%71'); i++) await new Promise((r) => setTimeout(r, 5));
+
+    heldPane = '%73'; parentEnding = false;
+    const parent2 = call('%69', 'aw_spawn', { folder: 'x', task: 'manually ended parent' });
+    for (let i = 0; i < 40 && launches < 3; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'parent-worker-2', '%73');
+    assert.equal((await parent2).isError, undefined);
+    const child2 = call('%73', 'aw_spawn', { folder: 'x', task: 'second child' });
+    for (let i = 0; i < 40 && launches < 4; i++) await new Promise((r) => setTimeout(r, 5));
+    await hk(ev.start, 'child-worker-2', '%74');
+    assert.equal((await child2).isError, undefined);
+    const manualEnd = fetch(`${url}/api/sessions/parent-worker-2/end`, { method: 'POST', headers: H, body: '{"force":true}' });
+    for (let i = 0; i < 40 && !parentEnding; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.equal(parentEnding, true);
+    await hk({ ...ev.stop, last_assistant_message: 'Second child result' }, 'child-worker-2', '%74');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(server.store.sessions.get('child-worker-2')?.state, 'done');
+    assert.doesNotMatch(stopped.join(','), /%74/, 'manual End also keeps the child result visible');
+    releaseParent();
+    assert.equal((await manualEnd).status, 200);
   } finally { await server.close(); }
 });
 

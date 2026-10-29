@@ -1152,7 +1152,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         const from = store.sessions.get(self!)!;
         const hits = [...store.sessions.values()].filter((s) => s.id !== self && (mailboxed.has(s.id) || (s.parent === self && !s.id.startsWith('starting:'))) && s.id.startsWith(to));
         if (hits.length !== 1) return new Error(hits.length ? `"${to}" matches ${hits.length} sessions: use more of the id` : `no session "${to}": see aw_agents`);
-        if (retiring.has(hits[0].id)) return new Error(`${label(hits[0])} is ending now: start a new worker if more work is needed`);
+        if (retiring.has(hits[0].id) || ending.has(hits[0].id)) return new Error(`${label(hits[0])} is ending now: start a new worker if more work is needed`);
         const r = mailbox.send(from.id, hits[0].id, text);
         if (typeof r === 'string') return new Error(r);
         store.log(from, `Message to ${label(hits[0])}: ${text}`);
@@ -1321,6 +1321,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const inRun = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id
     || (st.pane && s.tmux?.pane === st.pane) || (st.direct && s.direct === st.direct));
   const retiring = new Set<string>();
+  const ending = new Set<string>();
   /** Exact ids stay run sessions forever; pane/direct fallback is only safe for the current step of a live run. */
   const isRunSession = (r: Run, s: Session) => [...r.steps, ...r.earlier].some((st) => st.sessionId === s.id)
     || (!r.steps[r.current].sessionId && ['running', 'waiting'].includes(r.status) && ((r.steps[r.current].pane && s.tmux?.pane === r.steps[r.current].pane)
@@ -1330,7 +1331,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (store.sessions.get(s.id) !== s || !s.parent || s.state !== 'done' || retiring.has(s.id)) return;
     if ([...runs.values()].some((r) => isRunSession(r, s)) || mailbox.hasUnread(s.id)) return;
     const lead = store.sessions.get(s.parent);
-    if (!lead || retiring.has(lead.id)) return; // no stable recipient: keep the done card instead of losing its result
+    if (!lead || retiring.has(lead.id) || ending.has(lead.id)) return; // keep the done card without a stable recipient
     retiring.add(s.id);
     try {
       const heading = `${label(s)} finished its task.`;
@@ -1438,20 +1439,24 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session): Promise<string | null> {
-    if (s.direct) direct.kill(s.direct); // its exit removes the card
-    else {
-      if (!s.tmux) return 'it does not run in tmux or under this server';
-      const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
-      if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
-    }
-    // Forget it only after the terminal ended: a failed End remains a worker and can be retried safely.
-    parents.set(s.id, null);
-    if (spawnOrigins.get(s.id)) spawnOrigins.set(s.id, null);
-    if (launchPending.get(s.id)) launchPending.set(s.id, null);
-    mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
-    forgetRecovery(s);
-    if (store.sessions.get(s.id) === s) store.remove(s);
-    return null;
+    if (ending.has(s.id)) return 'it is already ending';
+    ending.add(s.id);
+    try {
+      if (s.direct) direct.kill(s.direct); // its exit removes the card
+      else {
+        if (!s.tmux) return 'it does not run in tmux or under this server';
+        const err = await (opts.endPane ?? sys.endPane)(s.tmux.pane);
+        if (err && !/can't find pane|no server running/.test(err)) return err; // already gone is fine
+      }
+      // Forget it only after the terminal ended: a failed End remains a worker and can be retried safely.
+      parents.set(s.id, null);
+      if (spawnOrigins.get(s.id)) spawnOrigins.set(s.id, null);
+      if (launchPending.get(s.id)) launchPending.set(s.id, null);
+      mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
+      forgetRecovery(s);
+      if (store.sessions.get(s.id) === s) store.remove(s);
+      return null;
+    } finally { ending.delete(s.id); }
   }
   function runSessionGone(id: string) {
     const r = stepOf(id);
