@@ -305,7 +305,7 @@ test('only a confirmed successful turn emits completion, not a background timeou
   await store.handle(ev.start, '%5');
   await store.handle(ev.prompt, '%5');
   await store.handle({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, '%5');
-  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting for the helper', background_tasks: [{ id: 'b1' }] }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting for the helper', background_tasks: [{ id: 'b1', type: 'subagent', status: 'running' }] }, '%5');
   assert.equal(view().state, 'working');
   t += 31 * 60_000;
   store.checkBusy();
@@ -343,6 +343,82 @@ test('only background work started since your prompt keeps a session at its desk
   await store.handle({ ...ev.stop, background_tasks: [server] }, null);
   assert.equal(view().state, 'done');
   assert.equal('launched' in view(), false, 'internal');
+});
+
+test('a helper still running holds a worker through the turn that delivers another helper\'s result', async () => {
+  const completed: (string | null)[] = [];
+  const { store, view } = setup({ onCompleted: (result) => completed.push(result) });
+  const general = { id: 'a1', type: 'subagent', status: 'running', description: 'General reviewer' };
+  const testing = { id: 'a2', type: 'subagent', status: 'running', description: 'Testing reviewer' };
+  const server = { id: 'b1', type: 'shell', status: 'running', description: 'php artisan serve' };
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Both reviewers are running.', background_tasks: [general, testing, server] }, '%5');
+  assert.equal(view().state, 'working');
+  // Claude Code opens a turn by itself to deliver the general reviewer's result
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a1</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting on the testing reviewer.', background_tasks: [testing, server] }, '%5');
+  assert.equal(view().state, 'working', 'the testing reviewer will report back');
+  assert.equal(view().now, 'Waiting on 1 background task', 'the dev server from an earlier turn is not counted');
+  assert.deepEqual(completed, [], 'not finished while a helper runs');
+  // the last helper reports: only the dev server is left, and the worker is done
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a2</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Review done.', background_tasks: [server] }, '%5');
+  assert.equal(view().state, 'done');
+  assert.deepEqual(completed, ['Review done.']);
+});
+
+// Stop payload captured from Claude Code 2.1.316 (`claude -p`, trimmed): the turn that delivered the FAST helper's
+// result. FAST had already finished and is gone from the list; SLOW still runs. Every entry seen carried status 'running'.
+const capturedStop = {
+  hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'The PONG helper finished.',
+  background_tasks: [{ id: 'ad135cf1dafe45706', type: 'subagent', status: 'running', description: 'Sleep 60 then reply DONE', agent_type: 'general-purpose' }],
+  session_crons: [],
+};
+
+test('a finished helper still listed does not hold a worker: it goes done', async () => {
+  const completed: (string | null)[] = [];
+  const { store, view } = setup({ onCompleted: (result) => completed.push(result) });
+  const [slow] = capturedStop.background_tasks;
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a4dbbe54acbec5ed7</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, ...capturedStop }, '%5');
+  assert.equal(view().state, 'working');
+  assert.equal(view().busy?.tasks, 1);
+  assert.equal(view().now, 'Waiting on 1 background task', 'the captured running helper holds it');
+  // SLOW reports back; were it left in the list as finished, the worker must not sit out BUSY_TTL
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>ad135cf1dafe45706</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, ...capturedStop, last_assistant_message: 'Both helpers finished.', background_tasks: [{ ...slow, status: 'completed' }] }, '%5');
+  assert.equal(view().state, 'done');
+  assert.deepEqual(completed, ['Both helpers finished.']);
+});
+
+test('a helper from an earlier turn holds a worker unless its status says it is over, whatever its type', async () => {
+  const { store, view } = setup();
+  const stopWith = async (task: Record<string, unknown>) => {
+    await store.handle({ ...ev.prompt, prompt: '<task-notification> …' }, '%5');
+    await store.handle({ ...ev.stop, background_tasks: [task] }, '%5');
+    return view().state;
+  };
+  assert.equal(await stopWith({ id: 'c1', type: 'subagent' }), 'working', 'no status: assume live');
+  assert.equal(await stopWith({ id: 'c2', type: 'subagent', status: 'queued' }), 'working', 'unknown status: assume live');
+  assert.equal(await stopWith({ id: 'c3', type: 'workflow', status: 'running' }), 'working', 'any helper type but a shell or monitor');
+  for (const status of ['failed', 'killed', 'completed']) {
+    assert.equal(await stopWith({ id: 'c4', type: 'subagent', status }), 'done', `${status}: over`);
+  }
+  assert.equal(await stopWith({ id: 'c5', type: 'monitor', status: 'running' }), 'done', 'a monitor from an earlier turn may run forever');
+});
+
+test('a running helper and a scheduled wake-up together: it waits on the helper', async () => {
+  const t0 = new Date(2026, 9, 13, 14, 0).getTime();
+  const { store, view } = setup({ now: () => t0 });
+  const helper = { id: 'd1', type: 'subagent', status: 'running' };
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.stop, background_tasks: [helper], session_crons: [{ id: 'w', schedule: '30 14 13 10 *', recurring: false, prompt: 'check' }] }, '%5');
+  assert.equal(view().state, 'working');
+  assert.equal(view().now, 'Waiting on 1 background task');
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> …' }, '%5');
+  await store.handle({ ...ev.stop, background_tasks: [{ ...helper, status: 'completed' }], session_crons: [{ id: 'w', schedule: '30 14 13 10 *', recurring: false, prompt: 'check' }] }, '%5');
+  assert.equal(view().now, 'Scheduled to come back', 'helper over, the wake-up still holds it');
 });
 
 test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {
