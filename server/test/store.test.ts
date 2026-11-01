@@ -305,7 +305,7 @@ test('only a confirmed successful turn emits completion, not a background timeou
   await store.handle(ev.start, '%5');
   await store.handle(ev.prompt, '%5');
   await store.handle({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, '%5');
-  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting for the helper', background_tasks: [{ id: 'b1' }] }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting for the helper', background_tasks: [{ id: 'b1', type: 'subagent', status: 'running' }] }, '%5');
   assert.equal(view().state, 'working');
   t += 31 * 60_000;
   store.checkBusy();
@@ -366,6 +366,28 @@ test('a helper still running holds a worker through the turn that delivers anoth
   await store.handle({ ...ev.stop, last_assistant_message: 'Review done.', background_tasks: [server] }, '%5');
   assert.equal(view().state, 'done');
   assert.deepEqual(completed, ['Review done.']);
+});
+
+// Stop payload captured from Claude Code 2.1.316 (`claude -p`, trimmed): the turn that delivered the FAST helper's
+// result. FAST had already finished and is gone from the list; SLOW still runs. Every entry seen carried status 'running'.
+const capturedStop = {
+  hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: 'The PONG helper finished.',
+  background_tasks: [{ id: 'ad135cf1dafe45706', type: 'subagent', status: 'running', description: 'Sleep 60 then reply DONE', agent_type: 'general-purpose' }],
+  session_crons: [],
+};
+
+test('a finished helper still listed does not hold a worker: it goes done', async () => {
+  const completed: (string | null)[] = [];
+  const { store, view } = setup({ onCompleted: (result) => completed.push(result) });
+  const [slow] = capturedStop.background_tasks;
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a4dbbe54acbec5ed7</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, ...capturedStop }, '%5');
+  assert.equal(view().now, 'Waiting on 1 background task', 'the captured running helper holds it');
+  // SLOW reports back; were it left in the list as finished, the worker must not sit out BUSY_TTL
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>ad135cf1dafe45706</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, ...capturedStop, last_assistant_message: 'Both helpers finished.', background_tasks: [{ ...slow, status: 'completed' }] }, '%5');
+  assert.equal(view().state, 'done');
+  assert.deepEqual(completed, ['Both helpers finished.']);
 });
 
 test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {

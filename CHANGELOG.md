@@ -5,7 +5,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-11-01
-- A worker waiting on background helpers is no longer ended as finished when one of them reports. The turn Claude Code opens to deliver a helper's result counted as a new prompt, so the helpers still running were forgotten; the lead got "finished its task" and the rest of the helpers died with the worker (seen with `mr-review`'s background reviewers). A background helper from any turn now keeps the session at its desk; a background command or monitor from an earlier turn (a dev server) still does not.
+- A worker waiting on background helpers is no longer ended as finished when one of them reports. The turn Claude Code opens to deliver a helper's result counted as a new prompt, so the helpers still running were forgotten; the lead got "finished its task" and the rest of the helpers died with the worker (seen with `mr-review`'s background reviewers). A background helper from any turn now keeps the session at its desk while Claude Code lists it as running; a background command or monitor from an earlier turn (a dev server) still does not.
 
 ## 2026-10-27
 - **Full height layout** (the new default; **Layout** in the header switches back to **Stacked**, the old page): on screens 1000px wide or more the world and the terminal or chat sit side by side at full height, with a divider you drag (or move with the arrow keys) to share the width; it is remembered. **Needs you** and the session details open from a **Needs you (N)** button as a floating panel.

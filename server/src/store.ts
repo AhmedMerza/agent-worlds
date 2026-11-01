@@ -620,8 +620,10 @@ export class Store {
         // A background helper always reports back, whichever turn started it: the turn Claude Code opens to deliver one
         // helper's result fires UserPromptSubmit too, and must not forget the helpers still running. A shell or monitor
         // only counts if started since your prompt: from an earlier turn it may run forever (a dev server, an artifact watcher).
-        const listed: { type?: unknown }[] = Array.isArray(p.background_tasks) ? p.background_tasks : [];
-        const tasks = s.launched ? listed.length : listed.filter((t) => t?.type === 'subagent').length;
+        // Only entries still `running` count. Claude Code 2.1.316 drops a helper from the list the moment it finishes,
+        // but an entry left behind with any other status must not hold the session for BUSY_TTL.
+        const listed: { type?: unknown; status?: unknown }[] = Array.isArray(p.background_tasks) ? p.background_tasks : [];
+        const tasks = listed.filter((t) => t?.status === 'running' && (s.launched || t.type === 'subagent')).length;
         const crons = Array.isArray(p.session_crons) ? p.session_crons : [];
         if (tasks || crons.length) {
           const t = this.now(), nextAt = nextWake(crons, t);
