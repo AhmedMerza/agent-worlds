@@ -617,9 +617,11 @@ export class Store {
           break;
         }
         // Background work runs on, or a wake-up is scheduled: Claude comes back by itself, so it is still at its desk.
-        // Only work started since your prompt brings Claude back. Claude Code also lists long-runners from earlier
-        // turns (a dev server, an artifact watcher) and finished helpers; counting those held sessions at their desks.
-        const tasks = s.launched && Array.isArray(p.background_tasks) ? p.background_tasks.length : 0;
+        // A background helper always reports back, whichever turn started it: the turn Claude Code opens to deliver one
+        // helper's result fires UserPromptSubmit too, and must not forget the helpers still running. A shell or monitor
+        // only counts if started since your prompt: from an earlier turn it may run forever (a dev server, an artifact watcher).
+        const listed: { type?: unknown }[] = Array.isArray(p.background_tasks) ? p.background_tasks : [];
+        const tasks = s.launched ? listed.length : listed.filter((t) => t?.type === 'subagent').length;
         const crons = Array.isArray(p.session_crons) ? p.session_crons : [];
         if (tasks || crons.length) {
           const t = this.now(), nextAt = nextWake(crons, t);

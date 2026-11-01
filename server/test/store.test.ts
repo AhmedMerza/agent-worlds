@@ -345,6 +345,29 @@ test('only background work started since your prompt keeps a session at its desk
   assert.equal('launched' in view(), false, 'internal');
 });
 
+test('a helper still running holds a worker through the turn that delivers another helper\'s result', async () => {
+  const completed: (string | null)[] = [];
+  const { store, view } = setup({ onCompleted: (result) => completed.push(result) });
+  const general = { id: 'a1', type: 'subagent', status: 'running', description: 'General reviewer' };
+  const testing = { id: 'a2', type: 'subagent', status: 'running', description: 'Testing reviewer' };
+  const server = { id: 'b1', type: 'shell', status: 'running', description: 'php artisan serve' };
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.preAgent, tool_input: { ...ev.preAgent.tool_input, run_in_background: true } }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Both reviewers are running.', background_tasks: [general, testing, server] }, '%5');
+  assert.equal(view().state, 'working');
+  // Claude Code opens a turn by itself to deliver the general reviewer's result
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a1</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Waiting on the testing reviewer.', background_tasks: [testing, server] }, '%5');
+  assert.equal(view().state, 'working', 'the testing reviewer will report back');
+  assert.equal(view().now, 'Waiting on 1 background task', 'the dev server from an earlier turn is not counted');
+  assert.deepEqual(completed, [], 'not finished while a helper runs');
+  // the last helper reports: only the dev server is left, and the worker is done
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a2</task-id> …' }, '%5');
+  await store.handle({ ...ev.stop, last_assistant_message: 'Review done.', background_tasks: [server] }, '%5');
+  assert.equal(view().state, 'done');
+  assert.deepEqual(completed, ['Review done.']);
+});
+
 test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {
   const t0 = new Date(2026, 9, 13, 14, 0).getTime();
   let t = t0;
