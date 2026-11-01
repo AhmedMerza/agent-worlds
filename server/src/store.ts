@@ -27,6 +27,8 @@ type Busy = null | { kind: 'compact' } | { kind: 'background'; tasks: number; ne
 
 /** No word from background work for this long: the session is shown as done after all. */
 const BUSY_TTL = 30 * 60_000;
+/** background_tasks statuses that mean the task is over (Claude Code lists live ones as 'running'). */
+const FINISHED = new Set(['completed', 'failed', 'killed', 'cancelled', 'canceled', 'stopped', 'error']);
 const WAKE_GRACE = 5 * 60_000;
 /** Codex rollout entries that start or end a turn, and how long its Stop hook gets to arrive first. */
 const CODEX_TURN = new Set(['task_started', 'task_complete', 'turn_aborted']);
@@ -620,10 +622,12 @@ export class Store {
         // A background helper always reports back, whichever turn started it: the turn Claude Code opens to deliver one
         // helper's result fires UserPromptSubmit too, and must not forget the helpers still running. A shell or monitor
         // only counts if started since your prompt: from an earlier turn it may run forever (a dev server, an artifact watcher).
-        // Only entries still `running` count. Claude Code 2.1.316 drops a helper from the list the moment it finishes,
-        // but an entry left behind with any other status must not hold the session for BUSY_TTL.
+        // Claude Code 2.1.316 drops a helper from the list the moment it finishes; an entry left behind with a finished
+        // status must not hold the session for BUSY_TTL. A missing or unknown status counts as live: retiring a worker
+        // early kills its helpers, and BUSY_TTL already bounds a wrong guess the other way.
         const listed: { type?: unknown; status?: unknown }[] = Array.isArray(p.background_tasks) ? p.background_tasks : [];
-        const tasks = listed.filter((t) => t?.status === 'running' && (s.launched || t.type === 'subagent')).length;
+        const tasks = listed.filter((t) => !FINISHED.has(String(t?.status))
+          && (s.launched || (t?.type !== 'shell' && t?.type !== 'monitor'))).length;
         const crons = Array.isArray(p.session_crons) ? p.session_crons : [];
         if (tasks || crons.length) {
           const t = this.now(), nextAt = nextWake(crons, t);

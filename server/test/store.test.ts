@@ -382,12 +382,43 @@ test('a finished helper still listed does not hold a worker: it goes done', asyn
   const [slow] = capturedStop.background_tasks;
   await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>a4dbbe54acbec5ed7</task-id> …' }, '%5');
   await store.handle({ ...ev.stop, ...capturedStop }, '%5');
+  assert.equal(view().state, 'working');
+  assert.equal(view().busy?.tasks, 1);
   assert.equal(view().now, 'Waiting on 1 background task', 'the captured running helper holds it');
   // SLOW reports back; were it left in the list as finished, the worker must not sit out BUSY_TTL
   await store.handle({ ...ev.prompt, prompt: '<task-notification> <task-id>ad135cf1dafe45706</task-id> …' }, '%5');
   await store.handle({ ...ev.stop, ...capturedStop, last_assistant_message: 'Both helpers finished.', background_tasks: [{ ...slow, status: 'completed' }] }, '%5');
   assert.equal(view().state, 'done');
   assert.deepEqual(completed, ['Both helpers finished.']);
+});
+
+test('a helper from an earlier turn holds a worker unless its status says it is over, whatever its type', async () => {
+  const { store, view } = setup();
+  const stopWith = async (task: Record<string, unknown>) => {
+    await store.handle({ ...ev.prompt, prompt: '<task-notification> …' }, '%5');
+    await store.handle({ ...ev.stop, background_tasks: [task] }, '%5');
+    return view().state;
+  };
+  assert.equal(await stopWith({ id: 'c1', type: 'subagent' }), 'working', 'no status: assume live');
+  assert.equal(await stopWith({ id: 'c2', type: 'subagent', status: 'queued' }), 'working', 'unknown status: assume live');
+  assert.equal(await stopWith({ id: 'c3', type: 'workflow', status: 'running' }), 'working', 'any helper type but a shell or monitor');
+  for (const status of ['failed', 'killed', 'completed']) {
+    assert.equal(await stopWith({ id: 'c4', type: 'subagent', status }), 'done', `${status}: over`);
+  }
+  assert.equal(await stopWith({ id: 'c5', type: 'monitor', status: 'running' }), 'done', 'a monitor from an earlier turn may run forever');
+});
+
+test('a running helper and a scheduled wake-up together: it waits on the helper', async () => {
+  const t0 = new Date(2026, 9, 13, 14, 0).getTime();
+  const { store, view } = setup({ now: () => t0 });
+  const helper = { id: 'd1', type: 'subagent', status: 'running' };
+  await store.handle(ev.prompt, '%5');
+  await store.handle({ ...ev.stop, background_tasks: [helper], session_crons: [{ id: 'w', schedule: '30 14 13 10 *', recurring: false, prompt: 'check' }] }, '%5');
+  assert.equal(view().state, 'working');
+  assert.equal(view().now, 'Waiting on 1 background task');
+  await store.handle({ ...ev.prompt, prompt: '<task-notification> …' }, '%5');
+  await store.handle({ ...ev.stop, background_tasks: [{ ...helper, status: 'completed' }], session_crons: [{ id: 'w', schedule: '30 14 13 10 *', recurring: false, prompt: 'check' }] }, '%5');
+  assert.equal(view().now, 'Scheduled to come back', 'helper over, the wake-up still holds it');
 });
 
 test('a scheduled wake-up keeps the session at its desk until a few minutes after it is due', async () => {
