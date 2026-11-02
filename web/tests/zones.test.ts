@@ -17,6 +17,14 @@ describe('zones', () => {
     // a joins help later: ordered by start time, not by who arrived last
     expect(assignZones([mk('a', { startedAt: 3, state: 'done' }), c2]).help.map((s) => s.id)).toEqual(['c', 'a'])
   })
+  it('gives the selected session a seat when its zone is full', () => {
+    const all = Array.from({ length: capacity('desks') + 1 }, (_, i) => mk('s' + i, { startedAt: i }))
+    const last = all[all.length - 1].id
+    expect(assignZones(all).desks.slice(0, capacity('desks')).map((s) => s.id)).not.toContain(last)
+    const seated = assignZones(all, new Set(), last).desks.slice(0, capacity('desks')).map((s) => s.id)
+    expect(seated).toContain(last)
+    expect(seated.slice(0, -1)).toEqual(all.slice(0, capacity('desks') - 1).map((s) => s.id)) // nobody else moves
+  })
   it('ties break by id', () => {
     expect(assignZones([mk('z'), mk('m')]).desks.map((s) => s.id)).toEqual(['m', 'z'])
   })

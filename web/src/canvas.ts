@@ -415,7 +415,7 @@ export function drawRoom(ctx: CanvasRenderingContext2D, o: DrawOpts): Hit[] {
   ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.imageSmoothingEnabled = true
   ts = Math.min(1.6, Math.max(1, 10 / (7 * o.k / (globalThis.devicePixelRatio || 1))))
   ctx.clearRect(0, 0, W, o.h)
-  const zones = assignZones(o.group.sessions, o.arrivals)
+  const zones = assignZones(o.group.sessions, o.arrivals, o.selectedId)
   const f: Frame = { tt: o.reduced ? 0 : o.t, steps: o.steps ?? {}, roles: o.roles ?? {}, zx: zoneBounds(countZones(zones)), focus: o.hoverId ?? o.selectedId, top: [], ui: [], lights: [] }
   drawScenery(ctx, o.group.world.color, o.h, f)
 
