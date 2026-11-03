@@ -93,7 +93,7 @@ async function end() {
   const r = await endSession(cur.id, true)
   showToast(r.ok ? `Ended ${nameOf(cur)}.` : `Could not end it: ${r.error}`)
 }
-const endLabel = computed(() => !endArmed.value ? 'End session' : s.value?.state === 'working' ? 'Stop the turn and end?' : s.value?.state === 'waiting' ? 'It is waiting on you. End?' : s.value?.worktree ? 'End it? Unsaved work is kept; a clean worktree is deleted' : 'End it? Click again')
+const endLabel = computed(() => !endArmed.value ? 'End session' : s.value?.state === 'working' ? 'Stop the turn and end?' : s.value?.state === 'waiting' ? 'It is waiting on you. End?' : s.value?.worktree ? 'End? Unsaved work stays' : 'End it? Click again')
 /** Your name for the session, edited in place of its name in the header. */
 const renaming = ref<string | null>(null)
 const renameIn = ref<HTMLInputElement | null>(null)
@@ -222,7 +222,7 @@ watch(termFocusTick, async () => {
         <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" :title="`Jump to ${agentName(s)}'s latest output (Ctrl+End)`" @click="jumpToLatest">Jump to latest</button>
         <button v-if="hasTmux && !historyOpen && link === 'live' && (s?.agent ?? 'claude') === 'claude'" :class="['hdr-btn', 'term-scroll', { danger: restartArmed }]" title="Screen looks wrecked? Quit this Claude and resume the same conversation in a fresh one" @click="restart">{{ !restartArmed ? 'Restart' : s?.state === 'working' ? 'Restart now (stops the turn)' : 'Restart now' }}</button>
         <button v-if="!s.ghost && renaming === null" class="hdr-btn term-scroll" title="Give this session a name for its name tag" @click="startRename">Rename</button>
-        <button v-if="hasTmux" :class="['hdr-btn', 'term-scroll', { danger: endArmed }]" :title="`Quit ${agentName(s)} and close this terminal`" @click="end">{{ endLabel }}</button>
+        <button v-if="hasTmux" :class="['hdr-btn', 'term-scroll', { danger: endArmed }]" :title="`Quit ${agentName(s)} and close this terminal${s.worktree ? '. Its worktree is deleted unless it holds unsaved or unpushed work' : ''}`" @click="end">{{ endLabel }}</button>
         <span v-if="hasTmux && !termFocused && !touch" class="term-paused idle">Press <kbd>T</kbd> or click to type here</span>
         <span v-if="hasTmux" class="term-state" :style="termFocused ? 'margin-left:12px' : ''">{{ link === 'live' ? 'Live terminal' : link === 'connecting' ? 'Connecting…' : 'Reconnecting…' }}</span>
         <span v-if="s?.direct" class="term-note" title="tmux is not installed, so Agent Worlds runs this session itself. Install tmux to keep sessions running across restarts.">Runs without tmux · stops if Agent Worlds restarts</span>
