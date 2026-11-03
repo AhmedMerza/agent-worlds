@@ -52,6 +52,8 @@ type Opts = {
   spawnIdMs?: number;
   /** Closes a tmux pane (End session); tests stub it. */
   endPane?: typeof sys.endPane;
+  /** Deletes an ended session's worktree when nothing in it would be lost; tests stub it. */
+  removeWorktree?: typeof sys.removeWorktree;
   /** Lists live tmux panes (the sweep); tests stub it. */
   tmuxPanes?: typeof sys.tmuxPanes;
   /** Types into a tmux pane (the mail notice); tests stub it. */
@@ -317,6 +319,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     },
     onEnded: (id, reason) => {
       if (!closing) recovery.delete(id);
+      const s = store.sessions.get(id);
+      if (s && (reason === 'prompt_input_exit' || reason === 'logout')) cleanWorktree(s); // quit for good (/exit)
       if (store.sessions.has(id) && reason !== 'prompt_input_exit' && reason !== 'logout') resumableRemoval.add(id);
     },
     onEvent: (s, ev, p) => {
@@ -1454,10 +1458,28 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /** Ended for good: no longer offered as interrupted, nor the conversation it was restoring. */
   function forgetRecovery(s: Session) {
+    cleanWorktree(s);
     recovery.delete(s.id);
     const terminal = s.tmux?.session ?? s.direct;
     for (const [id, restoring] of resuming) if (restoring === terminal) { recovery.delete(id); resuming.delete(id); parents.set(id, null); }
     pushRecoverable();
+  }
+  /**
+   * Ended for good (End, /exit, its pane closed while tmux runs; never a restart, crash or shutdown): its worktree goes
+   * too, unless another session or a live run still works in it (later run steps reuse the dir). A toast says which.
+   */
+  const cleaning = new Set<string>();
+  function cleanWorktree(s: Session) {
+    if (closing || !s.worktree || cleaning.has(s.cwd)) return;
+    const within = (d: string | null) => !!d && (d === s.cwd || d.startsWith(s.cwd + '/'));
+    if ([...store.sessions.values()].some((o) => o !== s && within(o.cwd))) return;
+    if ([...runs.values()].some((r) => (r.status === 'running' || r.status === 'waiting') && within(r.dir))) return;
+    cleaning.add(s.cwd);
+    void (opts.removeWorktree ?? sys.removeWorktree)(s.cwd, s.repo).then((why) => {
+      if (why === undefined) return;
+      if (why) console.error(`[agent-worlds] kept worktree ${s.cwd}: ${why}`);
+      broadcast({ type: 'toast', text: why ? `Kept the worktree ${basename(s.cwd)}: ${why}.` : `Deleted the worktree ${basename(s.cwd)}: nothing in it was unsaved.` });
+    }).finally(() => cleaning.delete(s.cwd));
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session, discardUnreadResults = false): Promise<string | null> {
@@ -1477,6 +1499,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (launchPending.get(s.id)) launchPending.set(s.id, null);
       mailbox.forget(s.id); if (mailboxed.delete(s.id)) saveMailboxed();
       forgetRecovery(s);
+      procs = procs.filter((p) => p.sessionId !== s.id); // the 10 s scan would list it as running until it next runs
       if (store.sessions.get(s.id) === s) store.remove(s);
       return null;
     } finally {

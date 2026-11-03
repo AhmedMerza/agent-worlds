@@ -377,6 +377,11 @@ that was already running when you updated Agent Worlds sees the new tools only a
   and `aw_agents` shows the lead as its `parent`. This survives a restart (`<home>/parents.json`).
 - `aw_stop { session }` ends one of the lead's own workers, as **End** does (a run it is a step of
   stops too). A lead cannot end sessions it did not start.
+- A session that ends for good (**End**, `aw_stop`, a finished worker closing itself, `/exit`, or its
+  terminal closing on its own) also deletes the worktree Agent Worlds made for it, and its local branch
+  when git allows `branch -d` (merged, or fully pushed to its upstream). A toast says which happened.
+  A worktree with uncommitted or untracked files, or commits no remote has, is kept, as is one another
+  session or a live run still uses. A restart, a crash or stopping Agent Worlds never deletes one.
 - Workers are one-task sessions. When one finishes successfully, Agent Worlds sends its final result
   to the lead and ends it automatically. If more work is needed later, the lead starts a fresh worker
   with `aw_spawn` instead of reusing the finished session. Waiting, failed and run-step sessions stay open.

@@ -93,7 +93,7 @@ async function end() {
   const r = await endSession(cur.id, true)
   showToast(r.ok ? `Ended ${nameOf(cur)}.` : `Could not end it: ${r.error}`)
 }
-const endLabel = computed(() => !endArmed.value ? 'End session' : s.value?.state === 'working' ? 'Stop the turn and end?' : s.value?.state === 'waiting' ? 'It is waiting on you. End?' : 'End it? Click again')
+const endLabel = computed(() => !endArmed.value ? 'End session' : s.value?.state === 'working' ? 'Stop the turn and end?' : s.value?.state === 'waiting' ? 'It is waiting on you. End?' : s.value?.worktree ? 'End it? Unsaved work is kept; a clean worktree is deleted' : 'End it? Click again')
 /** Your name for the session, edited in place of its name in the header. */
 const renaming = ref<string | null>(null)
 const renameIn = ref<HTMLInputElement | null>(null)
