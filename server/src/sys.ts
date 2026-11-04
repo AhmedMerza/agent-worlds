@@ -1,7 +1,7 @@
 import { execFile } from './child.ts';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.ts';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
@@ -177,6 +177,8 @@ export async function createSession(opts: { repo: string; task?: string; worktre
  */
 export async function removeWorktree(dir: string, repo: string): Promise<string | null | undefined> {
   if (dirname(dir) !== `${repo}-worktrees` || !existsSync(dir)) return undefined;
+  // A run's plan and review notes live in .aw/, which git is told to ignore (excludeRunFiles), so status never lists them
+  try { if (readdirSync(join(dir, '.aw')).length) return 'it holds run notes in .aw/'; } catch { /* no .aw */ }
   const [status, unpushed, branch] = await Promise.all([
     run('git', ['-C', dir, 'status', '--porcelain'], 30_000),
     run('git', ['-C', dir, 'rev-list', '--count', 'HEAD', '--not', '--remotes'], 30_000),

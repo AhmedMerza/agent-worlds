@@ -459,7 +459,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const alive = await (opts.tmuxPanes ?? sys.tmuxPanes)();
     if (!alive) return;
     store.sweep(alive);
-    if (alive.size && !closing) for (const s of before) if (!store.sessions.has(s.id)) forgetRecovery(s);
+    if (alive.size && !closing) for (const s of before) if (!store.sessions.has(s.id) && !(s.tmux && alive.has(s.tmux.pane))) forgetRecovery(s); // left some other way while tmux answered: its pane lives
   };
   const waiting = () => [...store.sessions.values()].filter((s) => s.pending.length);
   const access = new AccessLog(join(opts.home ?? homeDir(), 'access.json'));
@@ -1483,7 +1483,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (why === undefined) return;
       if (why) console.error(`[agent-worlds] kept worktree ${s.cwd}: ${why}`);
       broadcast({ type: 'toast', text: why ? `Kept the worktree ${basename(s.cwd)}: ${why}.` : `Deleted the worktree ${basename(s.cwd)}: nothing in it was unsaved.` });
-    }).finally(() => cleaning.delete(s.cwd));
+    }).catch((e) => console.error('[agent-worlds] worktree cleanup failed', (e as Error).message)).finally(() => cleaning.delete(s.cwd));
   }
   /** Quits a session's agent and closes its terminal; its card goes. Null when done, else why not. */
   async function endSession(s: Session, discardUnreadResults = false): Promise<string | null> {

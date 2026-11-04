@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { removeWorktree } from '../src/sys.ts';
 import { tmp } from './fixtures.ts';
@@ -48,6 +48,12 @@ test('anything that would be lost keeps the worktree', async () => {
   git(unpushed.dir, 'commit', '-q', '--allow-empty', '-m', 'local only');
   assert.match(await removeWorktree(unpushed.dir, unpushed.repo) ?? '', /1 commit\(s\) no remote has/);
   assert.equal(existsSync(unpushed.dir), true);
+
+  const run = setup(); // a run's notes: git ignores .aw/, but they are the run's output
+  mkdirSync(join(run.dir, '.aw', 'run-1'), { recursive: true }); writeFileSync(join(run.dir, '.aw', 'run-1', 'plan.md'), 'x');
+  writeFileSync(join(run.dir, '.gitignore'), '.aw/\n'); git(run.dir, 'add', '.gitignore'); git(run.dir, 'commit', '-qm', 'ignore'); git(run.dir, 'push', '-q', 'origin', `HEAD:${run.branch}`);
+  assert.match(await removeWorktree(run.dir, run.repo) ?? '', /run notes/);
+  assert.equal(existsSync(run.dir), true);
 
   const broken = setup(); // git cannot read it: kept, never treated as clean
   writeFileSync(join(broken.dir, '.git'), 'gitdir: /nonexistent\n');
