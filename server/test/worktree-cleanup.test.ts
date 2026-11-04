@@ -48,6 +48,11 @@ test('anything that would be lost keeps the worktree', async () => {
   git(unpushed.dir, 'commit', '-q', '--allow-empty', '-m', 'local only');
   assert.match(await removeWorktree(unpushed.dir, unpushed.repo) ?? '', /1 commit\(s\) no remote has/);
   assert.equal(existsSync(unpushed.dir), true);
+
+  const broken = setup(); // git cannot read it: kept, never treated as clean
+  writeFileSync(join(broken.dir, '.git'), 'gitdir: /nonexistent\n');
+  assert.equal(await removeWorktree(broken.dir, broken.repo), 'could not read its git state');
+  assert.equal(existsSync(broken.dir), true);
 });
 
 test('a worktree Agent Worlds did not make, or one already gone, is left alone', async () => {
@@ -59,15 +64,18 @@ test('a worktree Agent Worlds did not make, or one already gone, is left alone',
   assert.equal(await removeWorktree(join(`${repo}-worktrees`, 'gone'), repo), undefined);
 });
 
-test('the server cleans a worktree only when its session ended for good, never on a restart, a shared folder or shutdown', async () => {
+test('the server cleans a worktree only when its session ended for good, never on a restart, a shared folder, a resumable session or shutdown', async () => {
   const { startServer } = await import('../src/server.ts');
   const { parseConfig } = await import('../src/config.ts');
   const repo = '/work/bakery', wt = (n: string) => `${repo}-worktrees/${n}`;
   const removed: string[] = [];
-  let panes = new Map([['%1', new Set(['aw'])], ['%2', new Set(['aw'])], ['%3', new Set(['aw'])], ['%4', new Set(['aw'])], ['%5', new Set(['aw'])]]);
+  const panes = new Map(Array.from({ length: 12 }, (_, i) => [`%${i + 1}`, new Set(['aw'])]));
+  const home = tmp();
+  // Interrupted by an earlier server restart and still offered for Resume: not in the store, only in recovery
+  writeFileSync(join(home, 'recovery.json'), JSON.stringify([{ id: 'interrupted', agent: 'claude', cwd: wt('g'), task: null, lastPrompt: null, updatedAt: 1 }]));
   const app = startServer({ ...parseConfig({}), port: 0 }, 'w'.repeat(64), {
-    home: tmp(), procRoot: join(tmp(), 'missing'),
-    deps: { repoInfo: async (cwd: string) => ({ repo, branch: 'b', worktree: true, top: cwd }), branchOf: async () => 'b', tmuxSessionOf: async () => 'aw' },
+    home, procRoot: join(tmp(), 'missing'),
+    deps: { repoInfo: async (cwd: string) => ({ repo, branch: 'b', worktree: cwd.startsWith(`${repo}-worktrees/`), top: cwd }), branchOf: async () => 'b', tmuxSessionOf: async () => 'aw' },
     endPane: async () => null, tmuxPanes: async () => panes,
     removeWorktree: async (dir: string, r: string) => { assert.equal(r, repo); removed.push(dir); return null; },
   });
@@ -92,11 +100,27 @@ test('the server cleans a worktree only when its session ended for good, never o
     assert.equal((await end('one')).status, 200); await settle();
     assert.equal(removed.length, 2, 'another session still works in it');
 
-    panes = new Map([['%3', new Set(['aw'])]]); // %5 closed by itself (the agent quit at its first prompt)
+    panes.delete('%5'); // closed by itself (the agent quit at its first prompt)
     await app.sweep(); await settle();
     assert.deepEqual(removed.slice(2), [wt('d')], 'a pane that closed by itself cleans it');
+
+    await start('plain', repo, '%6');
+    assert.equal((await end('plain')).status, 200); await settle();
+    assert.equal(removed.length, 3, 'a session not in a worktree has nothing to clean');
+
+    await start('outer', wt('f'), '%7'); await start('inner', `${wt('f')}/sub`, '%8');
+    assert.equal((await end('outer')).status, 200); await settle();
+    assert.equal(removed.length, 3, 'a session in a subfolder of it still works in it');
+
+    await start('sib', wt('h'), '%9'); await start('sib2', `${wt('h')}2`, '%10');
+    assert.equal((await end('sib')).status, 200); await settle();
+    assert.deepEqual(removed.slice(3), [wt('h')], 'a sibling folder whose name only starts the same does not keep it');
+
+    await start('beside', wt('g'), '%11');
+    assert.equal((await end('beside')).status, 200); await settle();
+    assert.equal(removed.length, 4, 'an interrupted session still offered for Resume keeps its folder');
   } finally {
-    await start('live', wt('e'), '%3');
+    await start('live', wt('e'), '%12');
     await app.close(); await settle();
     assert.equal(removed.includes(wt('e')), false, 'shutting the server down keeps it');
   }

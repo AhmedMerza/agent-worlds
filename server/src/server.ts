@@ -1466,13 +1466,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
   /**
    * Ended for good (End, /exit, its pane closed while tmux runs; never a restart, crash or shutdown): its worktree goes
-   * too, unless another session or a live run still works in it (later run steps reuse the dir). A toast says which.
+   * too, unless another session, an interrupted one still offered for Resume, or a live run still works in it (later run
+   * steps reuse the dir). A toast says which.
    */
   const cleaning = new Set<string>();
   function cleanWorktree(s: Session) {
     if (closing || !s.worktree || cleaning.has(s.cwd)) return;
     const within = (d: string | null) => !!d && (d === s.cwd || d.startsWith(s.cwd + '/'));
     if ([...store.sessions.values()].some((o) => o !== s && within(o.cwd))) return;
+    // An interrupted session still offered for Resume needs its folder (not this one, nor the conversation it restored)
+    const terminal = s.tmux?.session ?? s.direct;
+    if (recovery.list().some((r) => r.id !== s.id && !(terminal && resuming.get(r.id) === terminal) && within(r.cwd))) return;
     if ([...runs.values()].some((r) => (r.status === 'running' || r.status === 'waiting') && within(r.dir))) return;
     cleaning.add(s.cwd);
     void (opts.removeWorktree ?? sys.removeWorktree)(s.cwd, s.repo).then((why) => {
