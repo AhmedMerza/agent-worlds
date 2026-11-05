@@ -27,7 +27,7 @@ async function go(stop: boolean) {
 <template>
   <div class="resume">
     <label v-if="agent === 'codex'" class="row"><input v-model="codexUnrestricted" type="checkbox"> Unrestricted file and network access</label>
-    <p v-if="agent === 'codex' && codexUnrestricted" class="warn-note">Codex can access files outside this folder and use the network without a required approval.</p>
+    <p v-if="agent === 'codex' && codexUnrestricted" class="warn-note">Codex can access files outside this folder and use the network, and never asks for approval.</p>
     <p v-if="agent === 'codex' && !codexUnrestricted" class="warn-note">Codex uses a workspace sandbox and asks before broader file or network access.</p>
     <template v-if="running">
       <p class="warn-note" role="alert">

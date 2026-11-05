@@ -249,7 +249,7 @@ async function submit() {
       </template>
       <template v-if="!asRun">
       <PermissionSelect v-if="chosen?.modes !== false" v-model="mode" />
-      <p v-else-if="chosen?.id === 'codex'" class="why">Codex keeps any prompts in its terminal; Needs you mirrors them.</p>
+      <p v-else-if="chosen?.id === 'codex'" v-show="!codexUnrestricted" class="why">Codex keeps any prompts in its terminal; Needs you mirrors them.</p>
       <p v-else-if="chosen.decides === false" class="why">{{ chosen.name }} asks for permission in its own terminal. Needs you shows the request; answer it in the terminal.</p>
       <p v-else-if="chosen.id === 'gemini'" class="why">Free with an AI Studio API key: the first time, Gemini CLI asks for it and to trust the folder, in its terminal. After that it won't ask there: every edit, command or web fetch waits under Needs you until you allow or deny it.</p>
       <p v-else class="why">{{ chosen.name }} asks for permission its own way; allow or deny each request under Needs you.</p>
@@ -257,7 +257,7 @@ async function submit() {
       <label v-if="chosen?.id === 'codex'" class="row"><input v-model="codexUnrestricted" type="checkbox"> Unrestricted file and network access</label>
       <p v-if="chosen?.task === false" class="why">{{ chosen.name }} can't be handed a task when it starts: once it opens, type your first message in its terminal.</p>
       </template>
-      <p v-if="codexUnrestricted && (asRun ? steps.some((st) => st.agent === 'codex') : agent === 'codex')" class="why">Codex can access files outside this folder and use the network without a required approval. Its terminal still shows any prompts it makes.</p>
+      <p v-if="codexUnrestricted && (asRun ? steps.some((st) => st.agent === 'codex') : agent === 'codex')" class="why">Codex can access files outside this folder and use the network, and never asks for approval.</p>
       <p v-if="!codexUnrestricted && (asRun ? steps.some((st) => st.agent === 'codex') : agent === 'codex')" class="why">Codex uses a workspace sandbox and asks before broader file or network access.</p>
       <template v-if="isGit !== false">
         <label class="row"><input v-model="worktree" type="checkbox"> Use a new worktree</label>
