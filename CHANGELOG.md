@@ -4,6 +4,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-11-05
+- **Codex Unrestricted access now means no approval prompts.** It used to drop only the sandbox and still start Codex with on-request approvals, so Codex kept asking. Unrestricted now starts Codex in its own Full Access mode (`--sandbox danger-full-access --ask-for-approval never`); unchecking it keeps the workspace sandbox with prompts in the terminal, mirrored under Needs you.
+
 ## 2026-11-01
 - A worker waiting on background helpers is no longer ended as finished when one of them reports. The turn Claude Code opens to deliver a helper's result counted as a new prompt, so the helpers still running were forgotten; the lead got "finished its task" and the rest of the helpers died with the worker (seen with `mr-review`'s background reviewers). A background helper from any turn now keeps the session at its desk while Claude Code lists it as running; a background command or monitor from an earlier turn (a dev server) still does not.
 

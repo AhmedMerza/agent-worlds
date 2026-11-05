@@ -86,7 +86,8 @@ export function launchArgs(agent: AgentId, o: { home?: string; resume?: string; 
   const task = o.task ? ['--', o.task] : [];
   const model = o.model && MODEL_FLAG[agent] ? [`${MODEL_FLAG[agent]}=${o.model}`] : [];
   if (agent === 'codex') {
-    const access = ['--sandbox', o.codexUnrestricted === false ? 'workspace-write' : 'danger-full-access', '--ask-for-approval', 'on-request'];
+    // Unrestricted is Codex's own Full Access preset: no sandbox and no approval prompts.
+    const access = o.codexUnrestricted === false ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'] : ['--sandbox', 'danger-full-access', '--ask-for-approval', 'never'];
     const cmd = JSON.stringify(hookCommand('codex'));
     const hooks = o.home ? CODEX_EVENTS.flatMap((ev) => ['-c', `hooks.${ev}=[{hooks=[{type="command",command=${cmd},timeout=${ev === 'PermissionRequest' ? HOLD_TIMEOUT : FAST_TIMEOUT}}]}]`]) : [];
     // Codex hands an MCP server only a few env vars unless told: the bridge needs the pane and our home.
