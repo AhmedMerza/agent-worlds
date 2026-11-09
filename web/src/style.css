@@ -563,6 +563,7 @@ pre.diff{max-height:320px;overflow:auto}
 .ch-list li{display:flex;align-items:center;gap:2px;border-radius:4px;padding-left:6px}
 .ch-list li.on{background:var(--panel-2)}
 .ch-list li:hover:not(.on){background:var(--panel)}
+.ch-tick{flex:none;display:flex;align-items:center;justify-content:center;align-self:stretch;padding:0 4px;cursor:pointer}
 .ch-list input[type=checkbox]{flex:none;width:16px;height:16px;margin:0;accent-color:var(--ok);cursor:pointer}
 .ch-file{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font:inherit;font-family:var(--f-mono);font-size:12.5px;color:var(--ink);background:none;border:0;padding:7px 6px;min-height:36px;text-align:left;cursor:pointer}
 .ch-list li.seen .ch-file{color:var(--muted)}
@@ -605,6 +606,9 @@ pre.diff{max-height:320px;overflow:auto}
   .ch-fhead .ch-path{order:5;flex-basis:100%}
   .ch-viewed{margin-left:auto}
   .ch-file{min-height:44px}
+  .ch-tick{min-width:44px}
+  .ch-list li{padding-left:0}
+  .ch-fhead .btn,.ch-viewed,.ch-overlay .hq-x{min-height:44px;min-width:44px}
   .ch-table{tab-size:2;font-size:12px}
   .ch-table td.ln{min-width:0;padding:0 4px}
   .ch-table .sign{width:12px}

@@ -103,11 +103,11 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
             <span class="lbl">{{ g.label }} ({{ g.items.length }})</span>
             <ul>
               <li v-for="f in g.items" :key="f.path" :class="{ on: f.path === picked, seen: viewed(f) }">
-                <input type="checkbox" :checked="viewed(f)" :aria-label="`Viewed ${f.path}`" title="Viewed" @change="toggleViewed(f, $event)">
+                <label class="ch-tick" :title="`Mark ${baseName(f.path)} as viewed`"><input type="checkbox" :checked="viewed(f)" :aria-label="`Mark ${f.path} as viewed`" @change="toggleViewed(f, $event)"></label>
                 <button class="ch-file" :aria-current="f.path === picked ? 'true' : undefined" :title="f.from ? `${f.from} → ${f.path}` : f.path" @click="pick(f)">
                   <span :class="['ch-st', f.status]" :title="STATUS[f.status]" :aria-label="STATUS[f.status]">{{ f.status }}</span>
                   <span class="ch-name"><span class="ch-dir">{{ dirOf(f.path) }}</span><span class="ch-base">{{ baseName(f.path) }}</span></span>
-                  <span v-if="shared.has(f.path)" class="ch-shared" :title="`Also changed by ${shared.get(f.path)!.join(', ')}`">⚠</span>
+                  <span v-if="shared.has(f.path)" class="ch-shared" role="img" :title="`Also changed by ${shared.get(f.path)!.join(', ')}`" :aria-label="`Also changed by ${shared.get(f.path)!.join(', ')}`">⚠</span>
                   <span class="ch-n"><b class="add">+{{ n(f.added) }}</b> <b class="del">−{{ n(f.deleted) }}</b></span>
                 </button>
               </li>
@@ -116,7 +116,7 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
           <p v-if="s.changes?.more" class="why">And {{ s.changes.more }} more files not listed.</p>
         </nav>
 
-        <section class="ch-diff" aria-live="polite">
+        <section class="ch-diff">
           <template v-if="file">
             <div class="ch-fhead">
               <button class="btn ch-back" @click="picked = null">‹ Files</button>
@@ -126,8 +126,8 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
               <button class="btn" :disabled="order.at(-1)?.path === file.path" aria-label="Next file" @click="step(1)">›</button>
             </div>
             <p v-if="shared.has(file.path)" class="conflicts">⚠ Also changed by <template v-for="(who, i) in shared.get(file.path)!" :key="i"><template v-if="i">, </template><bdi>{{ who }}</bdi></template>. Merging both will likely conflict here.</p>
-            <p v-if="diffError" class="err" role="alert">{{ diffError }}</p>
-            <p v-else-if="diff === null" class="why">Loading…</p>
+            <p v-if="diffError" class="err" role="alert">{{ diffError }} <button class="linkbtn" @click="load(file)">Try again</button></p>
+            <p v-else-if="diff === null" class="why" aria-live="polite">Loading…</p>
             <p v-else-if="!lines.length" class="why">{{ file.status === 'R' ? 'Renamed with no change to its content.' : 'No text change to show (an empty file or a mode change).' }}</p>
             <div v-else class="ch-scroll">
               <table v-if="!sideBySide" class="ch-table">
