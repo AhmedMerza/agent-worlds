@@ -545,6 +545,8 @@ pre.diff{max-height:320px;overflow:auto}
 .views .needs-btn[aria-expanded="true"]{border-color:var(--muted)}
 @media (prefers-reduced-motion:reduce){aside.floating{animation:none}}
 /* Changes: one session's changed files and the picked file's diff */
+/* Opened from the phone chat (20), a person's card (39), the chat drawer (40) and the floating details (38): above them all. */
+.ch-overlay{z-index:45}
 .dialog.changes{max-width:1280px;height:min(92vh,1000px);display:flex;flex-direction:column;gap:12px;padding:16px 18px;overflow:hidden}
 .ch-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
 .ch-head > div:first-child{flex:1;min-width:0}

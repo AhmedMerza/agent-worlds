@@ -57,9 +57,13 @@ const shownLines = computed(() => (all.value ? lines.value : lines.value.slice(0
 const rows = computed(() => splitRows(shownLines.value))
 
 const viewed = (f: ChangedFile) => !!s.value && isViewed(s.value, f)
-async function toggleViewed(f: ChangedFile) {
+async function toggleViewed(f: ChangedFile, e: Event) {
+  const box = e.target as HTMLInputElement
   const on = !viewed(f)
-  if (!(await setViewed(props.id, f.path, on)) || !on || f.path !== picked.value) return
+  const ok = await setViewed(props.id, f.path, on)
+  // The box shows what was saved, not the click: a failed save, or the server's update arriving later, must not leave it wrong.
+  box.checked = ok ? on : viewed(f)
+  if (!ok || !on || f.path !== picked.value) return
   // Ticking the open file moves on to the next one you have not seen, as in a PR review.
   const i = order.value.findIndex((x) => x.path === f.path)
   const next = [...order.value.slice(i + 1), ...order.value.slice(0, i)].find((x) => x.path !== f.path && !viewed(x))
@@ -72,7 +76,7 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
 </script>
 
 <template>
-  <div class="overlay" @click.self="emit('close')">
+  <div class="overlay ch-overlay" @click.self="emit('close')">
     <div :class="['dialog', 'changes', { reading: picked }]" role="dialog" aria-modal="true" :aria-label="`Changes in ${s ? nameOf(s) : 'this session'}`">
       <header class="ch-head">
         <div>
@@ -99,9 +103,9 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
             <span class="lbl">{{ g.label }} ({{ g.items.length }})</span>
             <ul>
               <li v-for="f in g.items" :key="f.path" :class="{ on: f.path === picked, seen: viewed(f) }">
-                <input type="checkbox" :checked="viewed(f)" :aria-label="`Viewed ${f.path}`" title="Viewed" @change="toggleViewed(f)">
+                <input type="checkbox" :checked="viewed(f)" :aria-label="`Viewed ${f.path}`" title="Viewed" @change="toggleViewed(f, $event)">
                 <button class="ch-file" :aria-current="f.path === picked ? 'true' : undefined" :title="f.from ? `${f.from} → ${f.path}` : f.path" @click="pick(f)">
-                  <span :class="['ch-st', f.status]" :title="STATUS[f.status]">{{ f.status }}</span>
+                  <span :class="['ch-st', f.status]" :title="STATUS[f.status]" :aria-label="STATUS[f.status]">{{ f.status }}</span>
                   <span class="ch-name"><span class="ch-dir">{{ dirOf(f.path) }}</span><span class="ch-base">{{ baseName(f.path) }}</span></span>
                   <span v-if="shared.has(f.path)" class="ch-shared" :title="`Also changed by ${shared.get(f.path)!.join(', ')}`">⚠</span>
                   <span class="ch-n"><b class="add">+{{ n(f.added) }}</b> <b class="del">−{{ n(f.deleted) }}</b></span>
@@ -117,7 +121,7 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
             <div class="ch-fhead">
               <button class="btn ch-back" @click="picked = null">‹ Files</button>
               <code class="ch-path"><template v-if="file.from"><template v-for="(seg, i) in file.from.split('/')" :key="'f' + i"><template v-if="i">/</template><bdi>{{ seg }}</bdi></template> → </template><template v-for="(seg, i) in file.path.split('/')" :key="i"><template v-if="i">/</template><bdi>{{ seg }}</bdi></template></code>
-              <label class="ch-viewed"><input type="checkbox" :checked="viewed(file)" @change="toggleViewed(file)"> Viewed</label>
+              <label class="ch-viewed"><input :key="file.path" type="checkbox" :checked="viewed(file)" @change="toggleViewed(file, $event)"> Viewed</label>
               <button class="btn" :disabled="order[0]?.path === file.path" aria-label="Previous file" @click="step(-1)">‹</button>
               <button class="btn" :disabled="order.at(-1)?.path === file.path" aria-label="Next file" @click="step(1)">›</button>
             </div>
