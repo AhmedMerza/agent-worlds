@@ -2,8 +2,8 @@
 import { usageText } from '../hq'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Turn } from '../types'
-import { NEEDS_YOU, agentLabel, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
-import { state, selected as s, worldOf, needsYou, sessionConversation, sendInput, focusTerminal, openChat, skipped, chatRun, showToast } from '../store'
+import { NEEDS_YOU, changeSummary, agentLabel, agentName, cardLive, cardKey, chatItems, chatPreview, hasChat, nameOf, nextChat, stateLabel, typingWaits } from '../logic'
+import { state, selected as s, worldOf, needsYou, sessionConversation, sendInput, focusTerminal, openChat, skipped, chatRun, showToast, ui } from '../store'
 import { renderMarkdown } from '../markdown'
 import CardActions from './CardActions.vue'
 
@@ -137,6 +137,7 @@ function onKey(e: KeyboardEvent) {
         <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b><span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span> <span class="chat-world">{{ world?.name }} ·</span> {{ stateLabel(s, state.now) }}
         <span v-if="s.branch" class="tag">{{ s.branch }}</span>
         <span v-if="s.context || s.usage" class="chat-world" title="How full its context is, and tokens this conversation (in, out and cache)">· <template v-if="s.context">{{ s.context.pct }}% context</template><template v-if="s.context && s.usage"> · </template><template v-if="s.usage">{{ usageText(s.usage) }}</template></span>
+        <button v-if="!s.ghost && changeSummary(s)" class="hdr-btn chat-term" :title="`Files changed since this session started`" @click="ui.changes = s.id">Changes · {{ changeSummary(s)!.files }}<span v-if="changeSummary(s)!.unseen" class="ch-dot" aria-hidden="true" /></button>
         <button v-if="!s.ghost" class="hdr-btn chat-term" @click="focusTerminal()">Terminal</button>
       </template>
       <span v-else>No session selected</span>

@@ -18,6 +18,10 @@ export interface ReviewCommit { sha: string; subject: string }
 /** files = changed since the session started (vs baseSha); commits = made since then; uncommitted = still in the working tree. */
 export interface Review { dir?: string; branch?: string | null; elsewhere?: boolean; baseSha: string | null; files: ReviewFile[]; commits: ReviewCommit[]; uncommitted: ReviewFile[]; diff: string; tests: { command: string; ok: boolean; line: string } | null }
 
+/** One file a session changed since it started (GET /api/sessions/:id/changes). `sig` moves when its content does. */
+export interface ChangedFile { path: string; from?: string; status: 'A' | 'M' | 'D' | 'R'; added: number; deleted: number; uncommitted: boolean; untracked?: true; sig: string }
+export interface Changes { dir: string; base: string; files: ChangedFile[]; more: number }
+
 export interface PermissionTarget { type: 'command' | 'file' | 'url' | 'other'; value: string }
 
 export type Card =
@@ -66,6 +70,10 @@ export interface Session {
   /** Tokens over the whole conversation (Claude transcripts only). */
   usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } | null
   conflicts?: { withId: string; reason: string }[]
+  /** Files changed since it started; null outside git or before the first read. */
+  changes?: Changes | null
+  /** Files you ticked as viewed: path -> the file's sig then (stale once the file changes again). */
+  viewed?: Record<string, string>
   startedAt: number
   updatedAt: number
   /** Set only on the drawn stand-in for a Claude running in a plain terminal (never sent by the server). */

@@ -1,4 +1,4 @@
-import type { AgentId, Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep, Turn } from './types'
+import type { AgentId, Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep, Turn, ChangedFile } from './types'
 
 export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
@@ -279,6 +279,69 @@ export function capDiff(diff: string, max = 400, all = false): { lines: string[]
   if (all || lines.length <= max) return { lines, hidden: 0 }
   return { lines: lines.slice(0, max), hidden: lines.length - max }
 }
+// ---- Changes view ----
+export const isViewed = (s: Session, f: ChangedFile): boolean => s.viewed?.[f.path] === f.sig
+
+/** "7 files +212 −40, 3 not viewed" in numbers; null when the session changed nothing (or is not in git). */
+export function changeSummary(s: Session): { files: number; added: number; deleted: number; unseen: number } | null {
+  const fs = s.changes?.files
+  if (!fs?.length) return null
+  return {
+    files: fs.length + (s.changes!.more ?? 0),
+    added: fs.reduce((n, f) => n + f.added, 0), deleted: fs.reduce((n, f) => n + f.deleted, 0),
+    unseen: fs.filter((f) => !isViewed(s, f)).length,
+  }
+}
+
+/** Files this session changed that another session in the same repo, in another folder, also changed: path -> their names. */
+export function sharedFiles(s: Session, all: Record<string, Session>): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const mine = new Set(s.changes?.files.map((f) => f.path))
+  if (!mine.size) return out
+  for (const o of Object.values(all)) {
+    if (o.id === s.id || o.repo !== s.repo || o.cwd === s.cwd) continue
+    for (const f of o.changes?.files ?? []) if (mine.has(f.path)) out.set(f.path, [...(out.get(f.path) ?? []), nameOf(o)])
+  }
+  return out
+}
+
+/** One line of a unified diff with its old and new line numbers; hunk = an "@@" header, note = "Binary files differ" and the like. */
+export type DiffLine = { kind: 'ctx' | 'add' | 'del' | 'hunk' | 'note'; text: string; old: number | null; new: number | null }
+
+/** Parse one file's `git diff` into numbered lines, dropping the "diff --git / index / --- / +++" header. */
+export function diffLines(diff: string): DiffLine[] {
+  const out: DiffLine[] = []
+  let o = 0, n = 0, inHunk = false
+  for (const l of diff.split('\n')) {
+    const h = l.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/)
+    if (h) { o = +h[1]; n = +h[2]; inHunk = true; out.push({ kind: 'hunk', text: h[3].trim(), old: null, new: null }); continue }
+    if (!inHunk) { if (/^Binary files|^… diff truncated/.test(l)) out.push({ kind: 'note', text: l, old: null, new: null }); continue }
+    if (l.startsWith('+')) out.push({ kind: 'add', text: l.slice(1), old: null, new: n++ })
+    else if (l.startsWith('-')) out.push({ kind: 'del', text: l.slice(1), old: o++, new: null })
+    else if (l.startsWith(' ')) out.push({ kind: 'ctx', text: l.slice(1), old: o++, new: n++ })
+    else if (l.startsWith('\\')) continue // "\ No newline at end of file"
+    else if (l) out.push({ kind: 'note', text: l, old: null, new: null })
+  }
+  return out
+}
+
+/** Side by side: a run of removed lines sits beside the run of added lines that follows it. */
+export type SplitRow = { hunk: string } | { note: string } | { left: DiffLine | null; right: DiffLine | null }
+export function splitRows(lines: DiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = []
+  for (let i = 0; i < lines.length;) {
+    const l = lines[i]
+    if (l.kind === 'hunk') { rows.push({ hunk: l.text }); i++; continue }
+    if (l.kind === 'note') { rows.push({ note: l.text }); i++; continue }
+    if (l.kind === 'ctx') { rows.push({ left: l, right: l }); i++; continue }
+    const dels: DiffLine[] = [], adds: DiffLine[] = []
+    while (lines[i]?.kind === 'del') dels.push(lines[i++])
+    while (lines[i]?.kind === 'add') adds.push(lines[i++])
+    for (let k = 0; k < Math.max(dels.length, adds.length); k++) rows.push({ left: dels[k] ?? null, right: adds[k] ?? null })
+  }
+  return rows
+}
+
 export const diffClass = (l: string): string => (l.startsWith('@@') ? 'h' : l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : '')
 
 /** 0 none, 1 getting heavy (>=50), 2 nearly full (>=80). */

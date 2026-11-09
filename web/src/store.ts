@@ -1,5 +1,5 @@
 import { reactive, computed, ref, watch, markRaw } from 'vue'
-import type { ServerMessage, Session, World, RoomGroup, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId } from './types'
+import type { ServerMessage, Session, World, RoomGroup, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId, Changes } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, type TeamRole, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey, stepTags } from './logic'
@@ -240,6 +240,9 @@ export async function continueIn(id: string, agent: string): Promise<string | nu
 export const startRun = (body: { worldId: string; repo: string; task: string; worktree: boolean; steps: { kind: StepKind; agent: string; checkpoint: boolean }[]; codexUnrestricted?: boolean }) => api<{ run: Run }>('POST', '/api/runs', body)
 export const runNext = (id: string) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/next`)
 export const runStop = (id: string, endSessions = false) => api<{ run: Run }>('POST', `/api/runs/${encodeURIComponent(id)}/stop`, { endSessions })
+export const sessionChanges = (id: string) => api<Changes>('GET', `${base(id)}/changes`)
+export const sessionFileDiff = (id: string, path: string) => api<{ path: string; diff: string }>('GET', `${base(id)}/diff?path=${encodeURIComponent(path)}`)
+export const setViewed = (id: string, path: string, viewed: boolean) => post(`${base(id)}/viewed`, { path, viewed })
 export const sessionConversation = (id: string) => api<{ turns: Turn[] }>('GET', `${base(id)}/history`)
 export const accessLog = () => api<AccessInfo>('GET', '/api/access')
 export const setPassword = (password: string) => api<unknown>('POST', '/api/password', { password })
@@ -470,7 +473,9 @@ export const ui = reactive({ ...savedViews(), worldsOpen: false,
   /** The one person whose card is open, in whichever room they are. */
   card: null as string | null,
   /** Full height layout: the floating Needs you and details panel. */
-  needsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false, moveSession: null as string | null,
+  needsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false,
+  /** The session whose Changes view is open. */
+  changes: null as string | null, moveSession: null as string | null,
   /** A character being dragged to another room: where the pointer is, and the world under it. */
   drag: null as { id: string; x: number; y: number; over: string | null } | null })
 watch(() => [ui.left, ui.pane, ui.worldDesign, ui.layout, ui.split], () => { try { localStorage.setItem('aw-views', JSON.stringify({ left: ui.left, pane: ui.pane, worldDesign: ui.worldDesign, layout: ui.layout, split: ui.split })) } catch { /* private window: not remembered */ } })

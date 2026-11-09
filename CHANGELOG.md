@@ -4,6 +4,11 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-11-09
+- **Changes: see what each session changed.** A **Changes** button in the terminal and chat headers, the session panel and a person's card opens the files a session changed since it started (uncommitted and committed, with status and line counts) and each file's diff, unified or side by side. It updates while the agent works. Tick **Viewed** per file, like a pull request review: the tick clears when the agent edits the file again, and the header shows how many are not viewed. A file another session (in another worktree of the same repo) also changed is marked ⚠, and that overlap is now one of the reasons under "Overlaps with".
+- Buttons in the terminal header (Rename, Scroll back, End session) now work on the first click while the terminal has the keyboard. Pressing one used to remove the "Typing into…" hint, which moved the button out from under the pointer before the click landed.
+- `node_modules` symlinks in worktrees are ignored by git (the ignore rule matched only folders), so they no longer show up as untracked changes.
+
 ## 2026-11-05
 - **Codex Unrestricted access now means no approval prompts.** It used to drop only the sandbox and still start Codex with on-request approvals, so Codex kept asking. Unrestricted now starts Codex in its own Full Access mode (`--sandbox danger-full-access --ask-for-approval never`); unchecking it keeps the workspace sandbox with prompts in the terminal, mirrored under Needs you.
 

@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import type { Session, Store } from './store.ts';
 import { oneLine } from './store.ts';
 import { readHead, readTail, firstPrompt, contextOf, excerpt, scanUsage, type UsageScan } from './transcript.ts';
-import { reviewOf } from './review.ts';
+import { changesOf, reviewOf } from './review.ts';
 
 const CATCHUP_TIMEOUT_MS = 90_000;
 const MAX_CONCURRENT = 2;
 const CONTEXT_THROTTLE_MS = 5_000;
+/** The Changes list refreshes at most this often while a session edits files, always once more after the last edit. */
+const CHANGES_THROTTLE_MS = 1_500;
 
 const SCHEMA = JSON.stringify({
   type: 'object',
@@ -71,6 +73,7 @@ export class Insights {
   usageScans = new Map<string, UsageScan>();
   /** A session's scan in progress: the next one waits for it, since both would read on from the same offset. */
   usageRuns = new Map<string, Promise<undefined>>();
+  changesTimers = new Map<string, NodeJS.Timeout>();
   running = 0;
   queue: (() => void)[] = [];
 
@@ -85,10 +88,11 @@ export class Insights {
   onEvent = (s: Session, ev: string) => {
     if (ev === 'Stop' || (ev === 'PostToolUse' && Date.now() - (this.contextAt.get(s.id) ?? 0) > CONTEXT_THROTTLE_MS)) void this.updateContext(s);
     if (ev === 'Stop') void this.updateReview(s);
+    if (ev === 'PostToolUse' || ev === 'Stop' || s.changes === null) this.scheduleChanges(s);
     if (!s.taskSure && s.transcriptPath && (ev === 'UserPromptSubmit' || ev === 'PreToolUse' || ev === 'Stop')) void this.updateTask(s);
   };
 
-  forget(id: string) { this.contextAt.delete(id); this.usageScans.delete(id); this.usageRuns.delete(id); }
+  forget(id: string) { clearTimeout(this.changesTimers.get(id)); this.changesTimers.delete(id); this.contextAt.delete(id); this.usageScans.delete(id); this.usageRuns.delete(id); }
 
   private alive(s: Session) { return this.store.sessions.get(s.id) === s; }
 
@@ -122,6 +126,23 @@ export class Insights {
       const t = oneLine(first, 200);
       if (t !== s.task) { s.task = t; this.store.push(s); }
     } catch { /* transcript not written yet; the next event retries */ }
+  }
+
+  /** Refresh the Changes list soon; many tool calls in a burst make one git run, and the last one is never skipped. */
+  scheduleChanges(s: Session) {
+    if (this.changesTimers.has(s.id)) return;
+    const t = setTimeout(() => { this.changesTimers.delete(s.id); void this.updateChanges(s); }, CHANGES_THROTTLE_MS);
+    t.unref();
+    this.changesTimers.set(s.id, t);
+  }
+
+  async updateChanges(s: Session) {
+    try {
+      const changes = await changesOf(s.reviewTop ?? s.top, s.baseSha);
+      if (!this.alive(s) || JSON.stringify(changes) === JSON.stringify(s.changes)) return;
+      s.changes = changes;
+      this.store.push(s);
+    } catch (e) { console.error(`[agent-worlds] changes for ${s.id}: ${(e as Error).message}`); }
   }
 
   async updateReview(s: Session) {

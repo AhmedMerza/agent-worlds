@@ -1,4 +1,4 @@
-export type ConflictInput = { id: string; repo: string; cwd: string; branch: string | null; worktree: boolean; testing: boolean };
+export type ConflictInput = { id: string; repo: string; cwd: string; branch: string | null; worktree: boolean; testing: boolean; files?: string[] };
 export type Conflict = { withId: string; reason: string };
 
 /** Issue number in a branch name: "#53", "feat/53-thing", "fix-53-thing". */
@@ -21,6 +21,12 @@ export function computeConflicts(list: ConflictInput[]): Map<string, Conflict[]>
       const reasons: string[] = [];
       if (a.cwd === b.cwd) reasons.push('same folder');
       else if (a.repo === b.repo && a.branch && a.branch === b.branch) reasons.push(`same branch ${a.branch}`);
+      else {
+        // Two worktrees editing one file will conflict when both merge.
+        const theirs = new Set(b.files);
+        const both = (a.files ?? []).filter((f) => theirs.has(f));
+        if (both.length) reasons.push(`both changed ${both.length === 1 ? both[0] : `${both.length} files: ${both.slice(0, 3).join(', ')}${both.length > 3 ? ', …' : ''}`}`);
+      }
       if (a.repo === b.repo && a.testing && b.testing) reasons.push('shared database: tests in both');
       const ia = issues.get(a.id);
       if (ia && a.repo === b.repo && ia === issues.get(b.id) && a.branch !== b.branch) reasons.push(`same issue #${ia}`);

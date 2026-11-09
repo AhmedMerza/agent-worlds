@@ -14,6 +14,7 @@ import { allProviders, readKeys, saveKey, saveServer, removeServer, serverUrl, K
 import { Stats } from './rules.ts';
 import { Placements } from './placements.ts';
 import { Insights, type Summarise } from './insights.ts';
+import { fileDiff as reviewFileDiff } from './review.ts';
 import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
@@ -1043,6 +1044,32 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const path = join(dir, `${Date.now()}-${randomBytes(4).toString('hex')}${/^\.[a-z0-9]{1,8}$/.test(ext) ? ext : ''}`);
       await writeFile(path, Buffer.concat(chunks), { mode: 0o600 });
       return send(res, 200, { path });
+    }
+
+    // The Changes view: the file list (refreshed now), one file's diff, and your "viewed" ticks.
+    const chm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(changes|diff|viewed)$/);
+    if (chm) {
+      const s = store.sessions.get(decodeURIComponent(chm[1]));
+      if (!s) return send(res, 404, { error: 'no such session' });
+      if (chm[2] === 'changes' && method === 'GET') {
+        await insights!.updateChanges(s);
+        return s.changes ? send(res, 200, s.changes) : send(res, 409, { error: 'this session is not in a git repo' });
+      }
+      // Only paths in the session's own list: the request never names a file to read.
+      const find = (path: unknown) => (typeof path === 'string' ? s.changes?.files.find((f) => f.path === path) : undefined);
+      if (chm[2] === 'diff' && method === 'GET') {
+        const f = find(url.searchParams.get('path'));
+        if (!f || !s.changes) return send(res, 404, { error: 'that file is not in this session\'s changes' });
+        return send(res, 200, { path: f.path, diff: await reviewFileDiff(s.changes.dir, s.changes.base, f) });
+      }
+      if (chm[2] === 'viewed' && method === 'POST') {
+        const body = await readBody(req) as { path?: unknown; viewed?: unknown };
+        const f = find(body?.path);
+        if (!f) return send(res, 404, { error: 'that file is not in this session\'s changes' });
+        if (body.viewed === true) s.viewed[f.path] = f.sig; else delete s.viewed[f.path];
+        store.push(s);
+        return send(res, 200, { ok: true });
+      }
     }
 
     const hm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/);

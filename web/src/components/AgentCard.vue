@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { Session } from '../types'
-import { agentName, ctxColor, nameOf, nowText, roleOf, stateLabel, NEEDS_YOU, teamOf } from '../logic'
+import { agentName, changeSummary, ctxColor, nameOf, nowText, roleOf, stateLabel, NEEDS_YOU, teamOf } from '../logic'
 import { state, select, focusTerminal, renameSession, showToast, ui } from '../store'
 import { tokenText, usageTotal } from '../hq'
 
 /** One person's card in a room (HQ and Classic): what it is doing, its context and tokens; Chat slides its conversation in from the right. */
 const props = defineProps<{ s: Session }>()
+const changes = computed(() => changeSummary(props.s))
 defineEmits<{ close: [] }>()
 // This card's session, even if a shortcut or another view picked someone else since it opened.
 const chat = () => { select(props.s.id); ui.chatDrawer = true }
@@ -41,6 +42,7 @@ async function saveRename() {
       <p v-if="Object.values(state.sessions).some(c => c.parent === s.id)" class="hq-line"><span class="lbl">Team</span>{{ Object.values(state.sessions).filter(c => c.parent === s.id && c.state === 'working').length }} working · {{ Object.values(state.sessions).filter(c => c.parent === s.id).length }} workers</p>
       <p v-if="s.task" class="hq-line"><span class="lbl">Task</span>{{ s.task }}</p>
       <p class="hq-line"><span class="lbl">Now</span>{{ nowText(s.now) }}</p>
+      <p v-if="changes" class="hq-line"><span class="lbl">Changes</span>{{ changes.files }} {{ changes.files === 1 ? 'file' : 'files' }} <b class="add">+{{ changes.added }}</b> <b class="del">−{{ changes.deleted }}</b><template v-if="changes.unseen"> · {{ changes.unseen }} not viewed</template></p>
       <div v-if="s.context" class="hq-line">
         <span class="lbl">Context {{ s.context.pct }}% full · {{ tokenText(s.context.used) }} of {{ tokenText(s.context.limit) }}</span>
         <div class="meter"><i :style="{ width: Math.min(100, s.context.pct) + '%', background: ctxColor(s.context.pct) }" /></div>
@@ -60,6 +62,7 @@ async function saveRename() {
       <div class="actions">
         <button :class="['btn', { primary: NEEDS_YOU.includes(s.state) }]" @click="chat">Chat</button>
         <button v-if="s.tmux || s.direct" class="btn" @click="terminal">Terminal</button>
+        <button v-if="changes" class="btn" @click="ui.changes = s.id">Changes</button>
       </div>
     </template>
   </section></Teleport>

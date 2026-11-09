@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Review } from '../types'
 import { baseName, capDiff, diffClass, reviewView } from '../logic'
-import { askClaude, acknowledge } from '../store'
+import { askClaude, acknowledge, state, ui } from '../store'
 
 const props = defineProps<{ id: string; name: string; branch: string | null; review: Review; agent?: string }>()
 const all = ref(false)
@@ -32,6 +32,7 @@ const capped = computed(() => !more.value && [v.value.changed, v.value.commits, 
   </div>
   <button v-if="capped" class="linkbtn" @click="more = true">Show every file and commit</button>
   <p v-if="review.tests" :class="['why', 'review-tests', { bad: !review.tests.ok }]">Tests {{ review.tests.ok ? 'passed' : 'failed' }}: {{ review.tests.line }}</p>
+  <button v-if="state.sessions[id]?.changes?.files.length" class="linkbtn" @click="ui.changes = id">See each file's changes</button>
   <details v-if="review.diff"><summary>View the diff</summary>
     <pre class="diff"><span v-for="(l, i) in diff.lines" :key="i" :class="diffClass(l)">{{ l }}{{ '\n' }}</span></pre>
     <button v-if="diff.hidden" class="linkbtn" @click="all = true">Show all ({{ diff.hidden }} more lines)</button>

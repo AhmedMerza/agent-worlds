@@ -29,8 +29,84 @@ const mkSession = (id, worldId, over) => ({
 })
 const perm = (cmd, risky = null) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool: 'Bash', command: cmd, target: { type: 'command', value: cmd }, input: { command: cmd }, risky, seenCount: 0, live: true })
 const permOf = (tool, type, value) => ({ kind: 'permission', requestId: crypto.randomUUID(), tool, command: null, target: { type, value }, input: {}, risky: null, seenCount: 0, live: true })
+// ---- Changes view: made-up files and diffs (repo-a and repo-t both changed the table component) ----
+const cf = (path, status, added, deleted, uncommitted, over = {}) => ({ path, status, added, deleted, uncommitted, sig: `${path}-1`, ...over })
+const changesA = { dir: '/work/repo-a-worktrees/feat-filter', base: 'a1b2c3d', more: 0, files: [
+  cf('web/src/components/DataTable.vue', 'M', 24, 6, true),
+  cf('web/src/components/filters/FilterDropdownWithSavedPresetsAndSearch.vue', 'A', 88, 0, true, { untracked: true }),
+  cf('web/src/composables/useFilter.ts', 'M', 12, 3, false),
+  cf('web/src/api/client.ts', 'R', 4, 2, false, { from: 'web/src/api.ts' }),
+  cf('web/src/legacy/OldFilter.vue', 'D', 0, 41, false),
+  cf('README.md', 'M', 3, 0, false),
+] }
+const diffs = {
+  'web/src/components/DataTable.vue': `diff --git a/web/src/components/DataTable.vue b/web/src/components/DataTable.vue
+index 3f1c2a9..8be41d0 100644
+--- a/web/src/components/DataTable.vue
++++ b/web/src/components/DataTable.vue
+@@ -1,12 +1,16 @@ <script setup lang="ts">
+ import { computed, ref } from 'vue'
+-import { rows } from '../api'
++import { rows } from '../api/client'
++import FilterDropdown from './filters/FilterDropdownWithSavedPresetsAndSearch.vue'
++import { useFilter } from '../composables/useFilter'
+ 
+ const props = defineProps<{ columns: string[] }>()
+-const shown = computed(() => rows.value)
++const { filter, apply } = useFilter('orders')
++const shown = computed(() => apply(rows.value))
+ const sortBy = ref<string | null>(null)
+ 
+ function sort(col: string) {
+   sortBy.value = sortBy.value === col ? null : col
+ }
+ </script>
+@@ -40,9 +44,11 @@ function sort(col: string) {
+ <template>
+   <table class="data">
+     <thead>
++      <tr class="filters"><th :colspan="columns.length"><FilterDropdown v-model="filter" /></th></tr>
+       <tr><th v-for="c in columns" :key="c" @click="sort(c)">{{ c }}</th></tr>
+     </thead>
+-    <tbody><tr v-for="r in shown" :key="r.id"><td v-for="c in columns" :key="c">{{ r[c] }}</td></tr></tbody>
++    <tbody v-if="shown.length"><tr v-for="r in shown" :key="r.id"><td v-for="c in columns" :key="c">{{ r[c] }}</td></tr></tbody>
++    <tbody v-else><tr><td :colspan="columns.length" class="empty">No orders match this filter.</td></tr></tbody>
+   </table>
+ </template>
+`,
+  'web/src/legacy/OldFilter.vue': `diff --git a/web/src/legacy/OldFilter.vue b/web/src/legacy/OldFilter.vue
+deleted file mode 100644
+--- a/web/src/legacy/OldFilter.vue
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<script setup lang="ts">
+-// The old filter, replaced by FilterDropdown
+-defineProps<{ value: string }>()
+-</script>
+`,
+}
+const changesT = { dir: '/work/repo-a-worktrees/fix-totals', base: 'a1b2c3d', more: 0, files: [cf('web/src/components/DataTable.vue', 'M', 2, 2, true), cf('web/src/totals.ts', 'M', 9, 4, true)] }
+
+// MOCK_CHANGES=worst: the worst realistic Changes data, for break-ui (huge list, Arabic paths, a lockfile, a binary, a minified line).
+if (process.env.MOCK_CHANGES === 'worst') {
+  changesA.files = [
+    cf('app/Http/Controllers/Vendor/Dashboard/Reports/مبيعات-الفروع/BranchSalesComparisonExportController.php', 'M', 1, 1, true),
+    cf('docs/تقارير المبيعات الشهرية.md', 'A', 12, 0, true, { untracked: true }),
+    cf('package-lock.json', 'M', 48211, 12034, true),
+    cf('public/logo.png', 'M', 0, 0, false),
+    cf('resources/js/Pages/Vendor/Settings/Notifications/WhatsAppTemplateEditor.vue', 'R', 3, 3, false, { from: 'resources/js/Pages/Vendor/Settings/WhatsAppTemplateEditorLegacyVersionDoNotUse.vue' }),
+    cf('public/build/assets/app-4f9a1c2e.js', 'M', 1, 1, false),
+    ...Array.from({ length: 294 }, (_, i) => cf(`database/migrations/2026_11_0${i % 9 + 1}_${String(i).padStart(6, '0')}_add_column_${i}_to_orders_table.php`, 'A', 24, 0, false)),
+  ]
+  changesA.more = 1240
+  diffs['app/Http/Controllers/Vendor/Dashboard/Reports/مبيعات-الفروع/BranchSalesComparisonExportController.php'] = `diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -10,3 +10,3 @@ class BranchSalesComparisonExportController\n \t\tpublic function label(): string {\n-\t\t\treturn 'تم الحفظ -20%';\n+\t\t\treturn 'تم حفظ التقرير بنجاح -20% (مؤسسة النخبة للتجارة العامة والمقاولات والخدمات اللوجستية)';\n \t\t}\n`
+  diffs['public/logo.png'] = 'diff --git a/public/logo.png b/public/logo.png\nBinary files a/public/logo.png and b/public/logo.png differ\n'
+  diffs['public/build/assets/app-4f9a1c2e.js'] = `diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-${'var a=function(e){return e&&e.__esModule?e:{default:e}};'.repeat(400)}\n+${'var b=function(e){return e&&e.__esModule?e:{default:e}};'.repeat(400)}\n`
+  changesT.files.push(cf('app/Http/Controllers/Vendor/Dashboard/Reports/مبيعات-الفروع/BranchSalesComparisonExportController.php', 'M', 1, 1, true))
+}
+
 const sessions = new Map(Object.entries({
-  'repo-a': mkSession('repo-a', 'web', { task: 'Coordinate the table filter', branch: 'feat/filter', worktree: true, context: { used: 24000, limit: 200000, pct: 12 }, usage: { input: 1200, output: 38000, cacheRead: 2_400_000, cacheWrite: 180000 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
+  'repo-a': mkSession('repo-a', 'web', { task: 'Coordinate the table filter', branch: 'feat/filter', worktree: true, cwd: changesA.dir, changes: changesA, viewed: { 'README.md': 'README.md-1' }, context: { used: 24000, limit: 200000, pct: 12 }, usage: { input: 1200, output: 38000, cacheRead: 2_400_000, cacheWrite: 180000 }, helpers: [{ id: 'h1', task: 'Search for the endpoint', state: 'working', startedAt: now() }, { id: 'h2', task: 'Check labels', state: 'done', startedAt: now() }],
     conflicts: [{ withId: 'repo-b', reason: 'both edit the table component' }, { withId: 'repo-e', reason: 'same API client' }],
     catchupAt: now() - 4 * MIN, catchupStale: true, lastPrompt: 'Also make the filter remember its value', catchup: { asked: 'Add a filter to the table', did: 'Wired the dropdown to the API', needs: 'none' } }),
   'repo-b': mkSession('repo-b', 'web', { parent: 'repo-a', task: 'Check migration safety', state: 'waiting', waitingSince: now() - 3 * MIN, now: 'Waiting for you to allow a command', card: perm('npm run migrate -- --force', 'changes a database'), context: { used: 70000, limit: 200000, pct: 35 }, usage: { input: 800, output: 12000, cacheRead: 640000, cacheWrite: 70000 } }),
@@ -42,7 +118,7 @@ const sessions = new Map(Object.entries({
   'repo-g': mkSession('repo-g', 'mobile', { state: 'idle', now: 'Ready for a new task', context: { used: 5000, limit: 200000, pct: 3 } }),
   'repo-h': mkSession('repo-h', 'tools', { state: 'waiting', waitingSince: now() - MIN, now: 'Waiting for you to allow a command', card: { ...perm('npm run lint'), seenCount: 5 } }),
   'repo-j': mkSession('repo-j', 'tools', { agent: 'codex', state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting (terminal only)', card: { ...perm('rm -rf build'), live: false } }),
-  'repo-t': mkSession('repo-t', 'web', { branch: 'fix/totals', worktree: true, state: 'waiting', waitingSince: now() - 4 * MIN, now: 'Waiting for your reply', card: { kind: 'asking', summary: 'I fixed the rounding. Do you want the same change in the invoice totals as well?' } }),
+  'repo-t': mkSession('repo-t', 'web', { label: process.env.MOCK_CHANGES === 'worst' ? 'مراجعة تقارير الفروع وتصدير' : undefined, repo: '/work/repo-a', cwd: changesT.dir, changes: changesT, branch: 'fix/totals', worktree: true, state: 'waiting', waitingSince: now() - 4 * MIN, now: 'Waiting for your reply', card: { kind: 'asking', summary: 'I fixed the rounding. Do you want the same change in the invoice totals as well?' } }),
   'repo-v': mkSession('repo-v', 'tools', { state: 'waiting', waitingSince: now() - 7 * MIN, now: 'AskUserQuestion: Which test runner should I use?', card: { kind: 'question', requestId: crypto.randomUUID(), live: false, questions: [{ question: 'Which test runner should I use?', header: 'Runner', multiSelect: false, options: [{ label: 'Vitest', description: 'Already installed' }, { label: 'Jest', description: '' }] }] } }),
   'repo-w': mkSession('repo-w', 'tools', { state: 'done', waitingSince: now() - 9 * MIN, now: 'Bash', card: { kind: 'done', summary: 'Committed the change.', review: { baseSha: 'c0ffee', files: [{ path: 'src/a.ts', added: 3, deleted: 1 }], commits: [{ sha: 'd00dfeed1234', subject: 'Tighten the parser' }], uncommitted: [], tests: null, diff: '@@ src/a.ts @@\n-old\n+new' } } }),
   'repo-q': mkSession('repo-q', 'web', { state: 'waiting', waitingSince: now() - 2 * MIN, now: 'Waiting to edit a file', card: permOf('Edit', 'file', '/work/repo-q/src/app.ts') }),
@@ -228,6 +304,21 @@ const server = http.createServer(async (req, res) => {
     const h = history.find((x) => x.sessionId === id)
     if (h) h.interrupted = false
     broadcast({ type: 'recoverable', sessions: recoverable })
+    return json(200, { ok: true })
+  }
+  const chm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(changes|diff|viewed)$/)
+  if (chm) {
+    const s = sessions.get(decodeURIComponent(chm[1]))
+    if (!s) return json(404, { error: 'no such session' })
+    if (chm[2] === 'changes') return s.changes ? json(200, s.changes) : json(409, { error: 'this session is not in a git repo' })
+    const f = s.changes?.files.find((x) => x.path === (chm[2] === 'diff' ? url.searchParams.get('path') : null))
+    if (chm[2] === 'diff') return f ? json(200, { path: f.path, diff: diffs[f.path] ?? (f.status === 'A' ? `diff --git a/${f.path} b/${f.path}\nnew file mode 100644\n--- /dev/null\n+++ b/${f.path}\n@@ -0,0 +1,3 @@\n+<script setup lang="ts">\n+const presets = ref<string[]>([])\n+</script>\n` : `diff --git a/${f.path} b/${f.path}\n--- a/${f.path}\n+++ b/${f.path}\n@@ -1,2 +1,2 @@\n-const before = 1\n+const after = 2\n unchanged()\n`) }) : json(404, { error: 'that file is not in this session\'s changes' })
+    const b = await readBody(req)
+    const g = s.changes?.files.find((x) => x.path === b.path)
+    if (!g) return json(404, { error: 'that file is not in this session\'s changes' })
+    s.viewed = { ...(s.viewed ?? {}) }
+    if (b.viewed) s.viewed[g.path] = g.sig; else delete s.viewed[g.path]
+    broadcast({ type: 'session', session: s })
     return json(200, { ok: true })
   }
   const hm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/)

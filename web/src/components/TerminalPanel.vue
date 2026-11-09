@@ -4,13 +4,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive, queueRestart } from '../logic'
-import { state, selected, terminalOf, worldOf, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession, restartQueued } from '../store'
+import { changeSummary, stateLabel, catchupView, isLeaveTerminalKey, isTouch, agentName, nameOf, cardLive, queueRestart } from '../logic'
+import { state, selected, terminalOf, worldOf, termFocusTick, requestCatchup, needsYou, sessionConversation, showToast, uploadFile, restartSession, endSession, renameSession, restartQueued, ui } from '../store'
 import { copyText, osc52Text } from '../clipboard'
 import QuestionOptions from './QuestionOptions.vue'
 import type { Turn } from '../types'
 
 const s = computed(() => selected.value)
+const changes = computed(() => (s.value && !s.value.ghost ? changeSummary(s.value) : null))
 const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const cu = computed(() => (s.value ? catchupView(s.value, state.now) : null))
 const touch = isTouch()
@@ -85,6 +86,8 @@ async function restart() {
 /** Quits its agent and closes its terminal. There is no undo, so it always asks once; mid-turn it says what it cuts short. */
 const endArmed = ref(false)
 let endTimer: ReturnType<typeof setTimeout> | undefined
+let pointerHeld = false
+const onPointer = (e: PointerEvent) => { pointerHeld = e.type === 'pointerdown' }
 async function end() {
   const cur = s.value
   if (!cur) return
@@ -179,7 +182,12 @@ async function reattach(id: string | null) {
     host.value.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault() })
     host.value.addEventListener('drop', (e) => { const files = [...(e.dataTransfer?.files ?? [])]; if (files.length) { e.preventDefault(); void sendFiles(files) } })
     term.textarea?.addEventListener('focus', () => { termFocused.value = true })
-    term.textarea?.addEventListener('blur', () => { termFocused.value = false })
+    // Pressing a header button blurs the terminal, and the "Typing into…" hint leaving reflows the header:
+    // drop it only once the press ends, or the button slides away under the pointer and its click is lost.
+    term.textarea?.addEventListener('blur', () => {
+      const settle = () => { termFocused.value = document.activeElement === term?.textarea }
+      if (pointerHeld) addEventListener('pointerup', () => setTimeout(settle), { once: true }); else settle()
+    })
     term.onData((d) => { if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ t: 'in', d })) })
     ro = new ResizeObserver(refit)
     ro.observe(host.value)
@@ -196,11 +204,13 @@ onMounted(() => {
   reattach(attachId.value)
   void document.fonts?.ready.then(refit) // the first fit may have measured the fallback font's cells
   window.addEventListener('focus', reclaimSize)
+  for (const t of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.addEventListener(t, onPointer, true)
   document.addEventListener('visibilitychange', reclaimSize)
 })
 onBeforeUnmount(() => {
   detach(); ro?.disconnect(); term?.dispose()
   window.removeEventListener('focus', reclaimSize)
+  for (const t of ['pointerdown', 'pointerup', 'pointercancel'] as const) window.removeEventListener(t, onPointer, true)
   document.removeEventListener('visibilitychange', reclaimSize)
 })
 watch(termFocusTick, async () => {
@@ -218,6 +228,7 @@ watch(termFocusTick, async () => {
         <span v-if="s.context"> · {{ s.context.pct }}% context</span><span v-if="s.usage" title="Tokens this conversation (in, out and cache)"> · {{ usageText(s.usage) }}</span>
         <span v-if="autoLabel" class="term-auto">{{ autoLabel }}</span>
         <span v-if="hasTmux && termFocused" class="term-paused"><b>⌨ Typing into {{ s ? agentName(s) : 'Claude' }}</b> · shortcuts paused · {{ touch ? 'Tap outside the terminal to leave' : `Ctrl+] to leave · ${selectKey}+drag to copy` }}</span>
+        <button v-if="changes" class="hdr-btn term-scroll" :title="`Files changed since this session started${changes.unseen ? `, ${changes.unseen} not viewed` : ''}`" @click="ui.changes = s.id">Changes · {{ changes.files }} <b class="add">+{{ changes.added }}</b> <b class="del">−{{ changes.deleted }}</b><span v-if="changes.unseen" class="ch-dot" aria-hidden="true" /></button>
         <button v-if="!s.ghost" class="hdr-btn term-scroll" :aria-pressed="historyOpen" @click="historyOpen ? (historyOpen = false) : openHistory()">{{ historyOpen ? 'Back to live terminal' : 'Scroll back' }}</button>
         <button v-if="hasTmux && !historyOpen && link === 'live'" class="hdr-btn term-scroll" :title="`Jump to ${agentName(s)}'s latest output (Ctrl+End)`" @click="jumpToLatest">Jump to latest</button>
         <button v-if="hasTmux && !historyOpen && link === 'live' && (s?.agent ?? 'claude') === 'claude'" :class="['hdr-btn', 'term-scroll', { danger: restartArmed }]" title="Screen looks wrecked? Quit this Claude and resume the same conversation in a fresh one" @click="restart">{{ !restartArmed ? 'Restart' : s?.state === 'working' ? 'Restart now (stops the turn)' : 'Restart now' }}</button>
