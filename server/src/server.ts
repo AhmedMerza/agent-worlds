@@ -1142,6 +1142,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return wss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
         flushViews(); // a view still waiting is older than the snapshot: it must not arrive after it
+        // After a restart an idle session sends no hook event, so its Changes list is read when a page connects.
+        for (const s of store.sessions.values()) if (s.changes === null) insights?.scheduleChanges(s);
         ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()] }));
       });
     }

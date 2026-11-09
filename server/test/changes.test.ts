@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync, unlinkSync, renameSync } from 'node:fs';
+import { WebSocket } from 'ws';
 import { join } from 'node:path';
 import { changesOf, fileDiff } from '../src/review.ts';
 import { computeConflicts } from '../src/conflicts.ts';
@@ -28,10 +29,13 @@ test('changes: committed, uncommitted, untracked, deleted and renamed files, wit
   unlinkSync(join(d, 'gone.txt'));
   renameSync(join(d, 'old.txt'), join(d, 'new-name.txt')); git(d, 'add', '-A', 'old.txt', 'new-name.txt');
   writeFileSync(join(d, 'fresh.txt'), 'f1\nf2\nf3\n');
+  writeFileSync(join(d, 'no-eol.txt'), 'x\ny');
+  writeFileSync(join(d, 'pic.bin'), Buffer.from([137, 80, 78, 71, 0, 0, 10, 10]));
 
   const c = (await changesOf(d, base))!;
   const by = Object.fromEntries(c.files.map((f) => [f.path, f]));
-  assert.deepEqual(Object.keys(by).sort(), ['a.txt', 'b.txt', 'fresh.txt', 'gone.txt', 'new-name.txt']);
+  assert.deepEqual(Object.keys(by).sort(), ['a.txt', 'b.txt', 'fresh.txt', 'gone.txt', 'new-name.txt', 'no-eol.txt', 'pic.bin']);
+  assert.deepEqual([by['no-eol.txt'].added, by['pic.bin'].added], [2, 0], 'counted as git counts: a last line without a newline counts, a binary has none');
   assert.deepEqual([by['b.txt'].status, by['b.txt'].uncommitted], ['A', false], 'committed in the session');
   assert.deepEqual([by['a.txt'].status, by['a.txt'].uncommitted, by['a.txt'].added, by['a.txt'].deleted], ['M', true, 1, 1]);
   assert.deepEqual([by['gone.txt'].status, by['gone.txt'].sig], ['D', 'deleted']);
@@ -95,5 +99,14 @@ test('changes over HTTP: list, one file\'s diff, viewed ticks; a path outside th
     let paths: string[] = [];
     for (let i = 0; i < 60 && paths.length < 2; i++) { await new Promise((r) => setTimeout(r, 100)); paths = (await state()).changes.files.map((f: any) => f.path); }
     assert.deepEqual(paths.sort(), ['a.txt', 'b.txt']);
+
+    // After a restart an idle session sends no hook: a page connecting reads its list.
+    (app.store.sessions.get('s-1') as any).changes = null;
+    const ws = new WebSocket(base.replace('http', 'ws') + '/ws', { headers: { 'x-aw-token': TOKEN } });
+    await new Promise((r) => ws.once('open', r));
+    let listed: unknown = null;
+    for (let i = 0; i < 60 && !listed; i++) { await new Promise((r) => setTimeout(r, 100)); listed = (await state()).changes; }
+    ws.close();
+    assert.ok(listed, 'the list came back without any hook event');
   } finally { await app.close(); }
 });

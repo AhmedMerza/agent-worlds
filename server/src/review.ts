@@ -1,4 +1,6 @@
 import { execFile } from './child.ts';
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export type Review = { dir: string; branch: string | null; elsewhere: boolean; baseSha: string | null; files: { path: string; added: number; deleted: number }[]; commits: { sha: string; subject: string }[]; uncommitted: { path: string; added: number; deleted: number }[]; diff: string; tests: { command: string; ok: boolean; line: string } | null };
 
@@ -112,6 +114,18 @@ export type ChangedFile = { path: string; from?: string; status: 'A' | 'M' | 'D'
 export type Changes = { dir: string; base: string; files: ChangedFile[]; more: number };
 
 const FILES_MAX = 300;
+
+/** Lines in a new file as git counts them (a last line without a newline counts); 0 for binary, unreadable or over 8 MB. */
+async function linesIn(path: string): Promise<number> {
+  try {
+    if ((await stat(path)).size > 8 * 1024 * 1024) return 0;
+    const b = await readFile(path);
+    if (b.subarray(0, 8000).includes(0)) return 0;
+    let n = 0;
+    for (const c of b) if (c === 10) n++;
+    return b.length && b[b.length - 1] !== 10 ? n + 1 : n;
+  } catch { return 0; }
+}
 const FILE_DIFF_MAX = 1024 * 1024;
 
 /** Parse `git diff --name-status -z`: "M\0path\0", renames "R100\0old\0new\0". */
@@ -143,9 +157,9 @@ export async function changesOf(cwd: string, baseSha: string | null): Promise<Ch
     return { ...f, ...st, uncommitted: dirty.has(f.path) || (!!st.from && dirty.has(st.from)) };
   });
   const untracked = (others ?? '').split('\0').filter(Boolean);
+  // Line counts of new files read from disk: one git process per file would be hundreds when an agent scaffolds a project.
   const counted = await Promise.all(untracked.slice(0, Math.max(0, FILES_MAX - files.length)).map(async (path) => {
-    const n = parseNumstat((await git(cwd, ['diff', '--numstat', '-z', '--no-index', '--', '/dev/null', path], [0, 1])) ?? '')[0];
-    return { path, status: 'A' as const, added: n?.added ?? 0, deleted: 0, uncommitted: true, untracked: true as const };
+    return { path, status: 'A' as const, added: await linesIn(join(cwd, path)), deleted: 0, uncommitted: true, untracked: true as const };
   }));
   const all = [...files, ...counted];
   const shown = all.slice(0, FILES_MAX);
