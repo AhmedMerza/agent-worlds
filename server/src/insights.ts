@@ -74,6 +74,8 @@ export class Insights {
   /** A session's scan in progress: the next one waits for it, since both would read on from the same offset. */
   usageRuns = new Map<string, Promise<undefined>>();
   changesTimers = new Map<string, NodeJS.Timeout>();
+  /** Sessions whose Changes list was read at least once: a null list after that means "not in git", not "not read yet". */
+  changesRead = new Set<string>();
   running = 0;
   queue: (() => void)[] = [];
 
@@ -88,11 +90,11 @@ export class Insights {
   onEvent = (s: Session, ev: string) => {
     if (ev === 'Stop' || (ev === 'PostToolUse' && Date.now() - (this.contextAt.get(s.id) ?? 0) > CONTEXT_THROTTLE_MS)) void this.updateContext(s);
     if (ev === 'Stop') void this.updateReview(s);
-    if (ev === 'PostToolUse' || ev === 'Stop' || s.changes === null) this.scheduleChanges(s);
+    if (ev === 'PostToolUse' || ev === 'Stop' || !this.changesRead.has(s.id)) this.scheduleChanges(s);
     if (!s.taskSure && s.transcriptPath && (ev === 'UserPromptSubmit' || ev === 'PreToolUse' || ev === 'Stop')) void this.updateTask(s);
   };
 
-  forget(id: string) { clearTimeout(this.changesTimers.get(id)); this.changesTimers.delete(id); this.contextAt.delete(id); this.usageScans.delete(id); this.usageRuns.delete(id); }
+  forget(id: string) { clearTimeout(this.changesTimers.get(id)); this.changesTimers.delete(id); this.changesRead.delete(id); this.contextAt.delete(id); this.usageScans.delete(id); this.usageRuns.delete(id); }
 
   private alive(s: Session) { return this.store.sessions.get(s.id) === s; }
 
@@ -139,7 +141,10 @@ export class Insights {
   async updateChanges(s: Session) {
     try {
       const changes = await changesOf(s.reviewTop ?? s.top, s.baseSha);
-      if (!this.alive(s) || JSON.stringify(changes) === JSON.stringify(s.changes)) return;
+      if (!this.alive(s)) return;
+      this.changesRead.add(s.id);
+      // A failed git run (a timeout, an index.lock) keeps the list it had rather than blanking it.
+      if (!changes || JSON.stringify(changes) === JSON.stringify(s.changes)) return;
       s.changes = changes;
       this.store.push(s);
     } catch (e) { console.error(`[agent-worlds] changes for ${s.id}: ${(e as Error).message}`); }

@@ -208,6 +208,9 @@ const hookOut = (decision: Record<string, unknown>) =>
 export class Store {
   sessions = new Map<string, Session>();
   private conflictSig = '';
+  private listIds = new WeakMap<Changes, number>();
+  private nextListId = 1;
+  private listId(c: Changes): number { let n = this.listIds.get(c); if (!n) { n = this.nextListId++; this.listIds.set(c, n); } return n; }
   private tails = new Map<string, { sig: string; entry: Entry | undefined }>();
   cfg: Config;
   deps: Deps;
@@ -288,12 +291,13 @@ export class Store {
     if (s.catchupAt && !s.catchupStale && s.catchupSig !== this.sigOf(s)) s.catchupStale = true;
     const changed = new Set<Session>([s]);
     const all = [...this.sessions.values()];
-    const input = all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0, files: x.changes?.files.map((f) => f.path) ?? [] }));
-    // Most pushes (a tool call, a state change) move no folder, branch or test run: the conflicts stay as they are.
+    const input = all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0, files: x.changes ? this.listId(x.changes) : 0 }));
+    // Most pushes (a tool call, a state change) move no folder, branch, test run or file list: the conflicts stay as they are.
+    // A file list is replaced, never edited, so its identity stands in for its up to 300 paths here.
     const sig = JSON.stringify(input);
     if (sig !== this.conflictSig) {
       this.conflictSig = sig;
-      const next = computeConflicts(input);
+      const next = computeConflicts(all.map((x, i) => ({ ...input[i], files: x.changes?.files.map((f) => f.path) ?? [] })));
       for (const x of all) {
         const c = next.get(x.id) ?? [];
         if (JSON.stringify(c) !== JSON.stringify(x.conflicts)) { x.conflicts = c; changed.add(x); }

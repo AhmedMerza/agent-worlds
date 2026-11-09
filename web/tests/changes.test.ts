@@ -35,6 +35,12 @@ describe('changes', () => {
     expect(rows.map((r) => ('hunk' in r ? 'h' : 'note' in r ? 'n' : `${r.left?.text ?? '·'}|${r.right?.text ?? '·'}`))).toEqual(['h', 'keep|keep', 'old|new', '·|extra', 'end|end'])
   })
 
+  it('side by side leaves the right empty when more lines went than came, and keeps notes', () => {
+    const lines = diffLines(['@@ -1,3 +1,1 @@', '-a', '-b', '-c', '+x', '… diff truncated at 1 MB'].join('\n'))
+    const rows = splitRows(lines)
+    expect(rows.map((r) => ('hunk' in r ? 'h' : 'note' in r ? `n:${r.note}` : `${r.left?.text ?? '·'}|${r.right?.text ?? '·'}`))).toEqual(['h', 'a|x', 'b|·', 'c|·', 'n:… diff truncated at 1 MB'])
+  })
+
   it('shows a binary file as a note, not as nothing', () => {
     expect(diffLines('diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ\n')).toEqual([{ kind: 'note', text: 'Binary files a/i.png and b/i.png differ', old: null, new: null }])
   })

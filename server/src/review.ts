@@ -1,5 +1,5 @@
 import { execFile } from './child.ts';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export type Review = { dir: string; branch: string | null; elsewhere: boolean; baseSha: string | null; files: { path: string; added: number; deleted: number }[]; commits: { sha: string; subject: string }[]; uncommitted: { path: string; added: number; deleted: number }[]; diff: string; tests: { command: string; ok: boolean; line: string } | null };
@@ -115,10 +115,14 @@ export type Changes = { dir: string; base: string; files: ChangedFile[]; more: n
 
 const FILES_MAX = 300;
 
-/** Lines in a new file as git counts them (a last line without a newline counts); 0 for binary, unreadable or over 8 MB. */
+/**
+ * Lines in a new file as git counts them (a last line without a newline counts); 0 for binary, unreadable or over 8 MB.
+ * Regular files only: an untracked symlink to /dev/zero or a FIFO would read forever or block.
+ */
 async function linesIn(path: string): Promise<number> {
   try {
-    if ((await stat(path)).size > 8 * 1024 * 1024) return 0;
+    const st = await lstat(path);
+    if (!st.isFile() || st.size > 8 * 1024 * 1024) return 0;
     const b = await readFile(path);
     if (b.subarray(0, 8000).includes(0)) return 0;
     let n = 0;
@@ -164,9 +168,11 @@ export async function changesOf(cwd: string, baseSha: string | null): Promise<Ch
   const all = [...files, ...counted];
   const shown = all.slice(0, FILES_MAX);
   // One hash per file still on disk: what a "viewed" tick is pinned to.
-  const onDisk = shown.filter((f) => f.status !== 'D').map((f) => f.path);
-  const hashes = onDisk.length ? (await git(cwd, ['hash-object', '--', ...onDisk]))?.trim().split('\n') : [];
-  const sigOf = new Map(onDisk.map((p, i) => [p, hashes?.length === onDisk.length ? hashes[i] : null]));
+  // Regular files only (a nested repo or submodule is a directory and fails the whole call); if one still fails, hash one by one.
+  const onDisk = (await Promise.all(shown.filter((f) => f.status !== 'D').map(async (f) => ((await lstat(join(cwd, f.path)).catch(() => null))?.isFile() ? f.path : null)))).filter((p): p is string => p !== null);
+  let hashes = onDisk.length ? (await git(cwd, ['hash-object', '--', ...onDisk]))?.trim().split('\n') : [];
+  if (hashes?.length !== onDisk.length) hashes = await Promise.all(onDisk.map(async (p) => (await git(cwd, ['hash-object', '--', p]))?.trim() ?? ''));
+  const sigOf = new Map(onDisk.map((p, i) => [p, hashes![i] || null]));
   return {
     dir: cwd, base: b.base, more: files.length + untracked.length - shown.length,
     files: shown.map((f) => ({ ...f, sig: f.status === 'D' ? 'deleted' : sigOf.get(f.path) ?? `${f.added}-${f.deleted}` })),

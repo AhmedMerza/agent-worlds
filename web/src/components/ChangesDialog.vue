@@ -50,10 +50,11 @@ const sideBySide = computed(() => split.value && !narrow)
 watch(split, (v) => { try { localStorage.setItem(SPLIT_KEY, v ? '1' : '0') } catch { /* not remembered */ } })
 
 const LINES_MAX = 3000
-const all = ref(false)
-watch(picked, () => { all.value = false })
+// A 1 MB diff is tens of thousands of rows: show it a chunk at a time, not all at once.
+const limit = ref(LINES_MAX)
+watch(picked, () => { limit.value = LINES_MAX })
 const lines = computed(() => (diff.value === null ? [] : diffLines(diff.value)))
-const shownLines = computed(() => (all.value ? lines.value : lines.value.slice(0, LINES_MAX)))
+const shownLines = computed(() => lines.value.slice(0, limit.value))
 const rows = computed(() => splitRows(shownLines.value))
 
 const viewed = (f: ChangedFile) => !!s.value && isViewed(s.value, f)
@@ -151,7 +152,7 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
                   </tr>
                 </tbody>
               </table>
-              <button v-if="!all && lines.length > LINES_MAX" class="linkbtn" @click="all = true">Show all ({{ lines.length - LINES_MAX }} more lines)</button>
+              <button v-if="lines.length > limit" class="linkbtn" @click="limit += LINES_MAX">Show {{ n(Math.min(LINES_MAX, lines.length - limit)) }} more lines ({{ n(lines.length - limit) }} left)</button>
             </div>
           </template>
           <p v-else class="why ch-pick">Pick a file to see what changed.</p>

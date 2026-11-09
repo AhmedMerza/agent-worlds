@@ -12,6 +12,7 @@ defineProps<{ back?: boolean }>()
 const emit = defineEmits<{ back: [] }>()
 
 const world = computed(() => (s.value ? worldOf(s.value) : undefined))
+const changes = computed(() => (s.value ? changeSummary(s.value) : null))
 const turns = ref<Turn[] | null>(null)
 const err = ref('')
 /** No transcript yet: the session is starting, or nothing has been said. The next update tries again. */
@@ -137,7 +138,7 @@ function onKey(e: KeyboardEvent) {
         <span :class="['dot', s.state]" /><b>{{ nameOf(s) }}</b><span v-if="agentLabel(s)" class="tag">{{ agentLabel(s) }}</span> <span class="chat-world">{{ world?.name }} ·</span> {{ stateLabel(s, state.now) }}
         <span v-if="s.branch" class="tag">{{ s.branch }}</span>
         <span v-if="s.context || s.usage" class="chat-world" title="How full its context is, and tokens this conversation (in, out and cache)">· <template v-if="s.context">{{ s.context.pct }}% context</template><template v-if="s.context && s.usage"> · </template><template v-if="s.usage">{{ usageText(s.usage) }}</template></span>
-        <button v-if="!s.ghost && changeSummary(s)" class="hdr-btn chat-term" :title="`Files changed since this session started`" :aria-label="`Changes: ${changeSummary(s)!.files} files, ${changeSummary(s)!.unseen} not viewed`" @click="ui.changes = s.id">Changes · {{ changeSummary(s)!.files }}<span v-if="changeSummary(s)!.unseen" class="ch-dot" aria-hidden="true" /></button>
+        <button v-if="!s.ghost && changes" class="hdr-btn chat-term" :title="`Files changed since this session started`" :aria-label="`Changes: ${changes.files} files, ${changes.unseen} not viewed`" @click="ui.changes = s.id">Changes · {{ changes.files }}<span v-if="changes.unseen" class="ch-dot" aria-hidden="true" /></button>
         <button v-if="!s.ghost" class="hdr-btn chat-term" @click="focusTerminal()">Terminal</button>
       </template>
       <span v-else>No session selected</span>

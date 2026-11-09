@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, unlinkSync, renameSync } from 'node:fs';
+import { writeFileSync, unlinkSync, renameSync, symlinkSync, mkdirSync } from 'node:fs';
 import { WebSocket } from 'ws';
 import { join } from 'node:path';
 import { changesOf, fileDiff } from '../src/review.ts';
+import { Insights } from '../src/insights.ts';
 import { computeConflicts } from '../src/conflicts.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
@@ -16,7 +17,7 @@ const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, ...
 function gitRepo(): string {
   const d = tmp();
   git(d, 'init', '-q', '-b', 'main'); git(d, 'config', 'user.email', 't@example.com'); git(d, 'config', 'user.name', 'T');
-  writeFileSync(join(d, 'a.txt'), 'one\ntwo\n'); writeFileSync(join(d, 'gone.txt'), 'x\n'); writeFileSync(join(d, 'old.txt'), 'keep\nthis\nfile\n');
+  writeFileSync(join(d, 'a.txt'), 'one\ntwo\n'); writeFileSync(join(d, 'gone.txt'), 'x\n'); writeFileSync(join(d, 'old.txt'), 'keep\nthis\nfile\n'); writeFileSync(join(d, 'zz.txt'), 'z\n');
   git(d, 'add', '.'); git(d, 'commit', '-q', '-m', 'init');
   return d;
 }
@@ -30,11 +31,13 @@ test('changes: committed, uncommitted, untracked, deleted and renamed files, wit
   renameSync(join(d, 'old.txt'), join(d, 'new-name.txt')); git(d, 'add', '-A', 'old.txt', 'new-name.txt');
   writeFileSync(join(d, 'fresh.txt'), 'f1\nf2\nf3\n');
   writeFileSync(join(d, 'no-eol.txt'), 'x\ny');
+  unlinkSync(join(d, 'zz.txt')); // listed after the rename, and not M (the fallback): the rename's extra path must not swallow it
   writeFileSync(join(d, 'pic.bin'), Buffer.from([137, 80, 78, 71, 0, 0, 10, 10]));
 
   const c = (await changesOf(d, base))!;
   const by = Object.fromEntries(c.files.map((f) => [f.path, f]));
-  assert.deepEqual(Object.keys(by).sort(), ['a.txt', 'b.txt', 'fresh.txt', 'gone.txt', 'new-name.txt', 'no-eol.txt', 'pic.bin']);
+  assert.deepEqual(Object.keys(by).sort(), ['a.txt', 'b.txt', 'fresh.txt', 'gone.txt', 'new-name.txt', 'no-eol.txt', 'pic.bin', 'zz.txt']);
+  assert.equal(by['zz.txt'].status, 'D');
   assert.deepEqual([by['no-eol.txt'].added, by['pic.bin'].added], [2, 0], 'counted as git counts: a last line without a newline counts, a binary has none');
   assert.deepEqual([by['b.txt'].status, by['b.txt'].uncommitted], ['A', false], 'committed in the session');
   assert.deepEqual([by['a.txt'].status, by['a.txt'].uncommitted, by['a.txt'].added, by['a.txt'].deleted], ['M', true, 1, 1]);
@@ -92,6 +95,7 @@ test('changes over HTTP: list, one file\'s diff, viewed ticks; a path outside th
     assert.equal(s.viewed['a.txt'], s.changes.files[0].sig);
     assert.equal((await tick('a.txt', false)).status, 200);
     assert.deepEqual((await state()).viewed, {});
+    assert.equal((await fetch(`${base}/api/sessions/nope/changes`, { headers: H })).status, 404, 'unknown session');
 
     // An edit by the agent reaches the list on its own, from the tool-use hook, with no request for it.
     writeFileSync(join(repo, 'b.txt'), 'new\n');
@@ -101,12 +105,62 @@ test('changes over HTTP: list, one file\'s diff, viewed ticks; a path outside th
     assert.deepEqual(paths.sort(), ['a.txt', 'b.txt']);
 
     // After a restart an idle session sends no hook: a page connecting reads its list.
-    (app.store.sessions.get('s-1') as any).changes = null;
+    (app.store.sessions.get('s-1') as any).changes = null; app.insights.changesRead.clear();
     const ws = new WebSocket(base.replace('http', 'ws') + '/ws', { headers: { 'x-aw-token': TOKEN } });
     await new Promise((r) => ws.once('open', r));
     let listed: unknown = null;
     for (let i = 0; i < 60 && !listed; i++) { await new Promise((r) => setTimeout(r, 100)); listed = (await state()).changes; }
     ws.close();
     assert.ok(listed, 'the list came back without any hook event');
+
+    // A new conversation in the same pane and folder (/clear) keeps your ticks.
+    assert.equal((await tick('a.txt', true)).status, 200);
+    await fetch(`${base}/api/hook`, { method: 'POST', headers: H, body: JSON.stringify({ session_id: 's-2', cwd: repo, transcript_path: '', hook_event_name: 'SessionStart', source: 'clear' }) });
+    const all = ((await (await fetch(`${base}/api/state`, { headers: H })).json()) as any).sessions;
+    assert.ok(all.find((x: any) => x.id === 's-2')?.viewed['a.txt'], 'ticks carried to the new conversation');
   } finally { await app.close(); }
+});
+
+test('changes: an untracked symlink to a device or a nested repo neither hangs nor spoils the other files', async () => {
+  const d = gitRepo();
+  const base = git(d, 'rev-parse', 'HEAD');
+  symlinkSync('/dev/zero', join(d, 'zero'));
+  mkdirSync(join(d, 'nested')); git(join(d, 'nested'), 'init', '-q'); writeFileSync(join(d, 'nested', 'n.txt'), 'n\n');
+  writeFileSync(join(d, 'a.txt'), 'one\nTWO\n');
+  const c = (await Promise.race([changesOf(d, base), new Promise((_, no) => setTimeout(() => no(new Error('changesOf hung')), 5000))])) as Awaited<ReturnType<typeof changesOf>>;
+  const by = Object.fromEntries(c!.files.map((f) => [f.path, f]));
+  assert.equal(by['zero'].added, 0, 'a link is not read');
+  assert.match(by['a.txt'].sig, /^[0-9a-f]{40}$/, 'a directory in the list does not drop the others to the count fallback');
+});
+
+test('changes: past 300 files the rest are counted, not listed', async () => {
+  const d = gitRepo();
+  const base = git(d, 'rev-parse', 'HEAD');
+  for (let i = 0; i < 305; i++) writeFileSync(join(d, `f${i}.txt`), 'x\n');
+  const c = (await changesOf(d, base))!;
+  assert.deepEqual([c.files.length, c.more], [300, 5]);
+});
+
+test('changes: outside git it is read once, not on every event; a failed read keeps the last list', async () => {
+  const plain = tmp();
+  const pushed: unknown[] = [];
+  const store = { sessions: new Map(), push: (x: unknown) => pushed.push(x) } as any;
+  const ins = new Insights(store, 'claude');
+  const s: any = { id: 'n', top: plain, reviewTop: null, baseSha: null, changes: null };
+  store.sessions.set('n', s);
+  ins.onEvent(s, 'UserPromptSubmit');
+  assert.ok(ins.changesTimers.has('n'), 'never read: the first event reads it');
+  ins.forget('n'); store.sessions.set('n', s);
+  await ins.updateChanges(s);
+  ins.onEvent(s, 'UserPromptSubmit');
+  assert.ok(!ins.changesTimers.has('n'), 'read once and not in git: other events do not re-run git');
+  ins.onEvent(s, 'PostToolUse');
+  assert.ok(ins.changesTimers.has('n'), 'an edit still re-reads it');
+  ins.forget('n');
+
+  const kept = { dir: plain, base: 'b', files: [], more: 0 };
+  s.changes = kept; store.sessions.set('n', s);
+  await ins.updateChanges(s);
+  assert.equal(s.changes, kept, 'a git failure does not blank the list');
+  assert.equal(pushed.length, 0);
 });

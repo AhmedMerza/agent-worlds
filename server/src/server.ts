@@ -1143,7 +1143,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         track(ws);
         flushViews(); // a view still waiting is older than the snapshot: it must not arrive after it
         // After a restart an idle session sends no hook event, so its Changes list is read when a page connects.
-        for (const s of store.sessions.values()) if (s.changes === null) insights?.scheduleChanges(s);
+        for (const s of store.sessions.values()) if (!insights?.changesRead.has(s.id)) insights?.scheduleChanges(s);
         ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()] }));
       });
     }
@@ -1565,7 +1565,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   let scanner: NodeJS.Timeout | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
   return {
-    server: servers[0], servers, store, scan, deliverMail, sweep: sweepNow,
+    server: servers[0], servers, store, insights: insights!, scan, deliverMail, sweep: sweepNow,
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
