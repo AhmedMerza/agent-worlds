@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Config } from './config.ts';
 import type { RepoInfo } from './sys.ts';
-import type { Review } from './review.ts';
+import type { Changes, Review } from './review.ts';
 import { TEST_RE, testLine } from './review.ts';
 import { riskOf, ruleFor, ruleText, addAllowRule, whyNotEverywhere, WRITE_TOOLS, type Rule } from './rules.ts';
 import { computeConflicts, type Conflict } from './conflicts.ts';
@@ -84,6 +84,10 @@ export type Session = {
   /** Tokens over the whole transcript (Claude only). */
   usage: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
   conflicts: Conflict[];
+  /** Files changed since the session started (null until first read, or outside git). */
+  changes: Changes | null;
+  /** Files you ticked as viewed in Changes: path -> the file's sig when you ticked it. */
+  viewed: Record<string, string>;
   startedAt: number; updatedAt: number;
   // internal, never sent to clients
   pending: Pending[];
@@ -204,6 +208,9 @@ const hookOut = (decision: Record<string, unknown>) =>
 export class Store {
   sessions = new Map<string, Session>();
   private conflictSig = '';
+  private listIds = new WeakMap<Changes, number>();
+  private nextListId = 1;
+  private listId(c: Changes): number { let n = this.listIds.get(c); if (!n) { n = this.nextListId++; this.listIds.set(c, n); } return n; }
   private tails = new Map<string, { sig: string; entry: Entry | undefined }>();
   cfg: Config;
   deps: Deps;
@@ -284,12 +291,13 @@ export class Store {
     if (s.catchupAt && !s.catchupStale && s.catchupSig !== this.sigOf(s)) s.catchupStale = true;
     const changed = new Set<Session>([s]);
     const all = [...this.sessions.values()];
-    const input = all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0 }));
-    // Most pushes (a tool call, a state change) move no folder, branch or test run: the conflicts stay as they are.
+    const input = all.map((x) => ({ id: x.id, repo: x.repo, cwd: x.cwd, branch: x.branch, worktree: x.worktree, testing: x.testing.size > 0, files: x.changes ? this.listId(x.changes) : 0 }));
+    // Most pushes (a tool call, a state change) move no folder, branch, test run or file list: the conflicts stay as they are.
+    // A file list is replaced, never edited, so its identity stands in for its up to 300 paths here.
     const sig = JSON.stringify(input);
     if (sig !== this.conflictSig) {
       this.conflictSig = sig;
-      const next = computeConflicts(input);
+      const next = computeConflicts(all.map((x, i) => ({ ...input[i], files: x.changes?.files.map((f) => f.path) ?? [] })));
       for (const x of all) {
         const c = next.get(x.id) ?? [];
         if (JSON.stringify(c) !== JSON.stringify(x.conflicts)) { x.conflicts = c; changed.add(x); }
@@ -378,6 +386,7 @@ export class Store {
       parent: this.deps.parents?.get(id) ?? prior?.parent ?? null,
       state: 'idle', waitingSince: null, task: null, lastPrompt: null, now: 'Started',
       log: [], helpers: [], card: null, busy: null, busyEnd: null, catchup: null, catchupAt: null, catchupRunning: false, catchupStale: false, context: null, usage: null, conflicts: [],
+      changes: null, viewed: prior && prior.cwd === cwd ? prior.viewed : {},
       startedAt: t, updatedAt: t,
       pending: [], top: info.top ?? cwd, reviewTop: null, workDir: null, baseSha: info.head ?? null, taskSure: false, catchupSig: null, branchAt: 0, branchTimer: null, model: null, transcriptPath: null, logPath: null, tests: null, testing: new Set(), launched: false, hookAt: t, promptAt: t,
     };

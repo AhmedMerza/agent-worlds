@@ -6,6 +6,7 @@ import Inbox from './components/Inbox.vue'
 import ChatList from './components/ChatList.vue'
 import ChatView from './components/ChatView.vue'
 import Detail from './components/Detail.vue'
+import ChangesDialog from './components/ChangesDialog.vue'
 import TerminalPanel from './components/TerminalPanel.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -127,7 +128,7 @@ const numbers = computed<Record<string, number>>((prev) => {
 })
 const count = (st: string) => sessionList.value.filter((s) => s.state === st).length
 
-const dialogOpen = () => help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null || ui.moveSession !== null
+const dialogOpen = () => help.value || newTaskWorld.value !== null || ui.recentOpen || ui.worldsOpen || ui.phoneOpen || ui.putSession !== null || ui.moveSession !== null || ui.changes !== null
 function onKey(e: KeyboardEvent) {
   const a = routeKey({
     key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey,
@@ -148,7 +149,7 @@ function onKey(e: KeyboardEvent) {
   else if (ui.worldsOpen && worldsPanel.value?.escape()) return
   else if (chatDrawer.value && !dialogOpen()) ui.chatDrawer = false
   else if (ui.needsOpen && !dialogOpen()) ui.needsOpen = false
-  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.phoneOpen = false; ui.putSession = null; ui.moveSession = null }
+  else { menuOpen.value = false; help.value = false; newTaskWorld.value = null; ui.worldsOpen = false; ui.recentOpen = false; ui.phoneOpen = false; ui.putSession = null; ui.moveSession = null; ui.changes = null }
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -266,6 +267,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
         <ChatView />
       </aside>
     </Transition>
+    <ChangesDialog v-if="ui.changes" :id="ui.changes" @close="ui.changes = null" />
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
     <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" :run="newTaskRun" :fixed-world="newTaskFixed" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>

@@ -1,4 +1,6 @@
 import { execFile } from './child.ts';
+import { lstat, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export type Review = { dir: string; branch: string | null; elsewhere: boolean; baseSha: string | null; files: { path: string; added: number; deleted: number }[]; commits: { sha: string; subject: string }[]; uncommitted: { path: string; added: number; deleted: number }[]; diff: string; tests: { command: string; ok: boolean; line: string } | null };
 
@@ -46,17 +48,24 @@ function parseNumstat(numstat: string): FileStat[] {
   return files;
 }
 
+/** `baseSha` when it still names a commit here, else the fork point from the default branch (`known` false). */
+async function resolveBase(cwd: string, baseSha: string | null): Promise<{ base: string; known: boolean } | null> {
+  let base: string | null = null;
+  if (baseSha && /^[0-9a-f]{7,64}$/i.test(baseSha)) base = (await git(cwd, ['rev-parse', '-q', '--verify', baseSha + '^{commit}']))?.trim() || null;
+  const known = base !== null;
+  base ??= await baseOf(cwd);
+  return base ? { base, known } : null;
+}
+
 /**
  * What a session changed: everything since `baseSha` (the HEAD when the session was first seen),
  * committed or not, plus the still-uncommitted part on its own. Without a usable baseSha (a
  * session that predates the server) it falls back to "ahead of the default branch" and baseSha is null.
  */
 export async function reviewOf(cwd: string, tests: Review['tests'], baseSha: string | null = null): Promise<Review | null> {
-  let base: string | null = null;
-  if (baseSha && /^[0-9a-f]{7,64}$/i.test(baseSha)) base = (await git(cwd, ['rev-parse', '-q', '--verify', baseSha + '^{commit}']))?.trim() || null;
-  const known = base !== null;
-  base ??= await baseOf(cwd);
-  if (!base) return null;
+  const b = await resolveBase(cwd, baseSha);
+  if (!b) return null;
+  const { base, known } = b;
   const numstat = await git(cwd, ['diff', '--numstat', '-z', base]);
   if (numstat === null) return null;
   const files = parseNumstat(numstat);
@@ -97,4 +106,84 @@ export function testLine(output: string): string {
     ?? rev.find((l) => /\b(pass(ed|es)?|fail(ed|ures?)?|tests?|errors?|ok)\b/i.test(l));
   const line = hit ?? lines.at(-1) ?? '';
   return line.length > 200 ? line.slice(0, 199) + '…' : line;
+}
+
+/** One changed file. `sig` changes whenever the file's content does, so a "viewed" tick can tell it is stale. */
+export type ChangedFile = { path: string; from?: string; status: 'A' | 'M' | 'D' | 'R'; added: number; deleted: number; uncommitted: boolean; untracked?: true; sig: string };
+/** The Changes view's file list: everything since `base`, committed or not, without the diff text (that is fetched per file). */
+export type Changes = { dir: string; base: string; files: ChangedFile[]; more: number };
+
+const FILES_MAX = 300;
+
+/**
+ * Lines in a new file as git counts them (a last line without a newline counts); 0 for binary, unreadable or over 8 MB.
+ * Regular files only: an untracked symlink to /dev/zero or a FIFO would read forever or block.
+ */
+async function linesIn(path: string): Promise<number> {
+  try {
+    const st = await lstat(path);
+    if (!st.isFile() || st.size > 8 * 1024 * 1024) return 0;
+    const b = await readFile(path);
+    if (b.subarray(0, 8000).includes(0)) return 0;
+    let n = 0;
+    for (const c of b) if (c === 10) n++;
+    return b.length && b[b.length - 1] !== 10 ? n + 1 : n;
+  } catch { return 0; }
+}
+const FILE_DIFF_MAX = 1024 * 1024;
+
+/** Parse `git diff --name-status -z`: "M\0path\0", renames "R100\0old\0new\0". */
+function parseNameStatus(out: string): Map<string, { status: ChangedFile['status']; from?: string }> {
+  const m = new Map<string, { status: ChangedFile['status']; from?: string }>();
+  const p = out.split('\0');
+  for (let i = 0; i < p.length - 1; i++) {
+    const code = p[i][0];
+    if (code === 'R' || code === 'C') { m.set(p[i + 2], { status: code === 'R' ? 'R' : 'A', from: code === 'R' ? p[i + 1] : undefined }); i += 2; }
+    else if (code) { m.set(p[i + 1], { status: code === 'A' || code === 'D' ? code : 'M' }); i += 1; }
+  }
+  return m;
+}
+
+export async function changesOf(cwd: string, baseSha: string | null): Promise<Changes | null> {
+  const b = await resolveBase(cwd, baseSha);
+  if (!b) return null;
+  const [numstat, names, sinceHead, others] = await Promise.all([
+    git(cwd, ['diff', '--numstat', '-z', '-M', b.base]),
+    git(cwd, ['diff', '--name-status', '-z', '-M', b.base]),
+    git(cwd, ['diff', '--name-only', '-z', 'HEAD']),
+    git(cwd, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ]);
+  if (numstat === null) return null;
+  const status = parseNameStatus(names ?? '');
+  const dirty = new Set((sinceHead ?? '').split('\0').filter(Boolean));
+  const files: Omit<ChangedFile, 'sig'>[] = parseNumstat(numstat).map((f) => {
+    const st = status.get(f.path) ?? { status: 'M' as const };
+    return { ...f, ...st, uncommitted: dirty.has(f.path) || (!!st.from && dirty.has(st.from)) };
+  });
+  const untracked = (others ?? '').split('\0').filter(Boolean);
+  // Line counts of new files read from disk: one git process per file would be hundreds when an agent scaffolds a project.
+  const counted = await Promise.all(untracked.slice(0, Math.max(0, FILES_MAX - files.length)).map(async (path) => {
+    return { path, status: 'A' as const, added: await linesIn(join(cwd, path)), deleted: 0, uncommitted: true, untracked: true as const };
+  }));
+  const all = [...files, ...counted];
+  const shown = all.slice(0, FILES_MAX);
+  // One hash per file still on disk: what a "viewed" tick is pinned to.
+  // Regular files only (a nested repo or submodule is a directory and fails the whole call); if one still fails, hash one by one.
+  const onDisk = (await Promise.all(shown.filter((f) => f.status !== 'D').map(async (f) => ((await lstat(join(cwd, f.path)).catch(() => null))?.isFile() ? f.path : null)))).filter((p): p is string => p !== null);
+  let hashes = onDisk.length ? (await git(cwd, ['hash-object', '--', ...onDisk]))?.trim().split('\n') : [];
+  if (hashes?.length !== onDisk.length) hashes = await Promise.all(onDisk.map(async (p) => (await git(cwd, ['hash-object', '--', p]))?.trim() ?? ''));
+  const sigOf = new Map(onDisk.map((p, i) => [p, hashes![i] || null]));
+  return {
+    dir: cwd, base: b.base, more: files.length + untracked.length - shown.length,
+    files: shown.map((f) => ({ ...f, sig: f.status === 'D' ? 'deleted' : sigOf.get(f.path) ?? `${f.added}-${f.deleted}` })),
+  };
+}
+
+/** The diff of one file from the Changes list (not a path from the request: callers look the file up first). */
+export async function fileDiff(cwd: string, base: string, f: ChangedFile): Promise<string> {
+  const d = f.untracked
+    ? await git(cwd, ['diff', '--no-color', '--no-index', '--', '/dev/null', f.path], [0, 1])
+    : await git(cwd, ['diff', '--no-color', '--no-ext-diff', '-M', base, '--', ...(f.from ? [f.from] : []), f.path]);
+  const text = d ?? '';
+  return text.length > FILE_DIFF_MAX ? text.slice(0, FILE_DIFF_MAX) + '\n… diff truncated at 1 MB\n' : text;
 }

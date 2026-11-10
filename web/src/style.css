@@ -544,3 +544,73 @@ pre.diff{max-height:320px;overflow:auto}
 .views .needs-btn.on .count{background:var(--wait);color:var(--dark-ink)}
 .views .needs-btn[aria-expanded="true"]{border-color:var(--muted)}
 @media (prefers-reduced-motion:reduce){aside.floating{animation:none}}
+/* Changes: one session's changed files and the picked file's diff */
+/* Opened from the phone chat (20), a person's card (39), the chat drawer (40) and the floating details (38): above them all. */
+.ch-overlay{z-index:45}
+.dialog.changes{max-width:1280px;height:min(92vh,1000px);display:flex;flex-direction:column;gap:12px;padding:16px 18px;overflow:hidden}
+.ch-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.ch-head > div:first-child{flex:1;min-width:0}
+.ch-head h2{margin:0 0 4px;overflow-wrap:anywhere}
+.ch-head code{font-family:var(--f-mono);font-size:12.5px}
+.seg{display:inline-flex;gap:2px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:3px}
+.seg button{font:inherit;font-size:13px;color:var(--muted);background:none;border:0;border-radius:4px;padding:5px 12px;min-height:32px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--panel-2);color:var(--ink)}
+.seg button:hover{color:var(--ink)}
+.ch-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:12px}
+.ch-list{overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:10px 6px;display:flex;flex-direction:column;gap:12px}
+.ch-list .lbl{padding:0 6px}
+.ch-list ul{list-style:none;margin:0;padding:0}
+.ch-list li{display:flex;align-items:center;gap:2px;border-radius:4px;padding-left:6px}
+.ch-list li.on{background:var(--panel-2)}
+.ch-list li:hover:not(.on){background:var(--panel)}
+.ch-tick{flex:none;display:flex;align-items:center;justify-content:center;align-self:stretch;padding:0 4px;cursor:pointer}
+.ch-list input[type=checkbox]{flex:none;width:16px;height:16px;margin:0;accent-color:var(--ok);cursor:pointer}
+.ch-file{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font:inherit;font-family:var(--f-mono);font-size:12.5px;color:var(--ink);background:none;border:0;padding:7px 6px;min-height:36px;text-align:left;cursor:pointer}
+.ch-list li.seen .ch-file{color:var(--muted)}
+.ch-st{flex:none;width:16px;text-align:center;font-weight:700;color:var(--wait)}
+.ch-st.A{color:var(--ok)} .ch-st.D{color:var(--err)} .ch-st.R{color:var(--work)}
+.ch-name{flex:1;min-width:0;display:flex;white-space:nowrap}
+.ch-dir{color:var(--muted);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ch-base{flex:none;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.ch-shared{flex:none;color:var(--wait)}
+.ch-n{flex:none;font-size:11.5px;white-space:nowrap}
+.ch-diff{min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.ch-fhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ch-path{flex:1;min-width:0;font-family:var(--f-mono);font-size:13px;overflow-wrap:anywhere}
+.ch-viewed{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;min-height:32px}
+.ch-viewed input{width:16px;height:16px;margin:0;accent-color:var(--ok)}
+.ch-back{display:none}
+.ch-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.ch-table{border-collapse:collapse;width:100%;font-family:var(--f-mono);font-size:12.5px;line-height:1.55;tab-size:4;font-variant-ligatures:none}
+.ch-table td{padding:0 10px 0 0;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}
+.ch-table td.ln{width:1%;min-width:44px;padding:0 8px;text-align:right;color:var(--muted);opacity:.7;user-select:none;white-space:nowrap}
+.ch-table .sign{display:inline-block;width:16px;color:var(--muted);user-select:none}
+.ch-table tr.add td,.ch-table td.add{background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.ch-table tr.del td,.ch-table td.del{background:color-mix(in srgb,var(--err) 13%,transparent)}
+.ch-table tr.add .sign{color:var(--ok)} .ch-table tr.del .sign{color:var(--err)}
+.ch-table tr.hunk td,.ch-table tr.note td{color:var(--work);background:var(--panel);padding:4px 10px;white-space:pre-wrap}
+.ch-table tr.note td{color:var(--muted)}
+.ch-table.split{table-layout:fixed}
+.ch-table.split col.c-ln{width:52px}
+.ch-table.split td.gap{background:repeating-linear-gradient(135deg,transparent 0 6px,color-mix(in srgb,var(--line) 45%,transparent) 6px 7px)}
+.ch-table.split td.code + td.ln{border-left:1px solid var(--line)}
+.ch-scroll .linkbtn{margin:10px}
+.ch-pick{padding:20px 4px}
+@media (max-width:760px){
+  .dialog.changes{height:100%;max-height:none;padding:12px}
+  .ch-body{grid-template-columns:minmax(0,1fr)}
+  .dialog.changes.reading .ch-list{display:none}
+  .dialog.changes:not(.reading) .ch-diff{display:none}
+  .ch-back{display:inline-block}
+  .ch-head h2{font-size:18px}
+  .ch-fhead .ch-path{order:5;flex-basis:100%}
+  .ch-viewed{margin-left:auto}
+  .ch-file{min-height:44px}
+  .ch-tick{min-width:44px}
+  .ch-list li{padding-left:0}
+  .ch-fhead .btn,.ch-viewed,.ch-overlay .hq-x{min-height:44px;min-width:44px}
+  .ch-table{tab-size:2;font-size:12px}
+  .ch-table td.ln{min-width:0;padding:0 4px}
+  .ch-table .sign{width:12px}
+}
+.ch-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--wait);margin-left:6px;vertical-align:middle}

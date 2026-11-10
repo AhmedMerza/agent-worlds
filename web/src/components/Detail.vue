@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { copyText } from '../clipboard'
 import { computed } from 'vue'
-import { nameOf, roleOf, teamOf, stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName } from '../logic'
+import { nameOf, roleOf, teamOf, stateLabel, ctxColor, ctxLevel, UNSORTED, nowText, isTouch, ageText, agentName, changeSummary } from '../logic'
 import { selected, worldOf, focusTerminal, askClaude, showToast, ui, state, runOf } from '../store'
 import ResumeButton from './ResumeButton.vue'
 import ContinueIn from './ContinueIn.vue'
@@ -13,6 +13,7 @@ const world = computed(() => (s.value ? worldOf(s.value) : undefined))
 const touch = isTouch()
 const run = computed(() => (s.value && !s.value.ghost ? runOf(s.value) : null))
 const level = computed(() => (s.value?.context ? ctxLevel(s.value.context.pct) : 0))
+const changes = computed(() => (s.value && !s.value.ghost ? changeSummary(s.value) : null))
 const team = computed(() => s.value ? Object.values(state.sessions).filter(c => c.parent === s.value!.id) : [])
 
 const attachText = computed(() => (s.value?.tmux ? `tmux attach -t ${s.value.tmux.session}` : ''))
@@ -56,6 +57,7 @@ async function copyAttach() {
           <div class="actions"><button class="btn" @click="askClaude(s.id, s.repoName, '/checkpoint')">/checkpoint</button></div></template>
       </div>
       <p v-if="s.usage" class="now"><span class="lbl">Tokens this conversation</span>{{ tokenText(usageTotal(s.usage)) }} · {{ tokenText(s.usage.input) }} in, {{ tokenText(s.usage.output) }} out, {{ tokenText(s.usage.cacheRead) }} cache read, {{ tokenText(s.usage.cacheWrite) }} cache write</p>
+      <p v-if="changes" class="now"><span class="lbl">Changes</span>{{ changes.files }} {{ changes.files === 1 ? 'file' : 'files' }} <b class="add">+{{ changes.added }}</b> <b class="del">−{{ changes.deleted }}</b><template v-if="changes.unseen"> · {{ changes.unseen }} not viewed</template> <button class="linkbtn" @click="ui.changes = s.id">See the changes</button></p>
       <p v-for="c in s.conflicts ?? []" :key="c.withId" class="conflicts">⚠ Overlaps with {{ c.withId }}: {{ c.reason }}</p>
       <div v-if="s.helpers.length">
         <span class="lbl">Helpers ({{ s.helpers.length }})</span>
@@ -71,6 +73,7 @@ async function copyAttach() {
       </div>
       <div class="actions">
         <button class="btn" @click="focusTerminal">Open in terminal</button>
+        <button v-if="s.changes" class="btn" @click="ui.changes = s.id">Changes</button>
         <button class="btn" @click="ui.recentRepo = s.repo; ui.recentOpen = true">Past sessions here</button>
         <button v-if="world?.id === UNSORTED.id" class="btn" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
         <button v-else-if="state.worlds.length > 1" class="btn" @click="ui.moveSession = s.id">Move to another world…</button>

@@ -98,6 +98,23 @@ Copying works from the terminal: what Claude Code or tmux copies reaches your cl
 Sessions you started by hand outside tmux still show up and their cards still work, but they have
 no live terminal (see [Sessions started outside tmux](#sessions-started-outside-tmux)).
 
+### Changes
+
+**Changes** in a session's terminal or chat header (and on its card) shows the number of files it
+changed since it started, with a dot while some are not viewed yet. It opens the list of those
+files, split into *Not committed yet* and *Committed*, with each file's status (added, modified,
+deleted, renamed) and line counts. Click a file to read its diff, unified or side by side (your
+choice is remembered; a phone always gets unified). The list and the open diff follow the agent
+as it edits.
+
+Tick **Viewed** on a file once you have read it, and the next unviewed file opens. If the agent
+edits that file again, the tick clears, so "3 not viewed" means three files you have not seen in
+their current state. A ⚠ on a file means another session in the same repo, in another worktree,
+changed it too, so merging both will likely conflict there. The session panel lists those
+overlaps as well. The view only reads: undoing a change is still something you ask the agent for.
+
+![The Changes view: changed files on the left, grouped into not committed and committed, and the picked file's diff on the right](docs/media/changes.png)
+
 ### Existing sessions and Resume
 
 Agent Worlds also knows about Claude, Codex and Kimi sessions you started before it, or outside it.
