@@ -142,6 +142,7 @@ function onKey(e: KeyboardEvent) {
   else if (a.kind === 'new-task') openNewTask()
   else if (a.kind === 'catchup') { if (selected.value && !selected.value.catchupRunning) requestCatchup(selected.value.id) }
   else if (a.kind === 'worlds') ui.worldsOpen = true
+  else if (a.kind === 'changes') { const s = selected.value; if (s?.changes?.files.length) ui.changes = s.id; else showToast(s ? 'This session has not changed any files yet.' : 'Select a session first.') }
   else if (a.kind === 'recent') { ui.recentRepo = null; ui.recentOpen = true }
   else if (a.kind === 'terminal') focusTerminal()
   else if (a.kind === 'leave-terminal') (document.activeElement as HTMLElement | null)?.blur()

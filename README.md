@@ -551,6 +551,8 @@ Press `?` in the app for this list. Shortcuts pause while you type in the termin
 | `N` | new session in the selected session's world |
 | `R` | open Recent sessions (resume an earlier session) |
 | `C` | catch me up on the selected session |
+| `D` | open Changes: the files the selected session changed and their diffs |
+| `[` / `]` | in Changes, the previous / next file |
 | `W` | open the Worlds panel |
 | `M` | mute or unmute the alert sound |
 | `T` or `Enter` | type into the selected session's terminal |

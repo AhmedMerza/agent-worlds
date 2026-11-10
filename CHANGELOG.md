@@ -4,6 +4,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-11-10
+- **Shortcuts for Changes.** `D` opens the selected session's Changes; inside it `[` and `]` go to the previous and next file.
+
 ## 2026-11-09
 - **Changes: see what each session changed.** A **Changes** button in the terminal and chat headers, the session panel and a person's card opens the files a session changed since it started (uncommitted and committed, with status and line counts) and each file's diff, unified or side by side. It updates while the agent works. Tick **Viewed** per file, like a pull request review: the tick clears when the agent edits the file again, and the header shows how many are not viewed. A file another session (in another worktree of the same repo) also changed is marked ⚠, and that overlap is now one of the reasons under "Overlaps with".
 - Buttons in the terminal header (Rename, Scroll back, End session) now work on the first click while the terminal has the keyboard. Pressing one used to remove the "Typing into…" hint, which moved the button out from under the pointer before the click landed.

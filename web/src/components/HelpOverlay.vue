@@ -11,6 +11,8 @@ const all: [string, string][] = [
   ['N', 'New session in the selected session\'s world'],
   ['R', 'Recent sessions: resume one, including sessions started before Agent Worlds'],
   ['C', 'Catch me up on the selected session (Haiku reads its transcript)'],
+  ['D', 'See what the selected session changed: its files and their diffs'],
+  ['[ and ]', 'In Changes: previous / next file'],
   ['W', 'Open the Worlds panel (create, rename, reorder, delete)'],
   ['M', 'Mute or unmute the alert sound'],
   ['T or Enter', 'Type into the selected session\'s terminal'],
