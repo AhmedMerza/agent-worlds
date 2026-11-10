@@ -114,7 +114,7 @@ export interface KeyInfo {
 }
 export type KeyAction =
   | { kind: 'next' } | { kind: 'jump'; index: number } | { kind: 'help' } | { kind: 'escape' }
-  | { kind: 'new-task' } | { kind: 'recent' } | { kind: 'leave-terminal' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | { kind: 'terminal' } | null
+  | { kind: 'new-task' } | { kind: 'recent' } | { kind: 'leave-terminal' } | { kind: 'mute' } | { kind: 'catchup' } | { kind: 'worlds' } | { kind: 'terminal' } | { kind: 'changes' } | null
 
 /** Decides what a keypress means. Never claims a key while the user is typing (or in the terminal). */
 export function routeKey(k: KeyInfo): KeyAction {
@@ -129,12 +129,20 @@ export function routeKey(k: KeyInfo): KeyAction {
   if (k.key === 'm' || k.key === 'M') return { kind: 'mute' }
   if (k.key === 'c' || k.key === 'C') return { kind: 'catchup' }
   if (k.key === 'w' || k.key === 'W') return { kind: 'worlds' }
+  if (k.key === 'd' || k.key === 'D') return { kind: 'changes' }
   if (k.key === 't' || k.key === 'T' || (k.key === 'Enter' && !k.onControl)) return { kind: 'terminal' }
   if (/^[1-9]$/.test(k.key)) return { kind: 'jump', index: Number(k.key) - 1 }
   return null
 }
 
 /** DOM helper for routeKey's `typing` flag. */
+/** In the Changes view: [ and ] step to the previous / next file, unless a text field or the terminal has the keys. */
+export function fileStepKey(k: { key: string; ctrl: boolean; meta: boolean; alt: boolean }, t: EventTarget | null): -1 | 1 | 0 {
+  if (k.ctrl || k.meta || k.alt || (k.key !== '[' && k.key !== ']')) return 0
+  const el = t as HTMLElement | null
+  if (el?.closest?.('textarea,select,[contenteditable="true"],.xterm,input:not([type="checkbox"])')) return 0
+  return k.key === '[' ? -1 : 1
+}
 export function isTypingTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null
   if (!el || !el.closest) return false

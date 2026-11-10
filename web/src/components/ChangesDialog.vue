@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ChangedFile } from '../types'
-import { baseName, changeSummary, diffLines, isViewed, nameOf, sharedFiles, splitRows } from '../logic'
+import { baseName, changeSummary, diffLines, fileStepKey, isViewed, nameOf, sharedFiles, splitRows } from '../logic'
 import { sessionChanges, sessionFileDiff, setViewed, state } from '../store'
 
 /** What one session changed since it started: files on the left, the picked file's diff on the right (one at a time on a phone). */
@@ -71,6 +71,12 @@ async function toggleViewed(f: ChangedFile, e: Event) {
   if (next) pick(next)
 }
 const step = (d: 1 | -1) => { const i = order.value.findIndex((f) => f.path === picked.value); const f = order.value[i + d]; if (f) pick(f) }
+function onKey(e: KeyboardEvent) {
+  const d = fileStepKey({ key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey }, e.target)
+  if (d) { e.preventDefault(); step(d) }
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 const dirOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '')
 const n = (x: number) => x.toLocaleString('en')
 const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as const
@@ -123,8 +129,8 @@ const STATUS = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed' } as cons
               <button class="btn ch-back" @click="picked = null">‹ Files</button>
               <code class="ch-path"><template v-if="file.from"><template v-for="(seg, i) in file.from.split('/')" :key="'f' + i"><template v-if="i">/</template><bdi>{{ seg }}</bdi></template> → </template><template v-for="(seg, i) in file.path.split('/')" :key="i"><template v-if="i">/</template><bdi>{{ seg }}</bdi></template></code>
               <label class="ch-viewed"><input :key="file.path" type="checkbox" :checked="viewed(file)" @change="toggleViewed(file, $event)"> Viewed</label>
-              <button class="btn" :disabled="order[0]?.path === file.path" aria-label="Previous file" @click="step(-1)">‹</button>
-              <button class="btn" :disabled="order.at(-1)?.path === file.path" aria-label="Next file" @click="step(1)">›</button>
+              <button class="btn" :disabled="order[0]?.path === file.path" aria-label="Previous file" title="Previous file ([)" @click="step(-1)">‹</button>
+              <button class="btn" :disabled="order.at(-1)?.path === file.path" aria-label="Next file" title="Next file (])" @click="step(1)">›</button>
             </div>
             <p v-if="shared.has(file.path)" class="conflicts">⚠ Also changed by <template v-for="(who, i) in shared.get(file.path)!" :key="i"><template v-if="i">, </template><bdi>{{ who }}</bdi></template>. Merging both will likely conflict here.</p>
             <p v-if="diffError" class="err" role="alert">{{ diffError }} <button class="linkbtn" @click="load(file)">Try again</button></p>

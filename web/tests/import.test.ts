@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ageText, catchupView, defaultWorld, deleteWorldText, filterHistory, fmtWait, ghostId, ghostSession, groupSessions,
-  isLeaveTerminalKey, needsFallback, permissionAsk, permissionDetail, resumeOutcome, routeKey, queue,
+  isLeaveTerminalKey, needsFallback, fileStepKey, permissionAsk, permissionDetail, resumeOutcome, routeKey, queue,
 } from '../src/logic'
 import { applyMessage, newState, resumeSession, state } from '../src/store'
 import type { HistorySession, Unmanaged, World } from '../src/types'
@@ -153,5 +153,17 @@ describe('keys', () => {
   it('R opens recent sessions, but not while typing', () => {
     expect(routeKey({ ...k, key: 'r' })).toEqual({ kind: 'recent' })
     expect(routeKey({ ...k, key: 'R', typing: true })).toBeNull()
+  })
+  it('D opens Changes; [ and ] step files there, but not from a text field or with a modifier', () => {
+    expect(routeKey({ ...k, key: 'd' })).toEqual({ kind: 'changes' })
+    expect(routeKey({ ...k, key: 'D', typing: true })).toBeNull()
+    const m = { ctrl: false, meta: false, alt: false }
+    // No DOM here: a target whose closest() finds (or not) a text field, the terminal, etc.
+    const at = (inField: boolean) => ({ closest: () => (inField ? {} : null) }) as unknown as EventTarget
+    expect(fileStepKey({ ...m, key: ']' }, at(false))).toBe(1)
+    expect(fileStepKey({ ...m, key: '[' }, null)).toBe(-1)
+    expect(fileStepKey({ ...m, key: ']' }, at(true))).toBe(0)
+    expect(fileStepKey({ ...m, key: 'x' }, null)).toBe(0)
+    expect(fileStepKey({ ...m, key: ']', ctrl: true }, null)).toBe(0)
   })
 })
