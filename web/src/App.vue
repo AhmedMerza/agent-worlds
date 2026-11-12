@@ -158,7 +158,8 @@ const toastOn = ref(false)
 watch(() => state.toast?.n, () => {
   toastOn.value = true
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastOn.value = false }, 2800)
+  // Long enough to read: a worktree's fate is a full sentence, and the only place it is said.
+  toastTimer = setTimeout(() => { toastOn.value = false }, Math.max(2800, (state.toast?.text.length ?? 0) * 60))
 })
 // If the filtered world disappears, show everything again.
 watch(groups, (g) => { if (state.filter !== 'all' && !g.some((x) => x.world.id === state.filter)) state.filter = 'all' })

@@ -1,7 +1,7 @@
 import { execFile } from './child.ts';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.ts';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
@@ -168,6 +168,29 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   await run('tmux', ['set-option', '-w', '-t', t, 'aggressive-resize', 'on', ';', 'set-option', '-w', '-t', t, 'window-size', 'latest']);
   const pane = (await run('tmux', ['display-message', '-p', '-t', t, '#{pane_id}']))?.trim() ?? '';
   return { tmuxSession: name, dir, branch, pane: PANE_RE.test(pane) ? pane : null };
+}
+
+/**
+ * Deletes a worktree Agent Worlds made (<repo>-worktrees/<name>) after its session ends, and its local branch when git allows -d.
+ * Keeps it when anything would be lost: uncommitted or untracked files, or commits no remote has. Null when removed, else why kept;
+ * undefined when there is nothing to do (gone already, or not one Agent Worlds made).
+ */
+export async function removeWorktree(dir: string, repo: string): Promise<string | null | undefined> {
+  if (dirname(dir) !== `${repo}-worktrees` || !existsSync(dir)) return undefined;
+  // A run's plan and review notes live in .aw/, which git is told to ignore (excludeRunFiles), so status never lists them
+  try { if (readdirSync(join(dir, '.aw')).length) return 'it holds run notes in .aw/'; } catch { /* no .aw */ }
+  const [status, unpushed, branch] = await Promise.all([
+    run('git', ['-C', dir, 'status', '--porcelain'], 30_000),
+    run('git', ['-C', dir, 'rev-list', '--count', 'HEAD', '--not', '--remotes'], 30_000),
+    branchOf(dir),
+  ]);
+  if (status === null || unpushed === null) return 'could not read its git state';
+  if (status.trim()) return 'it has uncommitted or untracked files';
+  if (unpushed.trim() !== '0') return `it has ${unpushed.trim()} commit(s) no remote has`;
+  const err = await runErr('git', ['-C', repo, 'worktree', 'remove', dir]);
+  if (err !== null) return err;
+  if (branch) await runErr('git', ['-C', repo, 'branch', '-d', branch]); // -d keeps a branch that is neither merged nor fully pushed to its upstream
+  return null;
 }
 
 /** null on success, else the trimmed stderr. */
