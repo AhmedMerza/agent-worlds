@@ -17,7 +17,7 @@ export const capacity = (zone: Zone): number => MAX_COLS[zone] * MAX_ROWS[zone]
 
 /** Sessions per zone, in a stable order (start time, then id) so slots never shuffle when states change.
  *  With `arrivals` (kept between frames, updated here) the desks go in arrival order instead: whoever comes back takes the last desk. */
-export function assignZones(sessions: Session[], arrivals?: Set<string>): Record<Zone, Session[]> {
+export function assignZones(sessions: Session[], arrivals?: Set<string>, keepId?: string | null): Record<Zone, Session[]> {
   const out: Record<Zone, Session[]> = { lounge: [], desks: [], help: [] }
   const sorted = [...sessions].sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
   for (const s of sorted) out[zoneOf(s.state)].push(s)
@@ -27,6 +27,11 @@ export function assignZones(sessions: Session[], arrivals?: Set<string>): Record
     for (const s of out.desks) arrivals.add(s.id)
     const rank = new Map([...arrivals].map((id, i) => [id, i]))
     out.desks.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
+  }
+  // A full zone leaves its last arrivals out; the selected session takes the last seat instead.
+  for (const zone of Object.keys(out) as Zone[]) {
+    const list = out[zone], i = list.findIndex((s) => s.id === keepId), cap = capacity(zone)
+    if (i >= cap) list.splice(cap - 1, 0, ...list.splice(i, 1))
   }
   return out
 }
