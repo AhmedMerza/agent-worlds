@@ -544,6 +544,19 @@ pre.diff{max-height:320px;overflow:auto}
 .views .needs-btn.on .count{background:var(--wait);color:var(--dark-ink)}
 .views .needs-btn[aria-expanded="true"]{border-color:var(--muted)}
 @media (prefers-reduced-motion:reduce){aside.floating{animation:none}}
+/* At ultrawide widths, keep the room scene at its usual size and pin Needs you beside the work. */
+@media (min-width:2200px){
+  .layout.full{grid-template-columns:minmax(0,1fr) 420px}
+  .layout.full .main-col.split{grid-template-columns:clamp(560px,30vw,900px) 12px minmax(0,1fr)}
+  .layout.full .splitter{display:none}
+  .layout.full .main-col.chats-mode{display:grid}
+  .layout.full aside.floating{display:flex;position:static;width:auto;max-height:none;overflow:hidden;padding:0;gap:16px;background:none;backdrop-filter:none;border:0;border-radius:0;box-shadow:none;animation:none}
+  .layout.full aside.floating > .panel{border-radius:6px;min-height:0;overflow:auto}
+  .layout.full aside.floating > .panel:first-child{flex:1 1 0!important}
+  .layout.full aside.floating > .panel:last-child{flex:0 1 auto!important;max-height:45%!important}
+  .views .needs-btn{display:none}
+}
+@media (min-width:3400px){.layout.full{grid-template-columns:minmax(0,1fr) 440px}}
 /* Changes: one session's changed files and the picked file's diff */
 /* Opened from the phone chat (20), a person's card (39), the chat drawer (40) and the floating details (38): above them all. */
 .ch-overlay{z-index:45}
