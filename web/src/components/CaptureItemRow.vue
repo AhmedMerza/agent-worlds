@@ -44,7 +44,8 @@ async function file() {
 /** The title wraps instead of scrolling sideways: a title you can't read can't be reviewed. */
 const titleEl = ref<HTMLTextAreaElement | null>(null)
 function fit() { const el = titleEl.value; if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px` } }
-watch(title, () => void nextTick(fit))
+// Locking (filed, dropped) drops the field padding, so measure the height again.
+watch([title, () => props.item.status], () => void nextTick(fit))
 onMounted(() => { fit(); if (props.open) void nextTick(() => fileBtn.value?.focus()) })
 // Filed: the badge lands where the buttons were (the secondary reaction to Create issue).
 const done = ref<HTMLElement | null>(null)

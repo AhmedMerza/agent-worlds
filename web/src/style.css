@@ -659,6 +659,10 @@ pre.diff{max-height:320px;overflow:auto}
 .cap-title,.cap-body,.cap-repo{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 9px;min-width:0}
 .cap-title{flex:1;font-weight:700;resize:none;overflow:hidden;line-height:1.35;overflow-wrap:anywhere}
 .cap-title:disabled{background:transparent;border-color:transparent;padding-inline:0;color:inherit;opacity:1}
+/* A locked title is text, not a field: no input padding (nor the touch padding below), centred on its Details link. */
+.cap-title:disabled{padding-block:0}
+.cap-row:has(.cap-title:disabled){align-items:center}
+.cap-row:has(.cap-title:disabled) .cap-more{margin-top:0}
 .cap-body{width:100%;min-height:72px;resize:vertical;line-height:1.45}
 .cap-body:disabled{resize:none}
 /* Top-anchored on wide screens: a centred panel moves every button whenever a row grows, files or opens. */
