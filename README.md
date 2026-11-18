@@ -57,7 +57,7 @@ closely, so `~/ws/repoX` beats `~/ws` beats `~`; a world that lists the repo its
 ### Needs-you inbox
 
 Every session that needs something shows a card: permissions first, then oldest first. The
-header counts "waiting on you" (permissions, questions) apart from "to review" (errors). A finished turn
+header counts "waiting on you" (permissions, questions) apart from "failed" (errors). A finished turn
 is not in the inbox: the session goes to the lounge, and its review stays in its chat.
 The list holds still while your pointer is over it, so a click never lands on a different card.
 

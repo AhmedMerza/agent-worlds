@@ -176,7 +176,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
           <span class="stat opt"><b>{{ sessionList.length }}</b> sessions</span>
           <span class="stat"><span class="dot working" /><b>{{ count('working') }}</b> working</span>
         </template>
-        <span class="stat need"><span class="dot waiting" /><b>{{ split.waiting }}</b> waiting on you · <b>{{ split.review }}</b> to review</span>
+        <span class="stat need"><span class="dot waiting" /><b>{{ split.waiting }}</b> waiting on you · <b>{{ split.review }}</b> failed</span>
         <span v-if="!phone" class="stat opt"><span class="dot" /><b>{{ count('idle') }}</b> idle</span>
       </div>
       <button v-if="phone" class="hdr-btn more" aria-label="Menu" aria-haspopup="true" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">⋯</button>

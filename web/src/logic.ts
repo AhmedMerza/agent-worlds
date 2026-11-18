@@ -206,7 +206,7 @@ export function startsNeedingYou(prev: Session | undefined, next: Session): bool
 }
 const cardId = (c: Card): string => (c.kind === 'permission' || c.kind === 'question' ? c.requestId : c.kind)
 
-/** Header split: waiting = it cannot go on without an answer; review = finished work (done or error). */
+/** Header split: waiting = it cannot go on without an answer; review = it failed (a finished turn is not in the queue). */
 export function needSplit(q: Session[]): { waiting: number; review: number } {
   let waiting = 0, review = 0
   for (const s of q) { if (s.card?.kind === 'done' || s.card?.kind === 'error') review++; else waiting++ }
