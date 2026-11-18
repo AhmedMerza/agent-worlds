@@ -672,7 +672,8 @@ pre.diff{max-height:320px;overflow:auto}
 .hdr-btn.cap-btn{display:inline-flex;align-items:center;gap:6px}
 .hdr-btn.cap-btn .count{padding:0 7px}
 @media (max-width:760px),(pointer:coarse){
-  .cap-overlay .hq-x,.dialog.capture .btn,.cap-title,.cap-repo,.cap-more{min-height:44px}
+  .cap-overlay .hq-x,.dialog.capture .btn,.cap-repo,.cap-more{min-height:44px}
+  .cap-title{padding-block:11px}
   .cap-overlay .hq-x{min-width:44px}
   .cap-row .cap-more{margin-top:0;display:inline-flex;align-items:center}
 }
