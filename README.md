@@ -37,9 +37,9 @@ room, and each session stands in the zone that matches what it is doing:
 
 | Zone | Who is there |
 |---|---|
-| **Lounge** (left, dim) | idle sessions, resting |
-| **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, including one you sent to the background mid-run with Ctrl+B, background commands, a scheduled wake-up) runs on after its turn. Only work started since your last prompt counts: a dev server or artifact watcher left from an earlier turn, or a helper that already finished, does not keep it there. If that work never reports back, it moves to the Help desk as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
-| **Help desk** (right, amber) | sessions that need you: waiting, finished or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
+| **Lounge** (left, dim) | idle sessions, resting, and sessions whose turn finished |
+| **Desks** (middle) | working sessions, with their helpers (subagents) underneath. A session that is busy without needing you sits still with a bubble: "…" while it compacts, a clock while background work (helpers, including one you sent to the background mid-run with Ctrl+B, background commands, a scheduled wake-up) runs on after its turn. Only work started since your last prompt counts: a dev server or artifact watcher left from an earlier turn, or a helper that already finished, does not keep it there. If that work never reports back, it moves to the Lounge as done after 30 minutes (or a few minutes after a scheduled wake-up was due) |
+| **Help desk** (right, amber) | sessions that need you: waiting or failed. A timer counts how long they have waited, and they slump after 10 and 20 minutes |
 
 Each character wears a name tag with its first task (or the project for a blank session); leader and worker tags show who started whom. Open a character's card to rename it and see its task, team, context and tokens. The chips under the room list the branch and state too. Faces show the state: smiling at work, asleep when idle,
 frowning on error. A busy zone widens and a quiet one gives way, so a crowded help desk keeps its
@@ -57,7 +57,8 @@ closely, so `~/ws/repoX` beats `~/ws` beats `~`; a world that lists the repo its
 ### Needs-you inbox
 
 Every session that needs something shows a card: permissions first, then oldest first. The
-header counts "waiting on you" (permissions, questions) apart from "to review" (finished, error).
+header counts "waiting on you" (permissions, questions) apart from "to review" (errors). A finished turn
+is not in the inbox: the session goes to the lounge, and its review stays in its chat.
 The list holds still while your pointer is over it, so a click never lands on a different card.
 
 - **Permission requests**: the command, a warning for risky ones, **Allow once**, **Deny**, and
@@ -67,7 +68,7 @@ The list holds still while your pointer is over it, so a click never lands on a 
   deploys, recursive deletes, writes outside the project) also get a warning.
 - **Questions**: each option is a button; multi-select and several questions work.
 - **A turn that ends in a question** shows as "asking": the question and a reply box.
-- **Finished turns**: a review of what changed since the session started (files +/-, the commits
+- **Finished turns** (in the chat, not the inbox): a review of what changed since the session started (files +/-, the commits
   made, and anything not yet committed, listed separately), the last test result and a colourised
   diff. **Ask Claude to commit** appears only when something is uncommitted, **Open MR** only
   when there are commits; `/ship-check` is always there. New worktrees fork from the repo's

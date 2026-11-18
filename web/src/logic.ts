@@ -1,6 +1,7 @@
 import type { AgentId, Session, SessionState, World, RoomGroup, Card, Unmanaged, HistorySession, Review, PermissionMode, StepKind, Run, RunStep, Turn, ChangedFile } from './types'
 
-export const NEEDS_YOU: SessionState[] = ['waiting', 'done', 'error']
+/** States that put a session in Needs you. A finished turn ('done') is not one: it goes to the lounge, its card stays in the chat. */
+export const NEEDS_YOU: SessionState[] = ['waiting', 'error']
 export const UNSORTED: World = { id: '__unsorted', name: 'Unsorted', color: '#8a92a0', repos: [] }
 const CARD_RANK: Record<string, number> = { permission: 0, question: 1, asking: 1, error: 2, done: 3 }
 

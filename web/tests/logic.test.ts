@@ -5,7 +5,7 @@ import { queue, tiredLevel, routeKey, groupSessions, nextNeedingYou, waitMinutes
 import { mk, perm } from './helpers'
 
 describe('queue', () => {
-  it('orders permission, question, error, done, then oldest first', () => {
+  it('orders permission, question, error, then oldest first; a finished turn is not in it', () => {
     const s = [
       mk('done-old', { state: 'done', card: { kind: 'done', summary: null }, waitingSince: 1 }),
       mk('err', { state: 'error', card: { kind: 'error', summary: 'x' }, waitingSince: 5 }),
@@ -15,11 +15,11 @@ describe('queue', () => {
       mk('busy', { state: 'working' }),
       mk('idle-with-stale-card', { state: 'idle', card: perm }),
     ]
-    expect(queue(s).map((x) => x.id)).toEqual(['p-old', 'p-new', 'q', 'err', 'done-old'])
+    expect(queue(s).map((x) => x.id)).toEqual(['p-old', 'p-new', 'q', 'err'])
   })
   it('falls back to updatedAt when waitingSince is null', () => {
-    const a = mk('a', { state: 'done', card: { kind: 'done', summary: null }, updatedAt: 20 })
-    const b = mk('b', { state: 'done', card: { kind: 'done', summary: null }, updatedAt: 10 })
+    const a = mk('a', { state: 'error', card: { kind: 'error', summary: 'x' }, updatedAt: 20 })
+    const b = mk('b', { state: 'error', card: { kind: 'error', summary: 'x' }, updatedAt: 10 })
     expect(queue([a, b]).map((x) => x.id)).toEqual(['b', 'a'])
   })
   it('nextNeedingYou wraps and handles empty', () => {
@@ -133,8 +133,8 @@ describe('startsNeedingYou', () => {
   it('fires again for a new request in the same state', () => {
     expect(startsNeedingYou(w, { ...w, card: { ...perm, requestId: 'r2' } })).toBe(true)
   })
-  it('fires for done and error, not for working, idle or cardless', () => {
-    expect(startsNeedingYou(mk('a'), mk('a', { state: 'done', card: { kind: 'done', summary: null } }))).toBe(true)
+  it('fires for error, not for a finished turn, working, idle or cardless', () => {
+    expect(startsNeedingYou(mk('a'), mk('a', { state: 'done', card: { kind: 'done', summary: null } }))).toBe(false)
     expect(startsNeedingYou(mk('a'), mk('a', { state: 'error', card: { kind: 'error', summary: 'x' } }))).toBe(true)
     expect(startsNeedingYou(w, mk('a', { state: 'working' }))).toBe(false)
     expect(startsNeedingYou(w, mk('a', { state: 'idle' }))).toBe(false)
@@ -279,7 +279,7 @@ describe('ghosts', () => {
 describe('asking card', () => {
   it('needs you, ranks with questions after permissions, and is answerable in the GUI', () => {
     const q = queue([mk('d', { state: 'done', card: doneCard, waitingSince: 1 }), mk('k', { state: 'waiting', card: asking, waitingSince: 5 }), mk('p', { state: 'waiting', card: permCard, waitingSince: 9 })])
-    expect(q.map((s) => s.id)).toEqual(['p', 'k', 'd'])
+    expect(q.map((s) => s.id)).toEqual(['p', 'k'])
     expect(cardLive(asking)).toBe(true)
   })
   it('alerts when a session starts asking', () => {

@@ -4,7 +4,7 @@ import { mk, perm } from './helpers'
 
 describe('zones', () => {
   it('maps states to zones', () => {
-    expect(['working', 'idle', 'waiting', 'done', 'error'].map((s) => zoneOf(s as never))).toEqual(['desks', 'lounge', 'help', 'help', 'help'])
+    expect(['working', 'idle', 'waiting', 'done', 'error'].map((s) => zoneOf(s as never))).toEqual(['desks', 'lounge', 'help', 'lounge', 'help'])
   })
   it('keeps slot order stable by start time, whatever the state changes', () => {
     const a = mk('a', { startedAt: 3 }), b = mk('b', { startedAt: 1 }), c = mk('c', { startedAt: 2 })
@@ -15,7 +15,9 @@ describe('zones', () => {
     expect(z.desks.map((s) => s.id)).toEqual(['b', 'a'])
     expect(z.help.map((s) => s.id)).toEqual(['c'])
     // a joins help later: ordered by start time, not by who arrived last
-    expect(assignZones([mk('a', { startedAt: 3, state: 'done' }), c2]).help.map((s) => s.id)).toEqual(['c', 'a'])
+    expect(assignZones([mk('a', { startedAt: 3, state: 'error' }), c2]).help.map((s) => s.id)).toEqual(['c', 'a'])
+    // a finished turn rests in the lounge, not at the help desk
+    expect(assignZones([mk('a', { startedAt: 3, state: 'done' }), c2]).lounge.map((s) => s.id)).toEqual(['a'])
   })
   it('ties break by id', () => {
     expect(assignZones([mk('z'), mk('m')]).desks.map((s) => s.id)).toEqual(['m', 'z'])
