@@ -37,13 +37,18 @@ const run = (cmd: string, args: string[], cwd: string, timeout: number): Promise
   execFile(cmd, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024 }, (err, out, errOut) => done(err ? `${out}${errOut}`.trim().split('\n').slice(-15).join('\n') || err.message : null));
 });
 
+/** Rebuilds web/dist when its sources are newer (a branch switch or pull since the last build). Returns an error or null. */
+export async function buildWebIfStale(root = ROOT): Promise<string | null> {
+  const web = join(root, 'web');
+  if (newest([join(web, 'src'), join(web, 'index.html')]) <= newest([join(web, 'dist/index.html')])) return null;
+  const err = await run('npm', ['run', 'build'], web, 180_000);
+  return err ? `web build failed:\n${err}` : null;
+}
+
 /** Gets the new code ready to run: rebuilds the web app when its sources are newer, then checks the server code loads. Returns an error or null. */
 export async function prepareRestart(root = ROOT): Promise<string | null> {
-  const web = join(root, 'web');
-  if (newest([join(web, 'src'), join(web, 'index.html')]) > newest([join(web, 'dist/index.html')])) {
-    const err = await run('npm', ['run', 'build'], web, 180_000);
-    if (err) return `web build failed:\n${err}`;
-  }
+  const built = await buildWebIfStale(root);
+  if (built) return built;
   const err = await run(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(join(root, 'server/src/server.ts')).href)})`], root, 30_000);
   return err ? `the new server code does not load:\n${err}` : null;
 }

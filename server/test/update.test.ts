@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { watchCode, prepareRestart } from '../src/update.ts';
+import { watchCode, prepareRestart, buildWebIfStale } from '../src/update.ts';
 
 import { tmp } from './fixtures.ts';
 
@@ -31,6 +31,21 @@ test('prepareRestart reports a server that does not load, and passes the real on
   writeFileSync(join(root, 'server/src/server.ts'), 'export const x = ;\n');
   assert.match(await prepareRestart(root) ?? '', /does not load/);
   assert.equal(await prepareRestart(join(import.meta.dirname, '../..')), null);
+});
+
+test('buildWebIfStale rebuilds only when web/src is newer than web/dist', async () => {
+  const root = tmp(), web = join(root, 'web');
+  mkdirSync(join(web, 'src'), { recursive: true });
+  mkdirSync(join(web, 'dist'));
+  // The fake build counts its runs and writes dist/index.html, like vite does.
+  writeFileSync(join(web, 'package.json'), JSON.stringify({ scripts: { build: `node -e "const f=require('fs');f.appendFileSync('runs','x');f.writeFileSync('dist/index.html','')"` } }));
+  writeFileSync(join(web, 'dist/index.html'), '');
+  writeFileSync(join(web, 'src/style.css'), 'a');
+  utimesSync(join(web, 'dist/index.html'), new Date(1000), new Date(1000)); // built before the branch switch
+  assert.equal(await buildWebIfStale(root), null);
+  assert.equal(readFileSync(join(web, 'runs'), 'utf8'), 'x', 'stale dist rebuilt');
+  assert.equal(await buildWebIfStale(root), null);
+  assert.equal(readFileSync(join(web, 'runs'), 'utf8'), 'x', 'fresh dist left alone');
 });
 
 test('POST /api/restart: refuses without a launcher or with broken code, else restarts', async () => {
