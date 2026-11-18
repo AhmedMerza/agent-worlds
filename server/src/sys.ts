@@ -6,9 +6,9 @@ import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.t
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
 
-function run(cmd: string, args: string[], timeout = 3000): Promise<string | null> {
+function run(cmd: string, args: string[], timeout = 3000, env?: NodeJS.ProcessEnv): Promise<string | null> {
   return new Promise((done) => {
-    execFile(cmd, args, { timeout }, (err, stdout) => done(err ? null : stdout.toString()));
+    execFile(cmd, args, { timeout, env }, (err, stdout) => done(err ? null : stdout.toString()));
   });
 }
 
@@ -28,14 +28,25 @@ export async function branchOf(cwd: string): Promise<string | null> {
 }
 
 /**
- * The ref a new worktree branch starts from: the repo's default branch (origin/HEAD, else main,
- * else master), never whatever the main checkout happens to have checked out. HEAD only when the
- * repo has none of those.
+ * The ref a new worktree branch starts from: the repo's default branch, never whatever the main
+ * checkout happens to have checked out. origin/HEAD names the branch, but `origin` can be a stale fork,
+ * so the local branch's upstream (fetched first, failure tolerated) wins; then origin/HEAD itself,
+ * main, master. HEAD only when the repo has none of those.
  */
 export async function defaultStart(repo: string): Promise<string> {
+  const ok = async (ref: string) => (await run('git', ['-C', repo, 'rev-parse', '-q', '--verify', ref + '^{commit}'])) !== null;
   const remote = (await run('git', ['-C', repo, 'symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD']))?.trim();
+  const name = remote?.replace(/^[^/]+\//, '');
+  const up = name && (await run('git', ['-C', repo, 'rev-parse', '--abbrev-ref', `${name}@{upstream}`]))?.trim();
+  if (up) {
+    const [rem, ...br] = up.split('/');
+    // Never wait on a credential or passphrase prompt: a failed fetch just falls back to the last-fetched ref
+    await run('git', ['-C', repo, 'fetch', '-q', rem, br.join('/')], 10_000,
+      { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' });
+    if (await ok(up)) return up;
+  }
   for (const ref of [remote, 'main', 'master']) {
-    if (ref && (await run('git', ['-C', repo, 'rev-parse', '-q', '--verify', ref + '^{commit}'])) !== null) return ref;
+    if (ref && (await ok(ref))) return ref;
   }
   return 'HEAD';
 }

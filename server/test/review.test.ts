@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 import { Insights, normaliseNeeds } from '../src/insights.ts';
 import { reviewOf } from '../src/review.ts';
-import { createSession, repoInfo } from '../src/sys.ts';
+import { createSession, defaultStart, repoInfo } from '../src/sys.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { ev, tmp } from './fixtures.ts';
@@ -123,4 +123,22 @@ test('without a baseSha: no remote, an unrelated ref, no default branch, detache
   const d = gitRepo(); commit(d, 'd1'); commit(d, 'd2'); git(d, 'checkout', '-q', '--detach', 'HEAD'); git(d, 'branch', '-f', 'main', 'HEAD~2');
   const rd = (await reviewOf(d, null))!;
   assert.deepEqual([rd.branch, rd.commits.map((x) => x.subject)], [null, ['d2', 'd1']]);
+});
+
+test('new worktrees start from the local default branch\'s upstream, not a stale origin', async () => {
+  const up = gitRepo(); // canonical remote, fresher than origin
+  git(up, 'checkout', '-q', '-b', 'dev');
+  const d = tmp(); git(d, 'init', '-q', '-b', 'main'); git(d, 'config', 'user.email', 't@example.com'); git(d, 'config', 'user.name', 'T');
+  git(d, 'remote', 'add', 'origin', up); git(d, 'remote', 'add', 'upstream', up);
+  git(d, 'fetch', '-q', 'origin'); git(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/dev');
+  git(d, 'fetch', '-q', 'upstream');
+  git(d, 'checkout', '-q', '-b', 'dev', '--track', 'upstream/dev');
+  writeFileSync(join(up, 'new.txt'), 'n'); git(up, 'add', '.'); git(up, 'commit', '-q', '-m', 'newer'); // origin/dev and upstream/dev now behind
+  assert.equal(await defaultStart(d), 'upstream/dev');
+  assert.equal(git(d, 'rev-parse', 'upstream/dev'), git(up, 'rev-parse', 'dev'), 'fetched the fresh tip');
+  // the review pane measures from the same fresh base: local dev and origin/dev still trail it, and their
+  // upstream-only commit ("newer") must not be claimed as this branch's work
+  git(d, 'checkout', '-q', '-b', 'feat', 'upstream/dev');
+  writeFileSync(join(d, 'mine.txt'), 'm'); git(d, 'add', '.'); git(d, 'commit', '-q', '-m', 'mine');
+  assert.deepEqual((await reviewOf(d, null))!.commits.map((c) => c.subject), ['mine']);
 });
