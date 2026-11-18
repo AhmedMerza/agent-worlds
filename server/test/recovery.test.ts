@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Recovery } from '../src/recovery.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
@@ -52,6 +52,10 @@ test('Restore all gives each Codex session back its own access', async () => {
     assert.equal(response.status, 200);
     const access = Object.fromEntries(launched.map((o) => [o.resume, o.codexUnrestricted]));
     assert.deepEqual(access, { 'codex-sandboxed': false, 'codex-full': true, 'codex-unknown': true });
+    // The restored session starts in its new pane: it is still recorded sandboxed for the next restart.
+    const pane = `%${launched.findIndex((o) => o.resume === 'codex-sandboxed') + 1}`;
+    await app.store.handle({ session_id: 'codex-sandboxed', hook_event_name: 'SessionStart', cwd: repo }, pane, undefined, null, 'codex');
+    assert.equal(new Recovery(join(home, 'recovery.json')).get('codex-sandboxed')?.codexUnrestricted, false);
   } finally { await app.close(); }
 });
 
@@ -164,4 +168,56 @@ test('closing a pane forgets its conversation, but losing the whole tmux server 
     await app.sweep();
     assert.deepEqual(new Recovery(join(home, 'recovery.json')).list().map((s) => s.id).sort(), ['crashed-one', 'restored-one'], 'no tmux server at all: still offered');
   } finally { await app.close(); }
+});
+
+test('a Codex session records the access it was launched or resumed with', async () => {
+  const home = tmp(), repo = tmp(), codex = tmp();
+  const RESUMED = '55555555-eeee-4eee-8eee-eeeeeeeeeeee';
+  const rollouts = join(codex, 'sessions', '2026', '11', '18');
+  mkdirSync(rollouts, { recursive: true });
+  writeFileSync(join(rollouts, `rollout-2026-11-18T10-00-00-${RESUMED}.jsonl`), JSON.stringify({ timestamp: '2026-11-18T10:00:00.000Z', type: 'session_meta', payload: { id: RESUMED, cwd: repo } }) + '\n');
+  // Recorded unrestricted earlier; resumed sandboxed below, which must replace it.
+  new Recovery(join(home, 'recovery.json')).upsert({ id: RESUMED, agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1, codexUnrestricted: true });
+  let pane = 0;
+  const app = startServer({ ...parseConfig({ worlds: [{ id: 'w', name: 'W', repos: [repo] }] }), port: 0 }, TOKEN, {
+    home, procRoot: join(tmp(), 'missing'), installed: () => true, homes: { codex },
+    deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-x' },
+    createSession: async (o: any) => ({ tmuxSession: `aw-${++pane}`, dir: o.repo, branch: null, pane: `%${pane}` }),
+  });
+  await app.listen();
+  const H = { 'x-aw-token': TOKEN, 'content-type': 'application/json' };
+  const saved = (id: string) => new Recovery(join(home, 'recovery.json')).get(id);
+  try {
+    const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    const start = (body: object) => fetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ worldId: 'w', repo, task: '', ...body }) });
+    assert.equal((await start({ agent: 'codex', codexUnrestricted: false })).status, 201);
+    await app.store.handle({ session_id: 'cx-sandboxed', hook_event_name: 'SessionStart', cwd: repo }, `%${pane}`, undefined, null, 'codex');
+    assert.equal(saved('cx-sandboxed')?.codexUnrestricted, false, 'a sandboxed launch is recorded sandboxed');
+    assert.equal((await start({ agent: 'codex' })).status, 201);
+    await app.store.handle({ session_id: 'cx-full', hook_event_name: 'SessionStart', cwd: repo }, `%${pane}`, undefined, null, 'codex');
+    assert.equal(saved('cx-full')?.codexUnrestricted, true, 'the default launch is recorded unrestricted');
+    assert.equal((await start({})).status, 201);
+    await app.store.handle({ session_id: 'claude-one', hook_event_name: 'SessionStart', cwd: repo }, `%${pane}`);
+    assert.equal(saved('claude-one')?.agent, 'claude');
+    assert.ok(!('codexUnrestricted' in saved('claude-one')!), 'a Claude session records no Codex access');
+
+    const r = await fetch(`${base}/api/sessions/resume`, { method: 'POST', headers: H, body: JSON.stringify({ sessionId: RESUMED, agent: 'codex', codexUnrestricted: false }) });
+    assert.equal(r.status, 201, await r.clone().text());
+    await app.store.handle({ session_id: RESUMED, hook_event_name: 'SessionStart', cwd: repo }, `%${pane}`, undefined, null, 'codex');
+    assert.equal(saved(RESUMED)?.codexUnrestricted, false, 'resuming sandboxed replaces the earlier record');
+  } finally { await app.close(); }
+});
+
+test('recorded Codex access is kept only when it is a boolean, and a later row can add it', () => {
+  const file = join(tmp(), 'recovery.json');
+  writeFileSync(file, JSON.stringify([
+    { id: 'text', agent: 'codex', cwd: '/work/repo', task: null, lastPrompt: null, updatedAt: 2, codexUnrestricted: 'false' },
+    { id: 'bool', agent: 'codex', cwd: '/work/repo', task: null, lastPrompt: null, updatedAt: 1, codexUnrestricted: false },
+  ]));
+  const rec = new Recovery(file);
+  assert.equal(rec.get('text')?.codexUnrestricted, undefined, 'a non-boolean value is not a record');
+  assert.equal(rec.get('bool')?.codexUnrestricted, false);
+  rec.upsert({ id: 'later', agent: 'codex', cwd: '/work/repo', task: null, lastPrompt: null, updatedAt: 3 });
+  rec.upsert({ id: 'later', agent: 'codex', cwd: '/work/repo', task: null, lastPrompt: null, updatedAt: 3, codexUnrestricted: false });
+  assert.equal(new Recovery(file).get('later')?.codexUnrestricted, false, 'the same row with access added is saved');
 });

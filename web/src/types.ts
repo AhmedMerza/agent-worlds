@@ -83,7 +83,7 @@ export interface Session {
 /** A Claude process running outside Agent Worlds. */
 export interface Unmanaged { pid: number; cwd: string; repo: string | null; worldId: string | null; sessionId: string | null; inTmux: boolean; since: number; lastPrompt?: string | null; lastActivity?: number | null }
 
-export interface HistorySession { sessionId: string; agent?: AgentId; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean; interrupted?: boolean }
+export interface HistorySession { sessionId: string; agent?: AgentId; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean; interrupted?: boolean; codexUnrestricted?: boolean }
 export interface RecoverableSession { id: string; agent: AgentId; cwd: string; task: string | null; lastPrompt: string | null; updatedAt: number }
 
 export type ServerMessage =

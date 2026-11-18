@@ -762,7 +762,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const only = repo ? normalize(repo).replace(/\/+$/, '') : undefined;
       const interrupted = recoverable();
       const interruptedIds = new Set(interrupted.map((s) => s.id));
-      const remembered = interrupted.filter((s) => !only || inRepo(s.cwd, only)).map((s) => ({ sessionId: s.id, cwd: s.cwd, lastPrompt: s.lastPrompt ?? s.task, lastActivity: s.updatedAt, agent: s.agent }));
+      const remembered = interrupted.filter((s) => !only || inRepo(s.cwd, only)).map((s) => ({ sessionId: s.id, cwd: s.cwd, lastPrompt: s.lastPrompt ?? s.task, lastActivity: s.updatedAt, agent: s.agent, ...(s.codexUnrestricted !== undefined ? { codexUnrestricted: s.codexUnrestricted } : {}) }));
       const native = [...await history(cfg.claudeProjectsDir, limit, only), ...await kimiHistory(home, limit, only), ...await codexHistory(codexHome, limit, only)];
       const all = [...new Map([...remembered, ...native].map((s) => [s.sessionId, s])).values()];
       const items = await Promise.all(all.sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit).map(async (h) => {
