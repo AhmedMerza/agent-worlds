@@ -6,9 +6,9 @@ import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.t
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
 
-function run(cmd: string, args: string[], timeout = 3000): Promise<string | null> {
+function run(cmd: string, args: string[], timeout = 3000, env?: NodeJS.ProcessEnv): Promise<string | null> {
   return new Promise((done) => {
-    execFile(cmd, args, { timeout }, (err, stdout) => done(err ? null : stdout.toString()));
+    execFile(cmd, args, { timeout, env }, (err, stdout) => done(err ? null : stdout.toString()));
   });
 }
 
@@ -40,7 +40,9 @@ export async function defaultStart(repo: string): Promise<string> {
   const up = name && (await run('git', ['-C', repo, 'rev-parse', '--abbrev-ref', `${name}@{upstream}`]))?.trim();
   if (up) {
     const [rem, ...br] = up.split('/');
-    await run('git', ['-C', repo, 'fetch', '-q', rem, br.join('/')], 15000);
+    // Never wait on a credential or passphrase prompt: a failed fetch just falls back to the last-fetched ref
+    await run('git', ['-C', repo, 'fetch', '-q', rem, br.join('/')], 10_000,
+      { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' });
     if (await ok(up)) return up;
   }
   for (const ref of [remote, 'main', 'master']) {

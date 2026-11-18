@@ -5,7 +5,7 @@
 Newest first. Dates are commit dates.
 
 ## 2026-11-10
-- New session worktrees start from the current default branch: when `origin` is a stale fork (a two-year-old `origin/dev` while the local `dev` tracks `upstream/dev`), the local branch's upstream is fetched and used instead of `origin/HEAD`.
+- New session worktrees start from the current default branch: when `origin` is a stale fork (a two-year-old `origin/dev` while the local `dev` tracks `upstream/dev`), the local branch's upstream is fetched and used instead of `origin/HEAD`. The review pane measures from that same upstream, so commits the local `dev` hasn't pulled yet aren't shown as the session's work. The fetch never waits on a password or passphrase prompt; if it fails, the last-fetched ref is used.
 - **Shortcuts for Changes.** `D` opens the selected session's Changes; inside it `[` and `]` go to the previous and next file.
 
 ## 2026-11-09

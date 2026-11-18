@@ -23,7 +23,10 @@ function git(cwd: string, args: string[], okCodes = [0]): Promise<string | null>
 async function baseOf(cwd: string): Promise<string | null> {
   const remote = (await git(cwd, ['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD']))?.trim();
   let best: { mb: string; ahead: number } | null = null;
-  for (const ref of new Set([remote, remote?.replace(/^origin\//, ''), 'main', 'master'].filter(Boolean) as string[])) {
+  const name = remote?.replace(/^origin\//, '');
+  // `<default>@{upstream}` too: new worktrees fork from it (sys.ts defaultStart), and a local default branch that
+  // trails it would otherwise count every upstream commit since as this branch's work
+  for (const ref of new Set([remote, name, name && `${name}@{upstream}`, 'main', 'master'].filter(Boolean) as string[])) {
     if (!(await git(cwd, ['rev-parse', '-q', '--verify', ref + '^{commit}']))) continue;
     const mb = (await git(cwd, ['merge-base', 'HEAD', ref]))?.trim();
     const ahead = mb ? Number((await git(cwd, ['rev-list', '--count', `${mb}..HEAD`]))?.trim()) : NaN;

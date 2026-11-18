@@ -136,4 +136,9 @@ test('new worktrees start from the local default branch\'s upstream, not a stale
   writeFileSync(join(up, 'new.txt'), 'n'); git(up, 'add', '.'); git(up, 'commit', '-q', '-m', 'newer'); // origin/dev and upstream/dev now behind
   assert.equal(await defaultStart(d), 'upstream/dev');
   assert.equal(git(d, 'rev-parse', 'upstream/dev'), git(up, 'rev-parse', 'dev'), 'fetched the fresh tip');
+  // the review pane measures from the same fresh base: local dev and origin/dev still trail it, and their
+  // upstream-only commit ("newer") must not be claimed as this branch's work
+  git(d, 'checkout', '-q', '-b', 'feat', 'upstream/dev');
+  writeFileSync(join(d, 'mine.txt'), 'm'); git(d, 'add', '.'); git(d, 'commit', '-q', '-m', 'mine');
+  assert.deepEqual((await reviewOf(d, null))!.commits.map((c) => c.subject), ['mine']);
 });
