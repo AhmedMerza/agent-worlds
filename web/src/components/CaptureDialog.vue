@@ -18,7 +18,7 @@ const currentId = ref<string | null>(busyCapture?.id ?? null)
 const current = computed(() => (currentId.value ? state.captures[currentId.value] : undefined))
 /** Inbox items seen while the dialog is open stay listed until it closes, so filing one shows its result instead of making it vanish. */
 const seen = reactive(new Set<string>())
-const rest = computed(() => inbox(state.captures, currentId.value ?? undefined, seen))
+const rest = computed(() => inbox(state.captures, currentId.value ?? undefined, seen, state.now))
 watchEffect(() => { for (const r of rest.value) if (!seen.has(r.item.id)) seen.add(r.item.id) })
 const restGroups = computed(() => {
   const g: { id: string; createdAt: number; rows: typeof rest.value }[] = []
@@ -61,7 +61,7 @@ async function startRecording() {
     tick = window.setInterval(() => { elapsed.value = Date.now() - started }, 250)
     phase.value = 'recording'
   } catch (e) {
-    error.value = (e as Error).name === 'NotAllowedError' ? 'The browser was not allowed to use the microphone. Allow it in the address bar, or choose a recording instead.' : `Could not start recording: ${(e as Error).message}`
+    error.value = (e as Error).name === 'NotAllowedError' ? 'The browser was not allowed to use the microphone. Allow it in the address bar, or choose a recording instead.' : (e as Error).name === 'NotFoundError' ? 'No microphone found. Plug one in, or choose a recording instead.' : `Could not start recording (${(e as Error).message}). Choose a recording instead.`
   }
 }
 function stopRecording(use: boolean) { keep = use; rec?.stop() }
@@ -109,23 +109,26 @@ const opener = document.activeElement as HTMLElement | null
 onMounted(() => {
   motion = openOverlay(root.value!, panel.value!, document.querySelector('.cap-btn'), matchMedia('(max-width: 760px)').matches)
   panel.value?.querySelector<HTMLElement>('.cap-input .btn')?.focus()
+  window.addEventListener('keydown', onKey)
 })
+/** On window, not the overlay: Drop or Create issue removes the focused button, and focus falls to <body>. */
+function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(); else if (e.key === 'Tab') trap(e) }
 function trap(e: KeyboardEvent) {
   const f = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], input:not([hidden])') ?? [])].filter((x) => x.offsetParent)
   if (!f.length) return
   const i = f.indexOf(document.activeElement as HTMLElement)
-  if (e.shiftKey && i <= 0) { e.preventDefault(); f.at(-1)!.focus() } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus() }
+  if (e.shiftKey && i <= 0) { e.preventDefault(); f.at(-1)!.focus() } else if (!e.shiftKey && (i < 0 || i === f.length - 1)) { e.preventDefault(); f[0].focus() }
 }
-onBeforeUnmount(() => { if (rec) stopRecording(false); clearInterval(tick); motion?.revert(); opener?.focus?.() })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); if (rec) stopRecording(false); clearInterval(tick); motion?.revert(); opener?.focus?.() })
 </script>
 
 <template>
-  <div ref="root" class="overlay cap-overlay" @click.self="close" @keydown.esc="close" @keydown.tab="trap">
+  <div ref="root" class="overlay cap-overlay" @click.self="close">
     <div ref="panel" class="dialog capture" role="dialog" aria-modal="true" aria-labelledby="cap-h">
       <header class="ch-head" data-enter>
         <div>
           <h2 id="cap-h">Capture</h2>
-          <p class="why">Say what needs doing, or record a meeting. It is transcribed on this computer, and nothing is filed until you press Create issue.</p>
+          <p class="why">Record what needs doing, or a whole meeting, or choose a recording you made. It is transcribed on this computer, and nothing is filed until you press Create issue.</p>
         </div>
         <button class="hq-x" aria-label="Close" @click="close">×</button>
       </header>
@@ -160,7 +163,7 @@ onBeforeUnmount(() => { if (rec) stopRecording(false); clearInterval(tick); moti
           <button class="btn primary" @click="retry(current.id)">Try again</button>
           <button class="btn danger" @click="discard(current.id)">Discard</button>
         </div>
-        <TransitionGroup v-if="current.status === 'ready' && current.items.length" tag="ul" class="cap-list" move-class="cap-move" appear @enter="enterRow" @leave="leaveRow">
+        <TransitionGroup v-if="current.status === 'ready' && current.items.length" tag="ul" class="cap-list" move-class="cap-move" @enter="enterRow" @leave="leaveRow">
           <CaptureItemRow v-for="(i, n) in current.items" :key="i.id" :data-index="n" :capture-id="current.id" :item="i" :repos="repos" :open="current.items.length === 1" />
         </TransitionGroup>
         <p v-if="current.status === 'ready' && openCount" class="why">Anything you don't file or drop stays in the inbox for later.</p>

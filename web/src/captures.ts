@@ -4,16 +4,19 @@ import type { Capture, CaptureItem, World } from './types'
 export const OPEN: CaptureItem['status'][] = ['pending', 'filing', 'check']
 
 export type InboxRow = { capture: Capture; item: CaptureItem }
+const RECENT_MS = 24 * 3600_000
 
 /**
  * Every open item of every finished capture, newest recording first, in the order it was said.
  * `keep`: items to list whatever their status (the ones you acted on while looking), so a filed one shows its link and a dropped one its Undo.
  */
-export function inbox(captures: Record<string, Capture>, except?: string, keep?: Set<string>): InboxRow[] {
+export function inbox(captures: Record<string, Capture>, except?: string, keep?: Set<string>, now = Date.now()): InboxRow[] {
+  // Filed items of a recording from the last day stay listed with their link: what you filed this morning is still here to show.
+  const recent = (c: Capture, i: CaptureItem) => i.status === 'filed' && now - c.createdAt < RECENT_MS
   return Object.values(captures)
     .filter((c) => c.status === 'ready' && c.id !== except)
     .sort((a, b) => b.createdAt - a.createdAt)
-    .flatMap((capture) => capture.items.filter((i) => OPEN.includes(i.status) || keep?.has(i.id)).map((item) => ({ capture, item })))
+    .flatMap((capture) => capture.items.filter((i) => OPEN.includes(i.status) || keep?.has(i.id) || recent(capture, i)).map((item) => ({ capture, item })))
 }
 
 /** The badge on the Capture button: items waiting on you, plus recordings that failed. */

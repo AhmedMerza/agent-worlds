@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
 import { Captures, audioExt, chunks, extractWith, type Capture, type CaptureView } from '../src/captures.ts';
-import { cliFor, issueUrl } from '../src/issues.ts';
+import { cliFor, issueUrl, fileIssue } from '../src/issues.ts';
 import { tmp } from './fixtures.ts';
 
 const TOKEN = 'c'.repeat(64);
@@ -178,4 +179,27 @@ test('extract: long transcripts go in pieces, projects by number, an out-of-rang
   assert.match(calls[0], /working in project 1/);
   assert.deepEqual(items[0], { title: 'T', body: 'B', repo: '/b/two' });
   assert.equal(items[1].repo, null);
+});
+
+test('fileIssue files in upstream when the repo has one, not in the fork origin points at', async () => {
+  const repo = tmp(), bin = tmp(), log = join(bin, 'args');
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'http://gitlab.example/me/app.git']);
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'upstream', 'http://gitlab.example/team/app.git']);
+  writeFileSync(join(bin, 'glab'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\necho 'https://gitlab.example/team/app/-/issues/3'\n`);
+  chmodSync(join(bin, 'glab'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    assert.equal(await fileIssue(repo, '-x title', 'body'), 'https://gitlab.example/team/app/-/issues/3');
+    assert.ok(readFileSync(log, 'utf8').split('\n').includes('--repo=http://gitlab.example/team/app.git'));
+    execFileSync('git', ['-C', repo, 'remote', 'remove', 'upstream']);
+    await fileIssue(repo, 't', 'b');
+    assert.ok(readFileSync(log, 'utf8').split('\n').includes('--repo=http://gitlab.example/me/app.git'), 'origin when there is no upstream');
+    // glab 1.85 prints a work_items address; and a reply with no address at all still counts as filed (exit 0 = created)
+    writeFileSync(join(bin, 'glab'), `#!/bin/sh\necho ' - Creating issue in team/app' >&2\necho 'http://gitlab.example/team/app/-/work_items/4'\n`);
+    assert.equal(await fileIssue(repo, 't', 'b'), 'http://gitlab.example/team/app/-/work_items/4');
+    writeFileSync(join(bin, 'glab'), `#!/bin/sh\necho 'created'\n`);
+    assert.equal(await fileIssue(repo, 't', 'b'), '');
+  } finally { process.env.PATH = path; }
 });

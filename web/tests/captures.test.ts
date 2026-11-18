@@ -68,4 +68,9 @@ describe('inbox keep', () => {
     expect(inbox(c).map((r) => r.item.id)).toEqual(['p'])
     expect(inbox(c, undefined, new Set(['f'])).map((r) => r.item.id)).toEqual(['f', 'p'])
   })
+  it('lists what you filed from a recording of the last day, with its link, but not older ones', () => {
+    const now = 10 * 24 * 3600_000
+    const c = { x: { ...cap('x', now - 3600_000, 'ready', [item('f', 'filed'), item('d', 'dropped')]) }, y: cap('y', now - 2 * 24 * 3600_000, 'ready', [item('g', 'filed')]) }
+    expect(inbox(c, undefined, undefined, now).map((r) => r.item.id)).toEqual(['f'])
+  })
 })
