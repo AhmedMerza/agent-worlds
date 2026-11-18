@@ -1,5 +1,5 @@
 import { reactive, computed, ref, watch, markRaw } from 'vue'
-import type { ServerMessage, Session, World, RoomGroup, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId, Changes } from './types'
+import type { ServerMessage, Session, World, RoomGroup, Run, StepKind, FsListing, PhoneInfo, AccessInfo, Turn, Unmanaged, HistorySession, PermissionMode, RecoverableSession, AgentId, Changes, Capture } from './types'
 import { moveRepoPatches } from './fsbrowser'
 import { alertNeedsYou } from './notify'
 import { errorText, ghostId, ghostSession, resumeOutcome, type ResumeResult, type TeamRole, groupSessions, queue, screenOrder, nextNeedingYou, startsNeedingYou, isStepOf, cardKey, stepTags } from './logic'
@@ -27,11 +27,13 @@ export interface StoreState {
   /** tmux is installed on the server (false: sessions run inside Agent Worlds and end when it restarts). */
   tmux: boolean
   runs: Record<string, Run>
+  /** Voice captures by id. */
+  captures: Record<string, Capture>
 }
 
 export const newState = (): StoreState => ({
   worlds: [], sessions: {}, recoverable: [], order: [], loaded: false, connected: false,
-  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true, runs: {},
+  selectedId: null, autoSelected: false, toast: null, filter: 'all', now: Date.now(), pending: null, unmanaged: [], update: false, tmux: true, runs: {}, captures: {},
 })
 
 /** Applies one server message to the state. Pure aside from mutating `st`. */
@@ -59,7 +61,14 @@ export function applyMessage(st: StoreState, msg: ServerMessage): Session | null
       st.update = msg.update ?? false
       st.tmux = msg.tmux ?? true
       st.runs = Object.fromEntries((msg.runs ?? []).map((r) => [r.id, r]))
+      st.captures = Object.fromEntries((msg.captures ?? []).map((c) => [c.id, c]))
       st.loaded = true
+      break
+    case 'capture':
+      st.captures[msg.capture.id] = msg.capture
+      break
+    case 'capture-removed':
+      delete st.captures[msg.id]
       break
     case 'run':
       st.runs[msg.run.id] = msg.run
@@ -213,6 +222,14 @@ export const reorderWorlds = (ids: string[]) => api<unknown>('POST', '/api/world
 export const browseFs = (path: string) => api<FsListing>('GET', `/api/fs?path=${encodeURIComponent(path)}`)
 export const phoneInfo = () => api<PhoneInfo>('GET', '/api/phone')
 export const allowPhones = (address: string, allow: boolean) => api<unknown>('POST', '/api/phone/allow', { address, allow })
+const cap = (id: string) => `/api/captures/${encodeURIComponent(id)}`
+/** A recording goes up as-is; the server works out its format from the name or type. */
+export const uploadCapture = (audio: Blob, name: string, fromRepo?: string | null) => api<{ capture: Capture }>('POST', `/api/captures?name=${encodeURIComponent(name)}${fromRepo ? `&fromRepo=${encodeURIComponent(fromRepo)}` : ''}`, audio)
+export const editCaptureItem = (id: string, item: string, patch: { title?: string; body?: string; repo?: string | null; status?: 'pending' | 'dropped' }) => api<{ capture: Capture }>('PATCH', `${cap(id)}/items/${encodeURIComponent(item)}`, patch)
+export const fileCaptureItem = (id: string, item: string) => api<{ capture: Capture }>('POST', `${cap(id)}/items/${encodeURIComponent(item)}/file`)
+export const retryCapture = (id: string) => api<{ capture: Capture }>('POST', `${cap(id)}/retry`)
+export const deleteCapture = (id: string) => api<unknown>('DELETE', cap(id))
+export const captureTranscript = (id: string) => api<{ transcript: string | null }>('GET', `${cap(id)}/transcript`)
 export const uploadFile = (id: string, f: File) => api<{ path: string }>('POST', `${base(id)}/upload?name=${encodeURIComponent(f.name)}`, f)
 /** Quits its agent and closes its terminal; `force` once you said yes to cutting a turn short. */
 export const endSession = (id: string, force = false) => api<unknown>('POST', `${base(id)}/end`, { force })
@@ -473,7 +490,7 @@ export const ui = reactive({ ...savedViews(), worldsOpen: false,
   /** The one person whose card is open, in whichever room they are. */
   card: null as string | null,
   /** Full height layout: the floating Needs you and details panel. */
-  needsOpen: false, putSession: null as string | null, recentOpen: false, recentRepo: null as string | null, phoneOpen: false,
+  needsOpen: false, putSession: null as string | null, recentOpen: false, captureOpen: false, recentRepo: null as string | null, phoneOpen: false,
   /** The session whose Changes view is open. */
   changes: null as string | null, moveSession: null as string | null,
   /** A character being dragged to another room: where the pointer is, and the world under it. */

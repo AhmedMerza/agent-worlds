@@ -4,6 +4,9 @@
 
 Newest first. Dates are commit dates.
 
+## 2026-11-18
+- **Capture: speak or record, then file the to-dos as issues.** A **Capture** button (in the header; at the end of the tab row on a phone) records a voice note on this computer, or takes a recording from your phone's recorder or files, up to 500 MB. It is transcribed on this computer with faster-whisper (large-v3-turbo, English and Arabic): on the GPU when it has about 1.6 GB free, otherwise on the CPU. Claude then lists the to-dos it asks for, each with a guessed project. You review each one: edit the title and description, pick the project, then **Create issue** (GitHub via `gh`, GitLab via `glab`, from the repo's `origin`) or **Drop**. Nothing is filed until you press it, and an item without a project can't be filed. Anything you leave stays in the Capture inbox, and the button shows how many are waiting. One-time setup: `python3 -m venv ~/.config/agent-worlds/stt-venv && ~/.config/agent-worlds/stt-venv/bin/pip install faster-whisper nvidia-cublas-cu12 'nvidia-cudnn-cu12==9.*'`, or set `sttPython` in config.json to a Python that has faster-whisper.
+
 ## 2026-11-10
 - **Shortcuts for Changes.** `D` opens the selected session's Changes; inside it `[` and `]` go to the previous and next file.
 
