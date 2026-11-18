@@ -65,7 +65,7 @@ async function dismiss(id: string) {
                 <p class="r-prompt">{{ h.lastPrompt ?? 'No prompt recorded' }}</p>
               </div>
               <button v-if="h.managed && state.sessions[h.sessionId]" class="btn" @click="show(h.sessionId)">Show</button>
-              <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" :agent="h.agent" @started="emit('close')" />
+              <ResumeButton v-else-if="!h.managed" :session-id="h.sessionId" :mode="mode" :agent="h.agent" :unrestricted="h.codexUnrestricted" @started="emit('close')" />
               <button v-if="h.interrupted" class="btn" title="Remove this restart reminder without deleting the agent's saved conversation" @click="dismiss(h.sessionId)">Dismiss reminder</button>
             </li>
           </ul>

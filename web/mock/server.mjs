@@ -135,7 +135,7 @@ let unmanaged = process.env.MOCK_EMPTY ? [] : [
 ]
 const history = [
   { sessionId: 'sess-k', cwd: '/work/repo-k', repo: '/work/repo-k', worldId: 'web', lastPrompt: 'Refactor the checkout form validation', lastActivity: now() - 12 * MIN, running: true, managed: false },
-  { sessionId: 'sess-codex', agent: 'codex', cwd: '/work/repo-j', repo: '/work/repo-j', worldId: 'tools', lastPrompt: 'Review the deployment scripts', lastActivity: now() - 45 * MIN, running: false, managed: false },
+  { sessionId: 'sess-codex', agent: 'codex', cwd: '/work/repo-j', repo: '/work/repo-j', worldId: 'tools', lastPrompt: 'Review the deployment scripts', lastActivity: now() - 45 * MIN, running: false, managed: false, codexUnrestricted: false },
   { sessionId: 'sess-n', cwd: '/work/repo-n', repo: '/work/repo-n', worldId: 'mobile', lastPrompt: 'Add dark mode to the settings screen', lastActivity: now() - 3 * 60 * MIN, running: false, managed: false },
   { sessionId: 'sess-p', cwd: '/work/repo-p', repo: '/work/repo-p', worldId: 'tools', lastPrompt: 'Write a script that prunes old build artifacts', lastActivity: now() - 30 * 60 * MIN, running: false, managed: false },
   { sessionId: 'repo-a', cwd: '/work/repo-a', repo: '/work/repo-a', worldId: 'web', lastPrompt: 'Add a filter to the table', lastActivity: now() - 4 * MIN, running: true, managed: true },

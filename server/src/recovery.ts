@@ -4,6 +4,8 @@ import { isAgent, type AgentId } from './agents.ts';
 
 export type RecoverableSession = {
   id: string; agent: AgentId; cwd: string; task: string | null; lastPrompt: string | null; updatedAt: number;
+  /** Codex only: the access it was started with, so a restore gives it back. Unset: not recorded. */
+  codexUnrestricted?: boolean;
 };
 
 /** Conversations Agent Worlds was managing until they are explicitly ended. */
@@ -17,7 +19,7 @@ export class Recovery {
       const rows = JSON.parse(readFileSync(file, 'utf8')) as unknown;
       if (Array.isArray(rows)) for (const r of rows) {
         if (r && typeof r === 'object' && typeof r.id === 'string' && isAgent(r.agent) && typeof r.cwd === 'string' && r.cwd.startsWith('/')) {
-          this.data.set(r.id, { id: r.id, agent: r.agent, cwd: r.cwd, task: typeof r.task === 'string' ? r.task : null, lastPrompt: typeof r.lastPrompt === 'string' ? r.lastPrompt : null, updatedAt: Number(r.updatedAt) || 0 });
+          this.data.set(r.id, { id: r.id, agent: r.agent, cwd: r.cwd, task: typeof r.task === 'string' ? r.task : null, lastPrompt: typeof r.lastPrompt === 'string' ? r.lastPrompt : null, updatedAt: Number(r.updatedAt) || 0, ...(typeof r.codexUnrestricted === 'boolean' ? { codexUnrestricted: r.codexUnrestricted } : {}) });
         }
       }
     } catch { /* first run or unreadable file */ }
@@ -27,8 +29,9 @@ export class Recovery {
   get(id: string): RecoverableSession | undefined { return this.data.get(id); }
   upsert(s: RecoverableSession) {
     const old = this.data.get(s.id);
-    if (s.id.startsWith('starting:') || (old && old.agent === s.agent && old.cwd === s.cwd && old.task === s.task && old.lastPrompt === s.lastPrompt)) return;
-    this.data.set(s.id, s); this.save();
+    const access = s.codexUnrestricted ?? old?.codexUnrestricted;
+    if (s.id.startsWith('starting:') || (old && old.agent === s.agent && old.cwd === s.cwd && old.task === s.task && old.lastPrompt === s.lastPrompt && old.codexUnrestricted === access)) return;
+    this.data.set(s.id, { ...s, ...(access !== undefined ? { codexUnrestricted: access } : {}) }); this.save();
   }
   delete(id: string) { if (this.data.delete(id)) this.save(); }
   rename(from: string, to: string) {

@@ -256,12 +256,17 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const markMailboxed = (id: string) => { if (!mailboxed.has(id)) { mailboxed.add(id); saveMailboxed(); } };
   /** Shutting down (a restart, an update): sessions leave the store but have not ended, so their mail, mailbox and run steps stay. */
   let closing = false;
+  /** Codex access per terminal (tmux pane, or pty name) it was launched in, until its session id is known. */
+  const codexAccess = new Map<string, boolean>();
   const broadcast = (msg: { type: string; id?: string; [k: string]: unknown }) => {
     if (msg.type === 'session' && msg.session && typeof msg.session === 'object') {
       const s = msg.session as Partial<RecoverableSession>;
+      const where = (msg.session as { tmux?: { pane?: string } | null; direct?: string | null });
+      const access = codexAccess.get(where.tmux?.pane ?? where.direct ?? '');
       if (typeof s.id === 'string' && isAgent(s.agent) && typeof s.cwd === 'string') recovery.upsert({
         id: s.id, agent: s.agent, cwd: s.cwd, task: typeof s.task === 'string' ? s.task : null,
         lastPrompt: typeof s.lastPrompt === 'string' ? s.lastPrompt : null, updatedAt: Number(s.updatedAt) || Date.now(),
+        ...(s.agent === 'codex' && access !== undefined ? { codexUnrestricted: access } : {}),
       });
       if (typeof s.id === 'string') resuming.delete(s.id);
     }
@@ -341,7 +346,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     },
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
-  const createSession = opts.createSession ?? sys.createSession;
+  const createSession: typeof sys.createSession = async (o) => {
+    const c = await (opts.createSession ?? sys.createSession)(o);
+    if (o.agent === 'codex') codexAccess.set(c.pane ?? c.tmuxSession, o.codexUnrestricted !== false);
+    return c;
+  };
   // Without tmux, sessions run in ptys this server owns; one ending removes its card.
   const direct = new Direct((name) => { for (const s of [...store.sessions.values()]) if (s.direct === name) store.remove(s); });
   const spawnDirect: sys.SpawnDirect = (...a) => direct.spawn(...a);
@@ -753,7 +762,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const only = repo ? normalize(repo).replace(/\/+$/, '') : undefined;
       const interrupted = recoverable();
       const interruptedIds = new Set(interrupted.map((s) => s.id));
-      const remembered = interrupted.filter((s) => !only || inRepo(s.cwd, only)).map((s) => ({ sessionId: s.id, cwd: s.cwd, lastPrompt: s.lastPrompt ?? s.task, lastActivity: s.updatedAt, agent: s.agent }));
+      const remembered = interrupted.filter((s) => !only || inRepo(s.cwd, only)).map((s) => ({ sessionId: s.id, cwd: s.cwd, lastPrompt: s.lastPrompt ?? s.task, lastActivity: s.updatedAt, agent: s.agent, ...(s.codexUnrestricted !== undefined ? { codexUnrestricted: s.codexUnrestricted } : {}) }));
       const native = [...await history(cfg.claudeProjectsDir, limit, only), ...await kimiHistory(home, limit, only), ...await codexHistory(codexHome, limit, only)];
       const all = [...new Map([...remembered, ...native].map((s) => [s.sessionId, s])).values()];
       const items = await Promise.all(all.sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit).map(async (h) => {
@@ -774,7 +783,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (resuming.has(s.id)) { failed.push({ id: s.id, error: 'already being restored' }); continue; }
         resuming.set(s.id, null);
         try {
-          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: false } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: s.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
           resuming.set(s.id, r.tmuxSession);
           await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: s.lastPrompt ?? s.task, agent: s.agent, resuming: true });
           started.push(s.id);

@@ -4,12 +4,12 @@ import { resumeSession } from '../store'
 import { resumePermissionMode, type ModeChoice } from '../logic'
 import type { AgentId } from '../types'
 
-/** `agent`: a non-Claude session (permission modes are Claude-only). */
-const props = defineProps<{ sessionId: string; label?: string; primary?: boolean; mode?: ModeChoice; agent?: AgentId }>()
+/** `agent`: a non-Claude session (permission modes are Claude-only). `unrestricted`: the Codex access it last ran with, if recorded. */
+const props = defineProps<{ sessionId: string; label?: string; primary?: boolean; mode?: ModeChoice; agent?: AgentId; unrestricted?: boolean }>()
 const emit = defineEmits<{ started: [] }>()
 const busy = ref(false)
 const error = ref('')
-const codexUnrestricted = ref(true)
+const codexUnrestricted = ref(props.unrestricted !== false)
 /** Set when the server says the session is still open elsewhere (pid may be unknown). */
 const running = ref<{ pid: number | null } | null>(null)
 
