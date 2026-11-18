@@ -22,7 +22,7 @@ import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installClou
 import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, codexConversation, midTurn } from './transcript.ts';
-import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { watchCode, prepareRestart } from './update.ts';
 import { containPtyErrors, Direct, type PtyLike } from './direct.ts';
@@ -30,6 +30,8 @@ import { Mailbox } from './mailbox.ts';
 import { handleMcp, type Peer, type SpawnArgs } from './mcp.ts';
 import { newRun, stepPrompt, excludeRunFiles, isStepKind, loadRuns, saveRuns, reviewVerdict, STEP_KINDS, RUN_FILES, MAX_ROUNDS, type Run, type StepKind } from './runs.ts';
 import { Recovery, type RecoverableSession } from './recovery.ts';
+import { Captures, transcribeWith, extractWith, audioExt, saveStream, MAX_AUDIO, type Transcribe, type Extract, type FileIssue } from './captures.ts';
+import { fileIssue as ghGlabFileIssue } from './issues.ts';
 
 /** How long a PermissionRequest is held for the GUI. Must stay below the hook `timeout` (3600 s) printed by `hooks --print`. */
 export const HOLD_MS = 3540_000;
@@ -64,6 +66,8 @@ type Opts = {
   /** Where to download cloudflared from (tests serve a fake one). */
   installCloudflared?: () => Promise<string>;
   detectFirewall?: () => Promise<'firewalld' | 'ufw' | null>;
+  /** Voice capture: speech to text, text to items, an item to an issue; tests stub all three. */
+  transcribe?: Transcribe; extract?: Extract; fileIssue?: FileIssue;
 };
 
 function cookie(req: IncomingMessage, name: string): string | null {
@@ -173,6 +177,9 @@ function ensureMacPtyHelper() {
   const mode = statSync(helper).mode;
   if (!(mode & 0o111)) chmodSync(helper, mode | 0o111);
 }
+
+/** Node ends a request after 5 minutes; a long recording uploaded over a slow link (the tunnel) needs longer. */
+const withUploadTimeout = <T extends { requestTimeout: number }>(srv: T): T => { srv.requestTimeout = 3600_000; return srv; };
 
 export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const home = opts.home ?? homeDir();
@@ -341,6 +348,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     },
   }, broadcast);
   insights = new Insights(store, cfg.claudeBin, { summarise: opts.summarise, contextLimit: cfg.contextLimit });
+  const allRepos = () => cfg.worlds.flatMap((w) => w.repos);
+  const captures = new Captures(join(home, 'captures.json'), join(home, 'captures'), {
+    transcribe: opts.transcribe ?? transcribeWith(cfg.sttPython ?? join(home, 'stt-venv', 'bin', 'python')),
+    extract: opts.extract ?? extractWith(cfg.claudeBin),
+    fileIssue: opts.fileIssue ?? ghGlabFileIssue,
+    repos: allRepos,
+    onChange: (capture) => broadcast({ type: 'capture', capture }),
+    onRemove: (id) => broadcast({ type: 'capture-removed', id }),
+  });
   const createSession = opts.createSession ?? sys.createSession;
   // Without tmux, sessions run in ptys this server owns; one ending removes its card.
   const direct = new Direct((name) => { for (const s of [...store.sessions.values()]) if (s.direct === name) store.remove(s); });
@@ -487,7 +503,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     const i = cfg.listen.indexOf(address);
     if (on === (i >= 0)) return null;
     if (on) {
-      const srv = createServer(onRequest).on('upgrade', onUpgrade);
+      const srv = withUploadTimeout(createServer(onRequest)).on('upgrade', onUpgrade);
       try {
         await new Promise<void>((ok, fail) => { srv.once('error', fail); srv.listen(port(), address, () => ok()); });
       } catch (e) { return `cannot listen on ${address}: ${(e as Error).message}`; }
@@ -743,7 +759,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       setTimeout(opts.onRestart, 200);
       return;
     }
-    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, runs: [...runs.values()] });
+    if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, runs: [...runs.values()], captures: captures.list() });
     if (method === 'GET' && url.pathname === '/api/history') {
       const n = Number(url.searchParams.get('limit') ?? 50);
       const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 200) : 50;
@@ -1046,6 +1062,40 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return send(res, 200, { path });
     }
 
+    // Voice capture: a recording, transcribed on this machine, split into items you file as issues one by one.
+    if (url.pathname === '/api/captures' && method === 'GET') return send(res, 200, { captures: captures.list() });
+    if (url.pathname === '/api/captures' && method === 'POST') {
+      const ext = audioExt(url.searchParams.get('name'), req.headers['content-type'] ?? null);
+      if (!ext) return send(res, 415, { error: 'not an audio file (m4a, mp3, wav, ogg, webm, amr, 3gp, flac…)' });
+      if (Number(req.headers['content-length']) > MAX_AUDIO) return send(res, 413, { error: 'recording too large (500 MB at most)' });
+      const path = join(captures.dir, `${Date.now()}-${randomBytes(4).toString('hex')}.${ext}`);
+      const size = await saveStream(req as AsyncIterable<Buffer>, path, MAX_AUDIO);
+      if (size === 'too-big') return send(res, 413, { error: 'recording too large (500 MB at most)' });
+      if (!size) { rmSync(path, { force: true }); return send(res, 400, { error: 'empty recording' }); }
+      const from = url.searchParams.get('fromRepo');
+      return send(res, 200, { capture: captures.add(path, from && allRepos().includes(from) ? from : undefined) });
+    }
+    const capm = url.pathname.match(/^\/api\/captures\/([^/]+)(?:\/(retry|transcript)|\/items\/([^/]+)(\/file)?)?$/);
+    if (capm) {
+      const id = decodeURIComponent(capm[1]), item = capm[3] && decodeURIComponent(capm[3]);
+      const reply = (r: string | object) => typeof r === 'string' ? send(res, /^no such/.test(r) ? 404 : 409, { error: r }) : send(res, 200, { capture: r });
+      if (!item && !capm[2] && method === 'DELETE') { const err = captures.remove(id); return err ? reply(err) : send(res, 200, { ok: true }); }
+      if (capm[2] === 'retry' && method === 'POST') return reply(captures.retry(id));
+      if (capm[2] === 'transcript' && method === 'GET') {
+        const c = captures.all.get(id);
+        return c ? send(res, 200, { transcript: c.transcript ?? null }) : send(res, 404, { error: 'no such capture' });
+      }
+      if (item && !capm[4] && method === 'PATCH') {
+        const r = captures.edit(id, item, await readBody(req));
+        return typeof r === 'string' && !/^(no such|already)/.test(r) ? send(res, 400, { error: r }) : reply(r);
+      }
+      if (item && capm[4] && method === 'POST') {
+        const r = await captures.fileItem(id, item);
+        return send(res, r.status, r.error ? { error: r.error, capture: r.capture } : { capture: r.capture });
+      }
+      return send(res, 405, { error: 'method not allowed' });
+    }
+
     // The Changes view: the file list (refreshed now), one file's diff, and your "viewed" ticks.
     const chm = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(changes|diff|viewed)$/);
     if (chm) {
@@ -1144,7 +1194,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         flushViews(); // a view still waiting is older than the snapshot: it must not arrive after it
         // After a restart an idle session sends no hook event, so its Changes list is read when a page connects.
         for (const s of store.sessions.values()) if (!insights?.changesRead.has(s.id)) insights?.scheduleChanges(s);
-        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()] }));
+        ws.send(JSON.stringify({ type: 'snapshot', worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, update, tmux, runs: [...runs.values()], captures: captures.list() }));
       });
     }
     if (url.pathname === '/pty') {
@@ -1558,7 +1608,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   }
 
   // One server per listen address (e.g. 127.0.0.1 plus a private VPN address for a phone).
-  const servers = cfg.listen.map(() => createServer(onRequest).on('upgrade', onUpgrade));
+  const servers = cfg.listen.map(() => withUploadTimeout(createServer(onRequest)).on('upgrade', onUpgrade));
 
   let sweeper: NodeJS.Timeout | null = null;
   let interrupts: NodeJS.Timeout | null = null;
