@@ -31,7 +31,7 @@ def ensure_cuda_libs():
     have = os.environ.get("LD_LIBRARY_PATH", "").split(":")
     if dirs and not all(d in have for d in dirs):
         env = dict(os.environ, LD_LIBRARY_PATH=":".join(dirs + [p for p in have if p]))
-        os.execve(sys.executable, [sys.executable, *sys.argv], env)
+        os.execve(sys.executable, [sys.executable, "-I", *sys.argv], env)  # keep -I: the server runs us isolated
 
 
 def gpu_free_mib():

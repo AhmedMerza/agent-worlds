@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
-import { Captures, audioExt, chunks, extractWith, type Capture, type CaptureView } from '../src/captures.ts';
+import { Captures, audioExt, chunks, extractWith, saveStream, type Capture, type CaptureView } from '../src/captures.ts';
 import { cliFor, issueUrl, fileIssue } from '../src/issues.ts';
 import { tmp } from './fixtures.ts';
 
@@ -62,7 +63,12 @@ test('capture upload: refuses non-audio, empty and oversized bodies', async () =
   try {
     assert.equal((await fetch(`${base}/api/captures?name=x.sh`, { method: 'POST', headers: { ...H, 'content-type': 'text/plain' }, body: 'x' })).status, 415);
     assert.equal((await fetch(`${base}/api/captures?name=x.wav`, { method: 'POST', headers: H, body: new Uint8Array(0) })).status, 400);
-    assert.equal((await fetch(`${base}/api/captures?name=x.wav`, { method: 'POST', headers: { ...H, 'content-length': String(501 * 1024 * 1024) }, body: 'x', duplex: 'half' } as RequestInit).catch(() => ({ status: 413 }))).status, 413);
+    // Raw http: the declared size alone must be refused, before any body is read
+    const status = await new Promise<number>((ok, fail) => {
+      const r = request(`${base}/api/captures?name=x.wav`, { method: 'POST', headers: { ...H, 'content-length': String(501 * 1024 * 1024) } }, (res) => { ok(res.statusCode!); r.destroy(); });
+      r.on('error', fail); r.flushHeaders();
+    });
+    assert.equal(status, 413);
     assert.equal((await fetch(`${base}/api/captures`, { method: 'POST', headers: H, body: 'x' })).status, 415, 'no name, no audio mime');
   } finally { await app.close(); }
 });
@@ -203,3 +209,63 @@ test('fileIssue files in upstream when the repo has one, not in the fork origin 
     assert.equal(await fileIssue(repo, 't', 'b'), '');
   } finally { process.env.PATH = path; }
 });
+
+const deps = (over: Partial<ConstructorParameters<typeof Captures>[2]> = {}) => ({
+  transcribe: async () => ({ text: 'do x' }), extract: async () => [{ title: 'x', body: '', repo: '/r' }],
+  fileIssue: async () => 'https://g/p/-/issues/1', repos: () => ['/r'], onChange: () => {}, ...over,
+});
+
+test('saveStream: over the cap leaves no file; a write error fails the upload, not the server', async () => {
+  const dir = tmp(), f = join(dir, 'a.wav');
+  async function* body(n: number) { for (let i = 0; i < n; i++) yield Buffer.from('xxxx'); }
+  assert.equal(await saveStream(body(3), f, 10), 'too-big');
+  assert.ok(!existsSync(f), 'the partial file is removed');
+  assert.equal(await saveStream(body(2), f, 10), 8);
+  mkdirSync(join(dir, 'busy.wav')); // a directory where the file should go: the write stream errors
+  await assert.rejects(saveStream(body(2), join(dir, 'busy.wav'), 10));
+});
+
+test('delete: refused while transcribing or while an item is filing', async () => {
+  const home = tmp(), audio = join(home, 'a.wav');
+  writeFileSync(audio, 'x');
+  let go!: () => void, filed!: () => void;
+  const transcribed = new Promise<void>((r) => { go = r; }), done = new Promise<void>((r) => { filed = r; });
+  const caps = new Captures(join(home, 'captures.json'), join(home, 'captures'), deps({
+    transcribe: async () => { await transcribed; return { text: 'do x' }; },
+    fileIssue: async () => { await done; return 'https://g/p/-/issues/1'; },
+  }));
+  const c = caps.add(audio);
+  assert.equal(caps.remove(c.id), 'still processing');
+  go(); await caps.idle();
+  const filing = caps.fileItem(c.id, caps.all.get(c.id)!.items[0].id);
+  assert.equal(caps.remove(c.id), 'an item is being filed');
+  filed(); await filing;
+  assert.equal(caps.remove(c.id), null);
+  assert.ok(!caps.all.has(c.id));
+});
+
+test('a broken captures.json never stops the server: unreadable or wrong-shaped content loads as nothing', () => {
+  const badItem = [{ id: 'a', createdAt: 1, status: 'ready', items: [{ id: 'i', title: 1, body: '', repo: null, status: 'pending' }] }];
+  for (const bad of ['{not json', '{}', 'null', JSON.stringify(badItem)]) {
+    const home = tmp(), file = join(home, 'captures.json');
+    writeFileSync(file, bad);
+    assert.equal(new Captures(file, join(home, 'captures'), deps()).all.size, 0, bad);
+  }
+});
+
+test('a CLI stopped mid-filing marks the item check, never pending, so it is not filed twice', async () => {
+  const home = tmp(), audio = join(home, 'a.wav');
+  writeFileSync(audio, 'x');
+  let calls = 0;
+  const caps = new Captures(join(home, 'captures.json'), join(home, 'captures'), deps({
+    fileIssue: async () => { calls++; throw Object.assign(new Error('glab was stopped after 60 s'), { maybeFiled: true }); },
+  }));
+  const c = caps.add(audio);
+  await caps.idle();
+  const id = caps.all.get(c.id)!.items[0].id;
+  assert.equal((await caps.fileItem(c.id, id)).status, 502);
+  assert.equal(caps.all.get(c.id)!.items[0].status, 'check');
+  assert.equal((await caps.fileItem(c.id, id)).status, 409);
+  assert.equal(calls, 1);
+});
+

@@ -20,10 +20,11 @@ const fileable = computed(() => canFile(props.item, paths.value))
 const locked = computed(() => props.item.status === 'filing' || props.item.status === 'filed')
 const shown = computed(() => error.value || props.item.error || '')
 
-async function save(patch: Parameters<typeof editCaptureItem>[2]) {
+async function save(patch: Parameters<typeof editCaptureItem>[2]): Promise<boolean> {
   error.value = ''
   const r = await editCaptureItem(props.captureId, props.item.id, patch)
   if (!r.ok) error.value = r.error
+  return r.ok
 }
 function saveTitle() {
   const t = title.value.trim()
@@ -35,8 +36,10 @@ async function file() {
   if (busy.value || !fileable.value) return
   busy.value = true; error.value = ''
   // A title still being typed is saved first, so the issue gets what is on screen.
-  if (title.value.trim() && title.value.trim() !== props.item.title) await save({ title: title.value.trim() })
-  if (body.value !== props.item.body) await save({ body: body.value })
+  // If saving fails, nothing is filed: the issue would carry the old text, and a filed issue can't be taken back.
+  const saved = (!title.value.trim() || title.value.trim() === props.item.title || await save({ title: title.value.trim() }))
+    && (body.value === props.item.body || await save({ body: body.value }))
+  if (!saved) { busy.value = false; return }
   const r = await fileCaptureItem(props.captureId, props.item.id)
   busy.value = false
   if (!r.ok) error.value = r.error

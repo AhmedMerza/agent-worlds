@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { createWriteStream, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -57,13 +57,19 @@ export function audioExt(name: string | null, mime: string | null): string | nul
 export async function saveStream(body: AsyncIterable<Buffer>, file: string, max: number): Promise<number | 'too-big'> {
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const out = createWriteStream(file, { mode: 0o600 });
+  // A disk that fills up (or a removed folder) must fail this upload, not throw out of the server: no listener = crash.
+  let failed: Error | null = null;
+  const broke = new Promise<never>((_, fail) => out.once('error', (e) => { failed = e; fail(e); }));
+  broke.catch(() => {});
   let size = 0;
   try {
     for await (const c of body) {
+      if (failed) throw failed;
       size += c.length;
       if (size > max) { out.destroy(); rmSync(file, { force: true }); return 'too-big'; }
-      if (!out.write(c)) await new Promise((r) => out.once('drain', r));
+      if (!out.write(c)) await Promise.race([new Promise((r) => out.once('drain', r)), broke]);
     }
+    if (failed) throw failed;
     await new Promise<void>((ok, fail) => out.end((e?: Error | null) => e ? fail(e) : ok()));
     return size;
   } catch (e) { out.destroy(); rmSync(file, { force: true }); throw e; }
@@ -176,7 +182,8 @@ export class Captures {
       i.issueUrl = await this.d.fileIssue(i.repo, i.title, i.body);
       i.status = 'filed';
     } catch (e) {
-      i.status = 'pending';
+      // A CLI that was killed may already have created the issue: you check, it is never filed again on its own.
+      i.status = (e as { maybeFiled?: boolean }).maybeFiled ? 'check' : 'pending';
       i.error = (e as Error).message.slice(0, 500);
     }
     this.changed(c);
@@ -253,12 +260,14 @@ const TRANSCRIBE_TIMEOUT_MS = 3 * 3600_000;
 
 /** Run stt/transcribe.py with the given Python (faster-whisper large-v3-turbo; GPU when it has room, else CPU). */
 export const transcribeWith = (python: string): Transcribe => (audio) => new Promise((ok, fail) => {
-  const out = join(tmpdir(), `aw-stt-${randomBytes(6).toString('hex')}.json`);
+  // A private folder: the transcript is someone's speech, and /tmp is shared.
+  const dir = mkdtempSync(join(tmpdir(), 'aw-stt-'));
+  const out = join(dir, 'out.json');
   const child = spawn(python, ['-I', SCRIPT, audio, out], { stdio: ['ignore', 'ignore', 'pipe'] });
   let err = '';
   const timer = setTimeout(() => child.kill('SIGKILL'), TRANSCRIBE_TIMEOUT_MS);
   child.stderr!.on('data', (d) => { err = (err + d).slice(-4000); });
-  child.on('error', (e) => { clearTimeout(timer); fail(new Error(`cannot run ${python}: ${e.message}. Set sttPython in config.json to a Python with faster-whisper.`)); });
+  child.on('error', (e) => { clearTimeout(timer); rmSync(dir, { recursive: true, force: true }); fail(new Error(`cannot run ${python}: ${e.message}. Set sttPython in config.json to a Python with faster-whisper.`)); });
   child.on('close', async (code, sig) => {
     clearTimeout(timer);
     try {
@@ -266,7 +275,7 @@ export const transcribeWith = (python: string): Transcribe => (audio) => new Pro
       const r = JSON.parse(await readFile(out, 'utf8'));
       if (typeof r.text !== 'string') throw new Error('transcription wrote no text');
       ok({ text: r.text, language: r.language, device: r.device });
-    } catch (e) { fail(e as Error); } finally { rmSync(out, { force: true }); }
+    } catch (e) { fail(e as Error); } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 

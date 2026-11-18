@@ -37,6 +37,8 @@ export async function fileIssue(repo: string, title: string, body: string): Prom
   } catch (e) {
     const x = e as { code?: string; stderr?: string; message: string };
     if (x.code === 'ENOENT') throw new Error(`${cli} is not installed`);
+    const k = e as { killed?: boolean; signal?: string | null };
+    if (k.killed || k.signal) throw Object.assign(new Error(`${cli} was stopped after ${TIMEOUT_MS / 1000} s: check whether the issue was created`), { maybeFiled: true });
     throw new Error(`${cli} failed: ${(x.stderr || x.message).trim().split('\n').slice(-2).join(' ').slice(0, 300)}`);
   }
   // The CLI succeeded, so the issue exists: an address we can't read must not put the item back to pending (a second press would file it twice).

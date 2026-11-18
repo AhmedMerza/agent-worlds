@@ -32,7 +32,7 @@ const failed = computed(() => Object.values(state.captures).filter((c) => c.stat
 const waiting = computed(() => rest.value.filter((r) => r.item.status !== 'filed' && r.item.status !== 'dropped').length + failed.value.length)
 const openCount = computed(() => current.value?.items.filter((i) => OPEN.includes(i.status)).length ?? 0)
 
-const phase = ref<'idle' | 'recording' | 'uploading'>('idle')
+const phase = ref<'idle' | 'starting' | 'recording' | 'uploading'>('idle')
 const error = ref('')
 const elapsed = ref(0)
 let rec: MediaRecorder | null = null
@@ -41,10 +41,14 @@ let started = 0
 let tick: number | undefined
 let keep = true
 
+/** Set on unmount: a mic prompt answered after the dialog closed must not start a recorder nobody can stop. */
+let gone = false
 async function startRecording() {
-  error.value = ''
+  if (phase.value !== 'idle') return
+  error.value = ''; phase.value = 'starting'
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    if (gone || phase.value !== 'starting') { stream.getTracks().forEach((t) => t.stop()); return }
     rec = new MediaRecorder(stream)
     chunks = []; keep = true
     rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
@@ -61,10 +65,11 @@ async function startRecording() {
     tick = window.setInterval(() => { elapsed.value = Date.now() - started }, 250)
     phase.value = 'recording'
   } catch (e) {
+    phase.value = 'idle'
     error.value = (e as Error).name === 'NotAllowedError' ? 'The browser was not allowed to use the microphone. Allow it in the address bar, or choose a recording instead.' : (e as Error).name === 'NotFoundError' ? 'No microphone found. Plug one in, or choose a recording instead.' : `Could not start recording (${(e as Error).message}). Choose a recording instead.`
   }
 }
-function stopRecording(use: boolean) { keep = use; rec?.stop() }
+function stopRecording(use: boolean) { keep = use; if (rec?.state === 'recording') rec.stop() }
 
 const picker = ref<HTMLInputElement | null>(null)
 const phoneRecorder = ref<HTMLInputElement | null>(null)
@@ -101,6 +106,8 @@ async function discard(id: string) {
 }
 
 function close() { if (phase.value === 'recording') stopRecording(false); emit('close') }
+/** Esc and a click outside never throw a recording away: only Stop, Cancel or × end one. */
+function dismiss() { if (phase.value !== 'recording' && phase.value !== 'starting') close() }
 const root = ref<HTMLElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
 let motion: ReturnType<typeof openOverlay> = null
@@ -112,18 +119,18 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
 /** On window, not the overlay: Drop or Create issue removes the focused button, and focus falls to <body>. */
-function onKey(e: KeyboardEvent) { if (e.key === 'Escape') close(); else if (e.key === 'Tab') trap(e) }
+function onKey(e: KeyboardEvent) { if (e.key === 'Escape') dismiss(); else if (e.key === 'Tab') trap(e) }
 function trap(e: KeyboardEvent) {
   const f = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], input:not([hidden])') ?? [])].filter((x) => x.offsetParent)
   if (!f.length) return
   const i = f.indexOf(document.activeElement as HTMLElement)
   if (e.shiftKey && i <= 0) { e.preventDefault(); f.at(-1)!.focus() } else if (!e.shiftKey && (i < 0 || i === f.length - 1)) { e.preventDefault(); f[0].focus() }
 }
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); if (rec) stopRecording(false); clearInterval(tick); motion?.revert(); opener?.focus?.() })
+onBeforeUnmount(() => { gone = true; window.removeEventListener('keydown', onKey); if (rec) stopRecording(false); clearInterval(tick); motion?.revert(); opener?.focus?.() })
 </script>
 
 <template>
-  <div ref="root" class="overlay cap-overlay" @click.self="close">
+  <div ref="root" class="overlay cap-overlay" @click.self="dismiss">
     <div ref="panel" class="dialog capture" role="dialog" aria-modal="true" aria-labelledby="cap-h">
       <header class="ch-head" data-enter>
         <div>
@@ -140,6 +147,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); if (rec) s
           <button class="btn primary" @click="stopRecording(true)">Stop and use</button>
           <button class="btn" @click="stopRecording(false)">Cancel</button>
         </template>
+        <p v-else-if="phase === 'starting'" class="why" role="status">Waiting for the microphone…</p>
         <p v-else-if="phase === 'uploading'" class="why" role="status">Uploading the recording…</p>
         <template v-else>
           <button v-if="canRecord" class="btn primary cap-big" @click="startRecording"><i class="cap-mic" aria-hidden="true" />Record</button>
