@@ -30,22 +30,28 @@ test('starting placeholders are never offered as recoverable conversations', () 
   assert.deepEqual(recovery.list(), []);
 });
 
-test('Restore all keeps older Codex sessions in the workspace sandbox', async () => {
+test('Restore all gives each Codex session back its own access', async () => {
   const home = tmp(), repo = tmp();
-  new Recovery(join(home, 'recovery.json')).upsert({ id: 'session-codex', agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
+  const rec = new Recovery(join(home, 'recovery.json'));
+  rec.upsert({ id: 'codex-sandboxed', agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 3, codexUnrestricted: false });
+  rec.upsert({ id: 'codex-full', agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 2, codexUnrestricted: true });
+  rec.upsert({ id: 'codex-unknown', agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
+  // A later upsert that does not know the access (a session broadcast) keeps the recorded one.
+  rec.upsert({ id: 'codex-sandboxed', agent: 'codex', cwd: repo, task: 'renamed', lastPrompt: null, updatedAt: 4 });
+  assert.equal(new Recovery(join(home, 'recovery.json')).get('codex-sandboxed')?.codexUnrestricted, false);
   const launched: any[] = [];
   const app = startServer({ ...parseConfig({}), port: 0 }, TOKEN, {
     home, procRoot: join(tmp(), 'missing'), installed: () => true,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-codex' },
-    createSession: async (o: any) => { launched.push(o); return { tmuxSession: 'aw-codex', dir: o.repo, branch: null, pane: '%2' }; },
+    createSession: async (o: any) => { launched.push(o); return { tmuxSession: `aw-${o.resume}`, dir: o.repo, branch: null, pane: `%${launched.length}` }; },
   });
   await app.listen();
   try {
     const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
     const response = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers: { 'x-aw-token': TOKEN }, body: '{}' });
     assert.equal(response.status, 200);
-    assert.deepEqual((await response.json() as any).started, ['session-codex']);
-    assert.equal(launched[0].codexUnrestricted, false);
+    const access = Object.fromEntries(launched.map((o) => [o.resume, o.codexUnrestricted]));
+    assert.deepEqual(access, { 'codex-sandboxed': false, 'codex-full': true, 'codex-unknown': true });
   } finally { await app.close(); }
 });
 
