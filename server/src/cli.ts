@@ -6,7 +6,7 @@ import { EXAMPLE_CONFIG, ensureToken, homeDir, loadConfig, writeEndpoint, type C
 import { startServer } from './server.ts';
 import { hooksBlock, writeHooksFile } from './hooks.ts';
 import { createSession, hasTmux, TMUX_MISSING } from './sys.ts';
-import { RESTART_CODE } from './update.ts';
+import { RESTART_CODE, buildWebIfStale } from './update.ts';
 
 const urlOf = (cfg: Config, token: string) => {
   const host = cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host;
@@ -83,6 +83,9 @@ async function main(argv: string[]) {
     case 'start': {
       const cfg = load(STARTUP_ERROR);
       const token = ensureToken();
+      // A build left over from another branch would serve an old UI; an old UI still beats none, so only warn.
+      const built = await buildWebIfStale();
+      if (built) console.warn(`warning: ${built}\nserving the previous web build`);
       const app = startServer(cfg, token, { onRestart: () => void app.close().then(() => process.exit(RESTART_CODE)) });
       try { await app.listen(); } catch (e) {
         if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') die(`port ${cfg.port} is busy — another Agent Worlds? change "port" in ${join(homeDir(), 'config.json')}`, STARTUP_ERROR);
