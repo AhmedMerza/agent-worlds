@@ -27,19 +27,22 @@ const SYSTEM = 'You summarise a coding-assistant session for its busy owner. Ans
 type Summary = { did: string; needs: string };
 export type Summarise = (bin: string, transcript: string) => Promise<Summary>;
 
-/** Run `claude -p` once with structured output. Its own hooks are disabled so it never reports to us. */
-export const runClaude: Summarise = (bin, transcript) => new Promise((ok, fail) => {
-  const dir = mkdtempSync(join(tmpdir(), 'aw-catchup-'));
+/**
+ * Run `claude -p --model haiku` once with structured output and return the parsed object.
+ * Its own hooks are disabled so it never reports to us. Rejects on a non-zero exit, a timeout or no structured output.
+ */
+export const claudeJson = (bin: string, system: string, schema: string, input: string, timeoutMs: number): Promise<unknown> => new Promise((ok, fail) => {
+  const dir = mkdtempSync(join(tmpdir(), 'aw-claude-'));
   const args = ['-p', '--model', 'haiku', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config',
-    '--append-system-prompt', SYSTEM, '--json-schema', SCHEMA];
+    '--append-system-prompt', system, '--json-schema', schema];
   const child = spawn(bin, args, { cwd: dir, env: { ...process.env, AGENT_WORLDS_DISABLE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
   let inputError: Error | null = null;
-  const timer = setTimeout(() => child.kill('SIGKILL'), CATCHUP_TIMEOUT_MS);
+  const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
   child.stdout.on('data', (d) => { if (out.length < 1_000_000) out += d; });
   child.stderr.on('data', (d) => { if (err.length < 4000) err += d; });
-  // A fast failure can close stdin before the transcript is written; close below prefers its exit error.
+  // A fast failure can close stdin before the input is written; close below prefers its exit error.
   child.stdin.on('error', (e) => { inputError = e; });
   child.on('error', (e) => { clearTimeout(timer); rmSync(dir, { recursive: true, force: true }); fail(e); });
   child.on('close', (code, sig) => {
@@ -50,12 +53,19 @@ export const runClaude: Summarise = (bin, transcript) => new Promise((ok, fail) 
     try {
       const j = JSON.parse(out);
       const r = j.structured_output ?? (typeof j.result === 'string' ? JSON.parse(j.result) : null);
-      if (j.is_error || typeof r?.did !== 'string' || typeof r?.needs !== 'string') throw new Error('no structured output');
-      ok({ did: r.did.trim(), needs: r.needs.trim() });
+      if (j.is_error || !r || typeof r !== 'object') throw new Error('no structured output');
+      ok(r);
     } catch (e) { fail(new Error(`unreadable reply: ${(e as Error).message}`)); }
   });
-  child.stdin.end(`Summarise this session transcript.\n\n${transcript}`);
+  child.stdin.end(input);
 });
+
+/** A catch-up summary of one session transcript. */
+export const runClaude: Summarise = async (bin, transcript) => {
+  const r = await claudeJson(bin, SYSTEM, SCHEMA, `Summarise this session transcript.\n\n${transcript}`, CATCHUP_TIMEOUT_MS) as Partial<Summary>;
+  if (typeof r.did !== 'string' || typeof r.needs !== 'string') throw new Error('unreadable reply: no structured output');
+  return { did: r.did.trim(), needs: r.needs.trim() };
+};
 
 
 /** "none", "n/a", "-" and friends mean nothing is needed. */

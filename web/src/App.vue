@@ -15,6 +15,9 @@ import PhoneDialog from './components/PhoneDialog.vue'
 import PutInWorldDialog from './components/PutInWorldDialog.vue'
 import MoveSessionDialog from './components/MoveSessionDialog.vue'
 import RecentDialog from './components/RecentDialog.vue'
+import CaptureDialog from './components/CaptureDialog.vue'
+import { waitingCount } from './captures'
+import { leaveOverlay, pop } from './motion'
 import { prefs, toggleMute, toggleNotifications, notifySupported } from './notify'
 import { state, groups, worldOf, screenSessions, needsYou, sessionList, connect, startClock, select, selectNext, selected, showToast, termFocusTick, chatTick, clampSplit, requestCatchup, ui, updateNow, focusTerminal, resumeAll, dismissRecovery } from './store'
 import { routeKey, isTypingTarget, isControlTarget, defaultWorld, needSplit } from './logic'
@@ -36,6 +39,9 @@ watch(termFocusTick, () => { if (phone.value) tab.value = 'term' })
 const wq = matchMedia('(min-width: 1000px)')
 const wide = ref(wq.matches)
 const onWq = () => { wide.value = wq.matches }
+const captureWaiting = computed(() => waitingCount(state.captures))
+// New items found in a recording: the count on the Capture button bumps.
+watch(captureWaiting, (n, was) => { if (n > was) void nextTick(() => pop(document.querySelector('.cap-btn .count'), 0.6)) })
 const fullLayout = computed(() => ui.layout === 'full' && wide.value && !phone.value)
 watch(fullLayout, (v) => { if (!v) ui.needsOpen = false })
 // A press outside the floating Needs you panel (and its button) closes it.
@@ -179,6 +185,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
         <span class="stat need"><span class="dot waiting" /><b>{{ split.waiting }}</b> waiting on you · <b>{{ split.review }}</b> to review</span>
         <span v-if="!phone" class="stat opt"><span class="dot" /><b>{{ count('idle') }}</b> idle</span>
       </div>
+      <button v-if="!phone" class="hdr-btn cap-btn" title="Record or upload a voice note or meeting; review the to-dos found in it and file them as issues" @click="ui.captureOpen = true">
+        <i class="cap-mic" aria-hidden="true" />Capture<span v-if="captureWaiting" class="count" :aria-label="`${captureWaiting} waiting`">{{ captureWaiting }}</span>
+      </button>
       <button v-if="phone" class="hdr-btn more" aria-label="Menu" aria-haspopup="true" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">⋯</button>
       <div v-show="!phone || menuOpen" :class="['ctrl', { menu: phone }]" @click="onCtrlClick">
         <nav class="filters" aria-label="Show world">
@@ -222,9 +231,14 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       <p v-if="recoverReasons.length" class="err">Could not resume: {{ recoverReasons.join('; ') }}. <b>Dismiss reminder</b> keeps the conversation in Recent sessions.</p>
     </div>
     <p v-if="!state.loaded" class="loading">Waiting for the server…</p>
-    <nav v-if="phone && state.loaded" class="tabs" aria-label="View">
-      <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'chats' && needsYou.length" class="count">{{ needsYou.length }}</span></button>
-    </nav>
+    <div v-if="phone && state.loaded" class="tabrow">
+      <nav class="tabs" aria-label="View">
+        <button v-for="[t, label] in tabs" :key="t" :aria-pressed="tab === t" @click="tab = t">{{ label }}<span v-if="t === 'chats' && needsYou.length" class="count">{{ needsYou.length }}</span></button>
+      </nav>
+      <button class="hdr-btn cap-btn cap-tab" @click="ui.captureOpen = true">
+        <i class="cap-mic" aria-hidden="true" />Capture<span v-if="captureWaiting" class="count">{{ captureWaiting }}</span>
+      </button>
+    </div>
     <nav v-if="!phone && state.loaded" class="views" aria-label="Show">
       <button :aria-pressed="ui.left === 'world'" @click="ui.left = 'world'">World</button>
       <button :aria-pressed="ui.left === 'chats'" @click="ui.left = 'chats'">Chats<span v-if="needsYou.length" class="count">{{ needsYou.length }}</span></button>
@@ -270,6 +284,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
     </Transition>
     <ChangesDialog v-if="ui.changes" :id="ui.changes" @close="ui.changes = null" />
     <RecentDialog v-if="ui.recentOpen" @close="ui.recentOpen = false" />
+    <Transition :css="false" @leave="leaveOverlay"><CaptureDialog v-if="ui.captureOpen" @close="ui.captureOpen = false" /></Transition>
     <NewTaskDialog v-if="newTaskWorld !== null" :world-id="newTaskWorld" :run="newTaskRun" :fixed-world="newTaskFixed" @close="newTaskWorld = null" />
     <div :class="['toast', { on: toastOn }]" role="status">{{ state.toast?.text }}</div>
   </div>

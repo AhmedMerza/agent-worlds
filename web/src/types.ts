@@ -86,8 +86,20 @@ export interface Unmanaged { pid: number; cwd: string; repo: string | null; worl
 export interface HistorySession { sessionId: string; agent?: AgentId; cwd: string | null; repo: string | null; worldId: string | null; lastPrompt: string | null; lastActivity: number; running: boolean; managed: boolean; interrupted?: boolean }
 export interface RecoverableSession { id: string; agent: AgentId; cwd: string; task: string | null; lastPrompt: string | null; updatedAt: number }
 
+/** A voice capture (server/src/captures.ts CaptureView): a recording turned into items you file as issues one by one. */
+export type CaptureItemStatus = 'pending' | 'filing' | 'filed' | 'dropped' | 'check'
+export interface CaptureItem { id: string; title: string; body: string; repo: string | null; status: CaptureItemStatus; issueUrl?: string; error?: string }
+export interface Capture {
+  id: string; createdAt: number; fromRepo?: string
+  status: 'transcribing' | 'extracting' | 'ready' | 'failed'; attempts: number; error?: string
+  language?: string; device?: string; hasTranscript: boolean
+  items: CaptureItem[]
+}
+
 export type ServerMessage =
-  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; recoverable?: RecoverableSession[]; unmanaged?: Unmanaged[]; update?: boolean; tmux?: boolean; runs?: Run[] }
+  | { type: 'snapshot'; worlds: World[]; sessions: Session[]; recoverable?: RecoverableSession[]; unmanaged?: Unmanaged[]; update?: boolean; tmux?: boolean; runs?: Run[]; captures?: Capture[] }
+  | { type: 'capture'; capture: Capture }
+  | { type: 'capture-removed'; id: string }
   | { type: 'run'; run: Run }
   | { type: 'update' }
   | { type: 'unmanaged'; unmanaged: Unmanaged[] }

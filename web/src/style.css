@@ -627,3 +627,83 @@ pre.diff{max-height:320px;overflow:auto}
   .ch-table .sign{width:12px}
 }
 .ch-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--wait);margin-left:6px;vertical-align:middle}
+/* Capture: record or pick a recording, then review the items found in it (CaptureDialog, CaptureItemRow) */
+.cap-overlay{z-index:45}
+.dialog.capture{max-width:640px;max-height:min(92vh,1000px);display:flex;flex-direction:column;gap:12px;padding:16px 18px;overflow:hidden}
+.dialog.capture .ch-head h2{margin:0 0 4px}
+.cap-scroll{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:14px;margin:0 -4px;padding:0 4px 4px}
+.cap-input{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px;border:1px dashed var(--line);border-radius:6px;background:var(--bg)}
+.cap-big{min-height:40px;padding:8px 16px;font-size:14px;display:inline-flex;align-items:center;gap:8px}
+.cap-mic{width:10px;height:10px;border-radius:50%;background:var(--err);box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 30%,transparent)}
+.cap-rec{display:inline-flex;align-items:center;gap:8px;font-size:14px;margin-right:auto}
+.cap-rec i{width:10px;height:10px;border-radius:50%;background:var(--err)}
+.cap-rec b{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.cap-current,.cap-inbox{display:flex;flex-direction:column;gap:8px}
+.cap-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:14px}
+.cap-stage{color:var(--muted);font-size:13.5px}
+.cap-stage.transcribing,.cap-stage.extracting{color:var(--work)}
+.cap-stage.failed{color:var(--err);overflow-wrap:anywhere}
+.cap-head .linkbtn{margin-left:auto;align-self:center}
+.cap-transcript{margin:0;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+.cap-inbox h3{font-family:var(--f-display);font-size:17px;font-weight:600;margin:4px 0 0;display:flex;align-items:center;gap:8px}
+.cap-when{margin:4px 0 0;font-size:12.5px;color:var(--muted)}
+.cap-group{display:flex;flex-direction:column;gap:6px}
+.cap-failed{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;border:1px solid color-mix(in srgb,var(--err) 45%,var(--line));border-radius:6px;padding:8px 10px;overflow-wrap:anywhere}
+.cap-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cap-item .err,.cap-current .err{overflow-wrap:anywhere}
+.cap-item{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--panel-2);min-width:0}
+.cap-item.filed,.cap-item.dropped{background:transparent}
+.cap-item.dropped .cap-title{text-decoration:line-through;color:var(--muted)}
+.cap-item.check{border-color:var(--wait)}
+.cap-row{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.cap-title,.cap-body,.cap-repo{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 9px;min-width:0}
+.cap-title{flex:1;font-weight:700;resize:none;overflow:hidden;line-height:1.35;overflow-wrap:anywhere}
+.cap-title:disabled{background:transparent;border-color:transparent;padding-inline:0;color:inherit;opacity:1}
+/* A locked title is text, not a field: no input padding (nor the touch padding below), centred on its Details link. */
+.cap-title:disabled{padding-block:0}
+.cap-row:has(.cap-title:disabled){align-items:center}
+.cap-row:has(.cap-title:disabled) .cap-more{margin-top:0}
+.cap-body{width:100%;min-height:72px;resize:vertical;line-height:1.45}
+.cap-body:disabled{resize:none}
+/* Top-anchored on wide screens: a centred panel moves every button whenever a row grows, files or opens. */
+@media (min-width:761px){.cap-overlay{align-items:flex-start;padding-top:6vh}.dialog.capture{max-height:min(88vh,1000px)}}
+.cap-more{flex:none;align-self:center}
+.cap-row .cap-more{align-self:flex-start;margin-top:8px}
+.cap-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cap-repo{flex:1 1 180px;max-width:100%}
+.cap-repo[aria-invalid="true"]{border-color:var(--wait);color:var(--wait)}
+.cap-done{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px}
+.cap-done .badge{margin-left:0}
+.cap-link{color:var(--work);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-block:8px}
+.cap-empty{padding:8px 0}
+.hdr-btn.cap-btn{display:inline-flex;align-items:center;gap:6px}
+.hdr-btn.cap-btn .count{padding:0 7px}
+@media (max-width:760px),(pointer:coarse){
+  .cap-overlay .hq-x,.dialog.capture .btn,.cap-repo,.cap-more{min-height:44px}
+  .cap-title{padding-block:11px}
+  .cap-overlay .hq-x{min-width:44px}
+  .cap-row .cap-more{margin-top:0;display:inline-flex;align-items:center}
+}
+@media (max-width:760px){
+  .dialog.capture{height:100%;max-height:none;padding:12px}
+  .dialog.capture .ch-head h2{font-size:18px}
+  .cap-acts .btn{flex:1 1 auto}
+  .cap-repo{flex-basis:100%}
+}
+.cap-list{position:relative}
+.cap-move{transition:transform .55s cubic-bezier(.645,.045,.355,1)}
+.dialog.capture .btn{transition:transform .18s cubic-bezier(.22,.61,.36,1),border-color .15s}
+.dialog.capture .btn:active:not(:disabled),.hdr-btn.cap-btn:active{transform:scale(.96)}
+/* Live while recording or processing: a ring that loops only while that lasts. */
+.cap-live{position:relative;display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--err);flex:none}
+.cap-stage .cap-live{width:8px;height:8px;background:var(--work);margin-right:6px;vertical-align:1px}
+.cap-live::after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;animation:cap-ring 1.4s cubic-bezier(.22,.61,.36,1) infinite}
+@keyframes cap-ring{from{transform:scale(1);opacity:.6}to{transform:scale(2.6);opacity:0}}
+@media (prefers-reduced-motion:reduce){.cap-live::after{animation:none;opacity:0}.cap-move,.dialog.capture .btn{transition:none}}
+/* Phone: the header has no room left, so Capture sits at the end of the tab row (one tap, nothing squeezed). */
+@media (max-width:699px){
+  .tabrow{display:flex;gap:6px;position:sticky;top:0;z-index:5}
+  .tabrow .tabs{flex:1;min-width:0;position:static}
+  .hdr-btn.cap-tab{flex:none;min-height:44px;justify-content:center;padding:0 12px;border-radius:6px;font-size:14px;color:var(--ink)}
+  .tabrow .tabs button{padding-inline:4px}
+}

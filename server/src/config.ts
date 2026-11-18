@@ -22,6 +22,8 @@ export type Config = {
   defaultProvider?: string;
   /** The agents and models leads may start with aw_spawn (see parseSpawnAgents); every agent, any model, when unset. */
   spawnAgents?: SpawnAgents;
+  /** The Python that runs stt/transcribe.py for voice captures (needs faster-whisper); <home>/stt-venv/bin/python when unset. */
+  sttPython?: string;
 };
 
 export const DEFAULTS: Config = {
@@ -62,6 +64,8 @@ export function parseConfig(raw: unknown): Config {
   const usp = str('userSettingsPath');
   if (usp) cfg.userSettingsPath = resolve(usp.replace(/^~(?=\/)/, homedir()));
   cfg.claudeBin = str('claudeBin') ?? cfg.claudeBin;
+  const sttPython = str('sttPython');
+  if (sttPython) cfg.sttPython = sttPython;
   cfg.defaultAgent = str('defaultAgent');
   cfg.defaultProvider = str('defaultProvider');
   if (r.spawnAgents !== undefined && r.spawnAgents !== null) cfg.spawnAgents = parseSpawnAgents(r.spawnAgents);
