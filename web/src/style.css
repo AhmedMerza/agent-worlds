@@ -396,6 +396,8 @@ pre.diff{max-height:320px;overflow:auto}
 .chat-worlds{display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;flex:none}
 .chat-worlds button{font:inherit;font-size:13px;color:var(--muted);background:none;border:1px solid var(--line);border-left:3px solid var(--tint,var(--line));border-radius:999px;padding:5px 12px;white-space:nowrap;cursor:pointer;min-height:34px}
 .chat-worlds button[aria-pressed="true"]{background:var(--panel-2);color:var(--ink);border-color:var(--muted);border-left-color:var(--tint,var(--muted))}
+.chat-worlds .chat-done{flex:none;margin-right:6px;--tint:var(--ok)}
+.chat-worlds .chat-done b{margin-left:4px}
 .chat-wname{flex:none;font-size:12px;color:var(--muted)}
 .chat-rows{list-style:none;margin:0;padding:0;overflow:auto;min-height:0}
 .chat-row{all:unset;box-sizing:border-box;width:100%;display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-left:4px solid var(--tint);border-bottom:1px solid var(--line);cursor:pointer;min-height:56px}
