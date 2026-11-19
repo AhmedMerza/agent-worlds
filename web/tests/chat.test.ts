@@ -4,16 +4,16 @@ import { mk, perm } from './helpers'
 import { renderMarkdown } from '../src/markdown'
 
 describe('chatRows', () => {
-  it('puts sessions needing you first in inbox order, then the rest newest first', () => {
+  it('puts sessions needing you first in inbox order, then the rest (a finished turn too) newest first', () => {
     const rows = chatRows([
       mk('old-idle', { state: 'idle', updatedAt: 10 }),
-      mk('done', { state: 'done', card: { kind: 'done', summary: 'Shipped it' }, waitingSince: 5 }),
+      mk('done', { state: 'done', card: { kind: 'done', summary: 'Shipped it' }, waitingSince: 5, updatedAt: 20 }),
       mk('new-work', { state: 'working', updatedAt: 30 }),
       mk('perm', { state: 'waiting', card: perm, waitingSince: 50 }),
     ])
-    expect(rows.map((r) => [r.s.id, r.needs])).toEqual([['perm', true], ['done', true], ['new-work', false], ['old-idle', false]])
+    expect(rows.map((r) => [r.s.id, r.needs])).toEqual([['perm', true], ['new-work', false], ['done', false], ['old-idle', false]])
     expect(rows[0].at).toBe(50)
-    expect(rows[2].at).toBe(30)
+    expect(rows[1].at).toBe(30)
   })
   it('previews the card, else the status line, else the last prompt, else the task', () => {
     const [done] = chatRows([mk('a', { state: 'done', card: { kind: 'done', summary: 'All green' }, now: 'ignored' })])

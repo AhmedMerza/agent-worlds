@@ -21,7 +21,7 @@ const box = ref<HTMLElement | null>(null)
 const items = computed(() => chatItems(turns.value ?? []))
 /** Agent messages as HTML, rendered once per fetched transcript (not on every keystroke in the message box). */
 const html = computed(() => items.value.map((it) => (it.who === 'claude' ? renderMarkdown(it.text) : '')))
-const card = computed(() => (s.value?.card && NEEDS_YOU.includes(s.value.state) ? s.value.card : null))
+const card = computed(() => (s.value?.card && (NEEDS_YOU.includes(s.value.state) || s.value.state === 'done') ? s.value.card : null))
 const holdsInput = computed(() => typingWaits(card.value))
 const inputHint = computed(() => !holdsInput.value ? (s.value?.state === 'working' ? 'Message (it reads this when it can)' : 'Message')
   : card.value && !cardLive(card.value) ? 'Answer its request in its terminal first' : 'Answer its request above first')

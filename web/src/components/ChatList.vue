@@ -6,7 +6,11 @@ import RunCard from './RunCard.vue'
 
 // The world filter in the header applies here too; ghosts (Claudes outside Agent Worlds) have no chat.
 const shown = computed(() => groups.value.filter((g) => state.filter === 'all' || g.world.id === state.filter))
-const fresh = computed(() => chatRows(shown.value.flatMap((g) => g.sessions).filter((s) => !s.ghost)))
+const all = computed(() => shown.value.flatMap((g) => g.sessions).filter((s) => !s.ghost))
+// Finished turns are not in Needs you: this is where you find them.
+const doneOnly = ref(false)
+const doneCount = computed(() => all.value.filter((s) => s.state === 'done').length)
+const fresh = computed(() => chatRows(doneOnly.value ? all.value.filter((s) => s.state === 'done') : all.value))
 // While you are pointing at or touching the list, rows hold their places (new ones go last), so a tap never lands on a row that just moved.
 const hold = ref(false)
 let release: ReturnType<typeof setTimeout> | undefined
@@ -29,12 +33,16 @@ const emit = defineEmits<{ 'new-task': [] }>()
 <template>
   <section class="panel chats" aria-label="Chats" @mouseenter="holdOn" @mouseleave="hold = false" @touchstart.passive="holdFor(4000)" @scroll.capture.passive="holdFor(4000)">
     <h3>Chats <span v-if="needsYou.length" class="count">{{ needsYou.length }}</span><span class="hint">needing you first, then latest</span><button class="btn primary chat-new" @click="emit('new-task')">+ New chat</button></h3>
-    <nav v-if="groups.length > 1" class="chat-worlds" aria-label="Show world">
-      <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All</button>
-      <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" :style="{ '--tint': g.world.color }" @click="state.filter = g.world.id">{{ g.world.name }}</button>
+    <nav v-if="groups.length > 1 || doneCount || doneOnly" class="chat-worlds" aria-label="Show">
+      <button class="chat-done" :aria-pressed="doneOnly" title="Only sessions whose turn finished" @click="doneOnly = !doneOnly">Done <b>{{ doneCount }}</b></button>
+      <template v-if="groups.length > 1">
+        <button :aria-pressed="state.filter === 'all'" @click="state.filter = 'all'">All</button>
+        <button v-for="g in groups" :key="g.world.id" :aria-pressed="state.filter === g.world.id" :style="{ '--tint': g.world.color }" @click="state.filter = g.world.id">{{ g.world.name }}</button>
+      </template>
     </nav>
     <div v-if="runsNeedingYou.length" class="cards"><RunCard v-for="r in runsNeedingYou" :key="r.id" :run="r" /></div>
-    <p v-if="!rows.length" class="empty">{{ state.filter === 'all' ? 'No sessions yet.' : 'No sessions in this world.' }} Start one with <b>+ New chat</b>.</p>
+    <p v-if="!rows.length && doneOnly" class="empty">Nothing finished{{ state.filter === 'all' ? '' : ' in this world' }} right now.</p>
+    <p v-else-if="!rows.length" class="empty">{{ state.filter === 'all' ? 'No sessions yet.' : 'No sessions in this world.' }} Start one with <b>+ New chat</b>.</p>
     <ul class="chat-rows">
       <li v-for="r in visible" :key="r.s.id">
         <button :class="['chat-row', { current: state.selectedId === r.s.id, needs: r.needs }]" :style="{ '--tint': worldOf(r.s)?.color ?? 'var(--idle)' }" @click="openChat(r.s.id)">

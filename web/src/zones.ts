@@ -12,7 +12,7 @@ const ROW_H: Record<Zone, number> = { lounge: 80, desks: 112, help: 80 }
 const FIRST_TOP: Record<Zone, number> = { lounge: 76, desks: 68, help: 76 }
 export const WALK_MS = 1000
 
-export const zoneOf = (state: SessionState): Zone => (state === 'working' ? 'desks' : state === 'idle' || state === 'starting' ? 'lounge' : 'help')
+export const zoneOf = (state: SessionState): Zone => (state === 'working' ? 'desks' : state === 'idle' || state === 'starting' || state === 'done' ? 'lounge' : 'help')
 export const capacity = (zone: Zone): number => MAX_COLS[zone] * MAX_ROWS[zone]
 
 /** Sessions per zone, in a stable order (start time, then id) so slots never shuffle when states change.

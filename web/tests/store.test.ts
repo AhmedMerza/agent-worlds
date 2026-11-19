@@ -272,14 +272,14 @@ describe('fetchAgents cache', () => {
 
 describe('skipped', () => {
   it("lasts while that card waits; once it is answered, the session's next card of the same kind is offered again", async () => {
-    const done = (id: string) => mk(id, { state: 'done', card: { kind: 'done', summary: 'x' }, waitingSince: 1 })
-    applyMessage(state, { type: 'snapshot', worlds: [], sessions: [done('d1')] })
+    const failed = (id: string) => mk(id, { state: 'error', card: { kind: 'error', summary: 'x' }, waitingSince: 1 })
+    applyMessage(state, { type: 'snapshot', worlds: [], sessions: [failed('d1')] })
     skipped.add(cardKey(state.sessions.d1))
     await nextTick()
-    expect(skipped.has('d1:done')).toBe(true) // still waiting: stays skipped
+    expect(skipped.has('d1:error')).toBe(true) // still waiting: stays skipped
     applyMessage(state, { type: 'session', session: mk('d1', { state: 'idle' }) })
     await nextTick()
-    expect(skipped.has('d1:done')).toBe(false) // answered: forgotten, so its next 'done' is offered
+    expect(skipped.has('d1:error')).toBe(false) // answered: forgotten, so its next 'error' is offered
   })
 })
 
