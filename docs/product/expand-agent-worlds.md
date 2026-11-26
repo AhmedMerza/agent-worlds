@@ -58,7 +58,7 @@ line comments → agent.
 | 3 | Limit pause: one grouped card "N sessions paused, resume 8am" + auto-continue at reset | dev · overnight/limit · no 11-card flood, queue finishes | pain | Claude #16157 (697), Codex #21073 (94) | HELD (grouped) | S | v1 |
 | 4 | Web Push to phone, real question text, Allow/Deny actions where the agent allows two paths | dev · away from desk · answer in one tap | pain | Happy #1908; all 6 rivals push | real | L | v1 |
 | 5 | Diff line comments sent to the agent | dev · review · precise feedback | parity | 4 rivals | untested | M | v1 |
-| 6 | PR + CI status on done cards, merge, then offer worktree cleanup | dev · review & merge · day's work lands from the app | level-changer | Conductor Checks, Paradev, Claude Desktop | untested | M | next |
+| 6 | MR/PR + CI status on done cards, Open MR (merge stays in the forge) | dev · review & merge · day's work lands from the app | level-changer | Conductor Checks, Paradev, Claude Desktop | untested | M | next |
 | 7 | Morning digest: per session overnight one-liner, ordered by "needs a decision" | dev · morning · 2 min orientation | didn't know | none have it | untested | S–M | next |
 | 8 | Status evidence on hover + "this is wrong" sample | dev · any · trust in states | little touch | agent-deck #3264/#3266 | untested | S | next |
 | 9 | Run templates per world | dev · dispatch · repeatable flows | didn't know | Conductor loadouts | untested | S | later |
@@ -106,7 +106,32 @@ line comments → agent.
 1. Worktree lifecycle: #2 setup → forge client → #1 auto-cleanup
 2. Overnight survival: restart bugs → #3 limit pause → #8 status evidence
 3. Away from the desk: #4 Web Push → #7 morning digest
-4. Review → merge: #5 line comments → #6 PR/CI + merge (reuses forge client, triggers cleanup)
+4. Review → merge: #5 line comments → #6 MR/PR status + Open MR (reuses forge client; merge stays in the forge)
+
+### Validation (validate-plan, 2026-11-26): proceed with these changes
+- **Push answers only where an answer can land.** `live = decides && (clientsConnected() || holds)`
+  (`server/src/store.ts:571`); Claude is `decides, !holds`, Codex/Qwen/Kimi are `!decides` (`server/src/agents.ts:19-30`).
+  So: Gemini/agy get Allow/Deny now; Codex/Qwen/Kimi get an informational push ("answer in the terminal",
+  opens the app); Claude gets Allow/Deny only if a spike, done first in phase 3, shows its native dialog stays
+  live while the hook waits with no tab open (a registered push subscription would then count as a client).
+  Otherwise Claude is informational too (CLAUDE.md "keep agent chats native").
+- **Lock-screen Allow safety:** never offer Allow on `risky` requests (`server/src/rules.ts:58`); Deny is the
+  default action; the request id travels with the action so a stale tap is a no-op; the page's own
+  `new Notification` (`web/src/notify.ts:41`) is replaced, not doubled.
+- **Presence is new work:** the server only counts websockets (`server.ts:311`). Phase 3 starts with a
+  client → server visibility message (per device, with a TTL) before "no push while a tab is visible" works.
+- **Limits:** one `limitReset(session): number | null` per agent. Claude: from the StopFailure text, else the
+  transcript tail; Codex: `rate_limits.*.resets_at` from rollout `token_count` events (a second tail read next
+  to `checkCodexTurn`, `store.ts:866`), window picked by `rate_limit_reached_type`. Parse failure → pause with
+  the raw text and no auto-resume. Before typing "continue": state still the limit, no input since the pause,
+  pane not at a prompt (`capture-pane`); retry cap with backoff; timers persisted across restarts.
+- **Cleanup also checks what git status can't see:** ignored files and `.aw/` run/handoff data
+  (`server/src/runs.ts:79`) block removal unless moved first; record repo path + base SHA at creation; drop
+  resume entries pointing at a removed folder (`server.ts:380`).
+- **Setup runs repo code** (composer scripts, pub hooks): timeout, per-repo off switch, shown on the card.
+- **Digest:** reuse per-session Insights where they exist (`server/src/insights.ts:64`); for sessions without
+  them, last message + Changes stats. No new model call.
+- **Shared payload:** the limit-pause card (phase 2) is built once and consumed by push (phase 3).
 
 ## Cut
 - Per-session $ spend meter — subscriptions, not API billing; limits are weekly-plan-wide; 4 hits/60 d.
