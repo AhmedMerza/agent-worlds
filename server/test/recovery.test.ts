@@ -52,6 +52,7 @@ test('Restore all resumes each Codex session with the access its log last record
     const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
     const response = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers: { 'x-aw-token': TOKEN }, body: '{}' });
     assert.equal(response.status, 200);
+    assert.deepEqual((await response.json() as any).started.sort(), ['session-full', 'session-sandboxed', 'session-unknown']);
     assert.deepEqual(Object.fromEntries(launched.map((o) => [o.resume, o.codexUnrestricted])), { 'session-full': true, 'session-sandboxed': false, 'session-unknown': false });
   } finally { await app.close(); }
 });

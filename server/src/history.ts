@@ -448,13 +448,20 @@ export async function codexTurn(path: string): Promise<{ working: boolean; lastP
   } catch { return { working: false, lastPrompt: null }; }
 }
 
-/** Whether a Codex session last ran with Full Access, from its rollout's newest turn_context; null when none is recorded. */
+/**
+ * Whether a Codex session last ran with Full Access, from its rollout's newest turn_context; null when none is recorded.
+ * Rollouts reach hundreds of MB, so it reads a growing tail rather than the whole file.
+ */
 export async function codexFullAccess(path: string): Promise<boolean | null> {
   try {
-    const line = (await readFile(path, 'utf8')).split('\n').findLast((l) => l.includes('"type":"turn_context"'));
-    const type = line ? JSON.parse(line).payload?.sandbox_policy?.type : undefined;
-    return typeof type === 'string' ? type === 'danger-full-access' : null;
-  } catch { return null; }
+    for (const bytes of [256 * 1024, 8 * 1024 * 1024, 128 * 1024 * 1024]) {
+      const ctx = (await readTail(path, bytes)).findLast((e) => e.type === 'turn_context');
+      const type = ctx?.payload?.sandbox_policy?.type;
+      if (typeof type === 'string') return type === 'danger-full-access';
+      if (statSync(path).size <= bytes) break;
+    }
+  } catch { /* unreadable rollout */ }
+  return null;
 }
 
 /** The last thing you typed to a Gemini session, from its chat file. */
