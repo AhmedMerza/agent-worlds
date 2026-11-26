@@ -19,7 +19,7 @@ import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
-import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
+import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, codexFullAccess, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, codexConversation, midTurn } from './transcript.ts';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs';
@@ -782,6 +782,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return send(res, 200, { sessions: items });
     }
     if (method === 'POST' && url.pathname === '/api/sessions/resume-all') {
+      // Each Codex conversation keeps the access its log last recorded; one with no record stays sandboxed.
+      const codexAccess = async (id: string) => { const log = codexSession(codexHome, id); return (log && await codexFullAccess(log.path)) === true; };
       await scan();
       const started: string[] = [], failed: { id: string; error: string }[] = [];
       for (const s of recoverable()) {
@@ -790,7 +792,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (resuming.has(s.id)) { failed.push({ id: s.id, error: 'already being restored' }); continue; }
         resuming.set(s.id, null);
         try {
-          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: false } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: await codexAccess(s.id) } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
           resuming.set(s.id, r.tmuxSession);
           await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: s.lastPrompt ?? s.task, agent: s.agent, resuming: true });
           started.push(s.id);

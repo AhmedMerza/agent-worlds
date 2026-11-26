@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Recovery } from '../src/recovery.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
@@ -30,22 +30,29 @@ test('starting placeholders are never offered as recoverable conversations', () 
   assert.deepEqual(recovery.list(), []);
 });
 
-test('Restore all keeps older Codex sessions in the workspace sandbox', async () => {
-  const home = tmp(), repo = tmp();
-  new Recovery(join(home, 'recovery.json')).upsert({ id: 'session-codex', agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
+test('Restore all resumes each Codex session with the access its log last recorded', async () => {
+  const home = tmp(), repo = tmp(), codex = tmp(), day = join(codex, 'sessions', '2026', '11', '26');
+  mkdirSync(day, { recursive: true });
+  const rollout = (id: string, ...sandboxes: string[]) => writeFileSync(join(day, `rollout-${id}.jsonl`), [
+    { type: 'session_meta', payload: { id, cwd: repo } },
+    ...sandboxes.map((type) => ({ type: 'turn_context', payload: { approval_policy: 'never', sandbox_policy: { type } } })),
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  rollout('session-full', 'workspace-write', 'danger-full-access');
+  rollout('session-sandboxed', 'danger-full-access', 'workspace-write');
+  const recovery = new Recovery(join(home, 'recovery.json'));
+  for (const id of ['session-full', 'session-sandboxed', 'session-unknown']) recovery.upsert({ id, agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
   const launched: any[] = [];
   const app = startServer({ ...parseConfig({}), port: 0 }, TOKEN, {
-    home, procRoot: join(tmp(), 'missing'), installed: () => true,
+    home, homes: { codex }, procRoot: join(tmp(), 'missing'), installed: () => true,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false, top: cwd }), branchOf: async () => 'main', tmuxSessionOf: async () => 'aw-codex' },
-    createSession: async (o: any) => { launched.push(o); return { tmuxSession: 'aw-codex', dir: o.repo, branch: null, pane: '%2' }; },
+    createSession: async (o: any) => { launched.push(o); return { tmuxSession: `aw-${o.resume}`, dir: o.repo, branch: null, pane: '%2' }; },
   });
   await app.listen();
   try {
     const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
     const response = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers: { 'x-aw-token': TOKEN }, body: '{}' });
     assert.equal(response.status, 200);
-    assert.deepEqual((await response.json() as any).started, ['session-codex']);
-    assert.equal(launched[0].codexUnrestricted, false);
+    assert.deepEqual(Object.fromEntries(launched.map((o) => [o.resume, o.codexUnrestricted])), { 'session-full': true, 'session-sandboxed': false, 'session-unknown': false });
   } finally { await app.close(); }
 });
 
