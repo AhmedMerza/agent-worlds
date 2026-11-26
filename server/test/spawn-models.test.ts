@@ -160,5 +160,8 @@ test('a Codex model this account does not have is refused before it starts, nami
     assert.equal(launched.length, count, 'nothing started');
     await spawn({ agent: 'codex', model: 'gpt-6-luna' });
     assert.equal(launched.at(-1).model, 'gpt-6-luna');
-  } finally { rmSync(cache); }
+    writeFileSync(join(codexHome, 'config.toml'), '[profiles.local]\nmodel_provider = "ollama"\n');
+    await spawn({ agent: 'codex', model: 'llama3' });
+    assert.equal(launched.at(-1).model, 'llama3', 'another provider\'s models are not in the OpenAI cache, so no check');
+  } finally { rmSync(cache); rmSync(join(codexHome, 'config.toml'), { force: true }); }
 });

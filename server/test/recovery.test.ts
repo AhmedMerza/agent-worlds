@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Recovery } from '../src/recovery.ts';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
@@ -39,8 +39,11 @@ test('Restore all resumes each Codex session with the access its log last record
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
   rollout('session-full', 'workspace-write', 'danger-full-access');
   rollout('session-sandboxed', 'danger-full-access', 'workspace-write');
+  rollout('session-long', 'danger-full-access');
+  // A long last turn pushes its turn_context out of the first tail window
+  appendFileSync(join(day, 'rollout-session-long.jsonl'), `${JSON.stringify({ type: 'response_item', payload: { text: 'x'.repeat(400 * 1024) } })}\n`);
   const recovery = new Recovery(join(home, 'recovery.json'));
-  for (const id of ['session-full', 'session-sandboxed', 'session-unknown']) recovery.upsert({ id, agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
+  for (const id of ['session-full', 'session-sandboxed', 'session-long', 'session-unknown']) recovery.upsert({ id, agent: 'codex', cwd: repo, task: null, lastPrompt: null, updatedAt: 1 });
   const launched: any[] = [];
   const app = startServer({ ...parseConfig({}), port: 0 }, TOKEN, {
     home, homes: { codex }, procRoot: join(tmp(), 'missing'), installed: () => true,
@@ -52,8 +55,8 @@ test('Restore all resumes each Codex session with the access its log last record
     const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
     const response = await fetch(`${base}/api/sessions/resume-all`, { method: 'POST', headers: { 'x-aw-token': TOKEN }, body: '{}' });
     assert.equal(response.status, 200);
-    assert.deepEqual((await response.json() as any).started.sort(), ['session-full', 'session-sandboxed', 'session-unknown']);
-    assert.deepEqual(Object.fromEntries(launched.map((o) => [o.resume, o.codexUnrestricted])), { 'session-full': true, 'session-sandboxed': false, 'session-unknown': false });
+    assert.deepEqual((await response.json() as any).started.sort(), ['session-full', 'session-long', 'session-sandboxed', 'session-unknown']);
+    assert.deepEqual(Object.fromEntries(launched.map((o) => [o.resume, o.codexUnrestricted])), { 'session-full': true, 'session-sandboxed': false, 'session-long': true, 'session-unknown': false });
   } finally { await app.close(); }
 });
 

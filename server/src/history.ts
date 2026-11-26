@@ -306,9 +306,13 @@ export function codexSession(codexHome: string, sessionId: string): { path: stri
   return null;
 }
 
-/** The models Codex fetched for this account (its models_cache.json), and which its picker lists; null when it has none. */
+/**
+ * The models Codex fetched for this account (its models_cache.json), and which its picker lists; null when it has none,
+ * or when config.toml points Codex (or a profile) at another provider, whose models that cache does not cover.
+ */
 export function codexModels(codexHome: string): { slug: string; listed: boolean }[] | null {
   try {
+    if (existsSync(join(codexHome, 'config.toml')) && /^\s*model_provider\s*=\s*["'](?!openai["'])/m.test(readFileSync(join(codexHome, 'config.toml'), 'utf8'))) return null;
     const models = JSON.parse(readFileSync(join(codexHome, 'models_cache.json'), 'utf8')).models;
     const known = Array.isArray(models) ? models.filter((m) => typeof m?.slug === 'string').map((m) => ({ slug: m.slug as string, listed: m.visibility !== 'hide' })) : [];
     return known.length ? known : null;
