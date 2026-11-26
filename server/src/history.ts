@@ -306,6 +306,15 @@ export function codexSession(codexHome: string, sessionId: string): { path: stri
   return null;
 }
 
+/** The models Codex fetched for this account (its models_cache.json), and which its picker lists; null when it has none. */
+export function codexModels(codexHome: string): { slug: string; listed: boolean }[] | null {
+  try {
+    const models = JSON.parse(readFileSync(join(codexHome, 'models_cache.json'), 'utf8')).models;
+    const known = Array.isArray(models) ? models.filter((m) => typeof m?.slug === 'string').map((m) => ({ slug: m.slug as string, listed: m.visibility !== 'hide' })) : [];
+    return known.length ? known : null;
+  } catch { return null; }
+}
+
 /** Most recent Codex sessions, newest first; `repo` keeps that repo's. */
 export async function codexHistory(codexHome: string, limit: number, repo?: string): Promise<HistoryItem[]> {
   const found = new Map<string, { path: string; cwd: string; mtime: number }>();
