@@ -306,6 +306,19 @@ export function codexSession(codexHome: string, sessionId: string): { path: stri
   return null;
 }
 
+/**
+ * The models Codex fetched for this account (its models_cache.json), and which its picker lists; null when it has none,
+ * or when config.toml points Codex (or a profile) at another provider, whose models that cache does not cover.
+ */
+export function codexModels(codexHome: string): { slug: string; listed: boolean }[] | null {
+  try {
+    if (existsSync(join(codexHome, 'config.toml')) && /^\s*model_provider\s*=\s*["'](?!openai["'])/m.test(readFileSync(join(codexHome, 'config.toml'), 'utf8'))) return null;
+    const models = JSON.parse(readFileSync(join(codexHome, 'models_cache.json'), 'utf8')).models;
+    const known = Array.isArray(models) ? models.filter((m) => typeof m?.slug === 'string').map((m) => ({ slug: m.slug as string, listed: m.visibility !== 'hide' })) : [];
+    return known.length ? known : null;
+  } catch { return null; }
+}
+
 /** Most recent Codex sessions, newest first; `repo` keeps that repo's. */
 export async function codexHistory(codexHome: string, limit: number, repo?: string): Promise<HistoryItem[]> {
   const found = new Map<string, { path: string; cwd: string; mtime: number }>();
@@ -446,6 +459,22 @@ export async function codexTurn(path: string): Promise<{ working: boolean; lastP
     const typed = tail.findLast((e) => e.type === 'event_msg' && e.payload?.type === 'user_message' && typeof e.payload.message === 'string');
     return { working: turn?.payload?.type === 'task_started', lastPrompt: typed ? oneLine(typed.payload.message) : null };
   } catch { return { working: false, lastPrompt: null }; }
+}
+
+/**
+ * Whether a Codex session last ran with Full Access, from its rollout's newest turn_context; null when none is recorded.
+ * Rollouts reach hundreds of MB, so it reads a growing tail rather than the whole file.
+ */
+export async function codexFullAccess(path: string): Promise<boolean | null> {
+  try {
+    for (const bytes of [256 * 1024, 8 * 1024 * 1024, 128 * 1024 * 1024]) {
+      const ctx = (await readTail(path, bytes)).findLast((e) => e.type === 'turn_context');
+      const type = ctx?.payload?.sandbox_policy?.type;
+      if (typeof type === 'string') return type === 'danger-full-access';
+      if (statSync(path).size <= bytes) break;
+    }
+  } catch { /* unreadable rollout */ }
+  return null;
 }
 
 /** The last thing you typed to a Gemini session, from its chat file. */

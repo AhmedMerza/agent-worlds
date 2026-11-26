@@ -1,6 +1,6 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server.ts';
 import { parseConfig } from '../src/config.ts';
@@ -11,12 +11,12 @@ const TOKEN = 'e'.repeat(64);
 const launched: any[] = [];
 let app: ReturnType<typeof startServer>;
 let base = '';
-const home = tmp('aw-spawn-models-');
+const home = tmp('aw-spawn-models-'), codexHome = tmp('aw-spawn-codex-');
 
 before(async () => {
   const cfg = { ...parseConfig({ worlds: [{ id: 'web', name: 'Web', repos: ['/work/repo-a'], leadSpawn: true, maxSpawned: 20 }] }), port: 0 };
   app = startServer(cfg, TOKEN, {
-    home, spawnIdMs: 50, installed: () => true,
+    home, homes: { codex: codexHome }, spawnIdMs: 50, installed: () => true,
     deps: { repoInfo: async (cwd: string) => ({ repo: cwd, branch: 'main', worktree: false }), branchOf: async () => 'main', tmuxSessionOf: async () => 'awtest-fake' },
     createSession: (async (o: any) => {
       launched.push(o);
@@ -147,4 +147,21 @@ test('aw_agents lists the caller first, marked you, with its model and context',
   assert.equal(peers[0].you, true);
   assert.equal(peers[0].model, 'claude-haiku');
   assert.ok(peers.slice(1).length > 0 && peers.slice(1).every((p: any) => !('you' in p) && 'model' in p && 'context' in p), 'others: no you, model and context present');
+});
+
+test('a Codex model this account does not have is refused before it starts, naming the ones it has', async () => {
+  const cache = join(codexHome, 'models_cache.json');
+  writeFileSync(cache, JSON.stringify({ models: [{ slug: 'gpt-6.1-sol', visibility: 'list' }, { slug: 'gpt-6-luna', visibility: 'list' }, { slug: 'codex-auto-review', visibility: 'hide' }] }));
+  try {
+    const count = launched.length;
+    const r = await spawn({ agent: 'codex', model: 'gpt-5.3-codex' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text, /no model gpt-5\.3-codex: use one of gpt-6\.1-sol, gpt-6-luna, or leave model out/);
+    assert.equal(launched.length, count, 'nothing started');
+    await spawn({ agent: 'codex', model: 'gpt-6-luna' });
+    assert.equal(launched.at(-1).model, 'gpt-6-luna');
+    writeFileSync(join(codexHome, 'config.toml'), '[profiles.local]\nmodel_provider = "ollama"\n');
+    await spawn({ agent: 'codex', model: 'llama3' });
+    assert.equal(launched.at(-1).model, 'llama3', 'another provider\'s models are not in the OpenAI cache, so no check');
+  } finally { rmSync(cache); rmSync(join(codexHome, 'config.toml'), { force: true }); }
 });

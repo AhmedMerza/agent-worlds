@@ -19,7 +19,7 @@ import * as sys from './sys.ts';
 import { Worlds, saveConfigKey } from './worlds.ts';
 import { phoneAddresses, Pairing, detectFirewall, type Address } from './phone.ts';
 import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installCloudflared, cloudflaredAsset } from './remote.ts';
-import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
+import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, codexModels, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, codexFullAccess, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, codexConversation, midTurn } from './transcript.ts';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs';
@@ -782,6 +782,8 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       return send(res, 200, { sessions: items });
     }
     if (method === 'POST' && url.pathname === '/api/sessions/resume-all') {
+      // Each Codex conversation keeps the access its log last recorded; one with no record stays sandboxed.
+      const codexAccess = async (id: string) => { const log = codexSession(codexHome, id); return (log && await codexFullAccess(log.path)) === true; };
       await scan();
       const started: string[] = [], failed: { id: string; error: string }[] = [];
       for (const s of recoverable()) {
@@ -790,7 +792,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         if (resuming.has(s.id)) { failed.push({ id: s.id, error: 'already being restored' }); continue; }
         resuming.set(s.id, null);
         try {
-          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: false } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
+          const r = await createSession({ repo: s.cwd, worktree: false, resume: s.id, agent: s.agent, ...(s.agent === 'codex' ? { codexUnrestricted: await codexAccess(s.id) } : {}), claudeBin: cfg.claudeBin, home, prefix: opts.tmuxPrefix, spawnDirect });
           resuming.set(s.id, r.tmuxSession);
           await store.addStarting({ tmuxSession: r.tmuxSession, pane: r.pane ?? null, direct: r.direct ? r.tmuxSession : null, dir: r.dir, task: s.lastPrompt ?? s.task, agent: s.agent, resuming: true });
           started.push(s.id);
@@ -1336,6 +1338,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (!MODEL_FLAG[agent]) return new Error(`Agent Worlds cannot pick a model for ${AGENTS[agent].name}: leave model out`);
       if (!isModelId(asked)) return new Error('model must be a model id like sonnet or gpt-5-codex');
       if (models.length && !models.includes(asked)) return new Error(`the user allows ${AGENTS[agent].name} only on ${models.join(', ')}`);
+      // A model the account cannot use starts a Codex that only prints an error, so refuse it here.
+      const known = agent === 'codex' ? codexModels(codexHome) : null;
+      if (known && !known.some((m) => m.slug === asked)) return new Error(`Codex on this account has no model ${asked}: use one of ${known.filter((m) => m.listed).map((m) => m.slug).join(', ')}, or leave model out for its default`);
     }
     if (!steps && !asked && models.length > 1) return new Error(`choose a model for this task on ${AGENTS[agent].name}: ${models.join(', ')}`);
     // The sole allowed model is unambiguous; otherwise the CLI picks its own default.
