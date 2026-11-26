@@ -82,6 +82,26 @@ line comments → agent.
   the terminal, held until the turn ends if busy.
 - **Morning digest:** built from existing per-turn data (no extra model call), delivered via push + a page.
 
+### Decisions (grill-me)
+- **Facts:** `glab` logged in to atlantis, `gh` to GitHub. 517 worktrees, 207 on `aw/` branches. `vendor/` up to
+  401 MB; 156 worktrees already have one.
+- **Cleanup scope:** only Agent Worlds' own. From now on each created worktree is recorded in its state file;
+  backlog counts only if dir is `<repo>-worktrees/aw-*` AND branch is `aw/*`. Others: read-only list, removable
+  by an explicit click.
+- **Branch on cleanup:** `git branch -D` local after the merged + same-SHA check; never touch the remote.
+- **Deps:** run `composer install` / `flutter pub get` from the branch's own lockfile.
+- **Phone:** Android. Notification carries Allow / Deny (Chrome's 2-action max; Always allow stays on the card).
+  An action on a request already answered in the terminal is a no-op that says so.
+- **Push events:** Needs you only (permission, question, error) + limit-pause card + digest. No push for finished
+  turns. No push while an Agent Worlds tab is visible on any device.
+- **Limit pause:** Claude (parsed message) and Codex (`rate_limits.resets_at`) in the same card.
+- **Digest:** page on first open after 6+ h away; one push at 08:00 Asia/Bahrain if sessions ran overnight.
+- **PR/CI:** MR/PR state, pipeline, approvals on done cards + "Open MR" (`glab mr create` / `gh pr create`).
+  Merge stays in GitLab/GitHub.
+- **Status evidence:** sample saved under `~/.config/agent-worlds/status-reports/`; "File as issue" reuses the
+  capture filing flow and shows the text first.
+- **Builder:** `/lead` world mode, one phase at a time, max 3 workers; merges stay with the user.
+
 ### Order
 1. Worktree lifecycle: #2 setup → forge client → #1 auto-cleanup
 2. Overnight survival: restart bugs → #3 limit pause → #8 status evidence
