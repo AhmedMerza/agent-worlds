@@ -1,5 +1,6 @@
 # Changelog
 
+- A session that ends for good (End, `aw_stop`, `/exit`, or its terminal closing on its own) now deletes the worktree Agent Worlds made for it, and its local branch when merged or fully pushed, so worktrees no longer pile up on disk (450 had, 194 GB). A toast says whether it was deleted or kept and why; End's confirm says so up front. Anything that would be lost keeps it: uncommitted or untracked files, commits no remote has, or another session or live run still in it. Restarts, crashes and stopping Agent Worlds never delete one.
 - Lead-started workers are one-task sessions: after a successful finish, Agent Worlds sends the final result to the lead, closes the worker and frees its place automatically. Waiting, failed and run-step sessions stay open; later work starts in a fresh worker.
 
 Newest first. Dates are commit dates.
