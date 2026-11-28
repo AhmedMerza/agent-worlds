@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { rmSync, mkdirSync, writeFileSync, existsSync, symlinkSync, readFileSync, chmodSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { rmSync, mkdirSync, writeFileSync, existsSync, symlinkSync, readFileSync, chmodSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmp } from './fixtures.ts';
 import { WorktreeCleanup, CLEANUP_DELAY, recordWorktree, processUse } from '../src/worktree-cleanup.ts';
@@ -121,6 +121,9 @@ test('server inventory, explicit confirmation, live session protection, removed-
   const project = join(logs, f.dir.replace(/[^a-zA-Z0-9]/g, '-')); mkdirSync(project);
   writeFileSync(join(project, 'session-gone.jsonl'), JSON.stringify({ session_id: 'session-gone', cwd: f.dir, type: 'last-prompt', lastPrompt: 'past work' }) + '\n');
   new Recovery(join(f.home, 'recovery.json')).upsert({ id: 'session-gone', agent: 'codex', cwd: f.dir, task: null, lastPrompt: null, updatedAt: f.now });
+  await recordWorktree(f.home, { session: 'startup-test', repo: f.repo, dir: f.dir, branch: f.branch, baseSha: f.head, createdAt: f.now });
+  crashCleanup(f, 'afterQuarantine');
+  assert.equal(existsSync(f.dir), false);
   const app = startServer({ ...parseConfig({ worlds: [{ id: 'test', repos: [f.repo] }], claudeProjectsDir: logs }), port: 0 }, token, {
     home: f.home, procRoot: f.proc, tmuxPanes: async () => new Map(),
     deps: { repoInfo: async () => ({ repo: f.repo, branch: f.branch, worktree: true }), tmuxSessionOf: async () => 'aw-test-120-mocked' },
@@ -132,6 +135,7 @@ test('server inventory, explicit confirmation, live session protection, removed-
   const get = (path: string) => fetch(base + path, { headers });
   const remove = (body: unknown) => fetch(base + '/api/worktrees/remove', { method: 'POST', headers, body: JSON.stringify(body) });
   try {
+    assert.equal(existsSync(f.dir), true, 'listen must reconcile before serving any inventory request');
     assert.equal((await fetch(base + '/api/worktrees')).status, 401);
     assert.equal((await (await get('/api/worktrees')).json() as any).worktrees.length, 1);
     assert.ok(existsSync(f.dir)); assert.equal((await remove({ dir: f.dir })).status, 400);
@@ -318,7 +322,7 @@ test('P1 branch: in-flight Git operation after snapshot keeps ref', async () => 
   } finally { if (child) { child.kill(); await new Promise((r) => child!.once('exit', r)); } }
 });
 
-test('P1 branch: failed create-only restore reports recovery SHA instead of claiming branch kept', async () => {
+test('P1 branch: failed create-only restore stays journaled and retries on fresh reconcile', async () => {
   const f = await fixture(), other = join(f.root, 'recovery-checkout');
   const hook = join(f.repo, '.git', 'hooks', 'reference-transaction');
   writeFileSync(hook, `#!/bin/sh
@@ -337,6 +341,15 @@ exit 0
   assert.equal(git(f.repo, 'branch', '--list', f.branch), '');
   assert.ok(result.reason?.includes(`could not verify or restore local branch ${f.branch} at ${f.head}`));
   assert.doesNotMatch(result.reason!, /branch kept/);
+  assert.equal(readdirSync(join(f.home, 'worktree-cleanup')).filter((n) => n.endsWith('.json')).length, 1);
+  const pending = await cleaner.list();
+  assert.ok(pending.some((r) => r.reason?.includes(f.head)), 'failed retry must remain visible even though the original checkout is gone');
+  rmSync(hook);
+  const fresh = new WorktreeCleanup({ home: f.home, repos: () => [f.repo], liveDirs: () => [], procRoot: f.proc, now: () => f.now + 3600_000 });
+  await fresh.reconcile();
+  assert.ok(git(f.repo, 'branch', '--list', f.branch).includes(f.branch), 'pending restoration must recreate the ref');
+  assert.equal(git(other, 'rev-parse', 'HEAD'), f.head);
+  assert.equal(readdirSync(join(f.home, 'worktree-cleanup')).length, 0);
 });
 
 test('P1 branch: initializing real Git checkout before symbolic HEAD keeps ref', async (t) => {
@@ -376,4 +389,65 @@ if (process.argv[2] === 'prepared' && input.includes(${JSON.stringify(`ref:refs/
     if (done) assert.equal(await done, 0);
   }
   assert.equal(git(other, 'rev-parse', 'HEAD'), f.head);
+});
+
+// SIGKILL bypasses catch/finally: these are process deaths, not recoverable exceptions.
+function crashCleanup(f: Awaited<ReturnType<typeof fixture>>, at: string, occupied = false) {
+  const script = join(f.root, 'crash.ts');
+  writeFileSync(script, `
+import { WorktreeCleanup, CLEANUP_DELAY } from ${JSON.stringify(new URL('../src/worktree-cleanup.ts', import.meta.url).href)};
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+const f = ${JSON.stringify({ home: f.home, repo: f.repo, dir: f.dir, proc: f.proc, head: f.head, branch: f.branch, now: f.now, root: f.root })};
+const cleaner = new WorktreeCleanup({ home: f.home, repos: () => [f.repo], liveDirs: () => [], procRoot: f.proc,
+  forge: async () => ({ state: 'merged', headSha: f.head, mergedAt: new Date(f.now - CLEANUP_DELAY - 1000).toISOString(), url: 'https://example.com/pr/1' }),
+  step: (step, dir) => {
+    if (step === 'afterQuarantine' && ${JSON.stringify(at)} === 'afterRollbackRename') writeFileSync(join(dir, 'ignored'), 'late crash data');
+    if (step === 'beforeBranchDelete' && ${JSON.stringify(at)} === 'afterBranchDelete') execFileSync('git', ['-C', f.repo, 'worktree', 'add', join(f.root, 'racing-checkout'), f.branch]);
+    if (step === ${JSON.stringify(at)}) {
+      if (${occupied} && step === 'afterQuarantine') { mkdirSync(f.dir); writeFileSync(join(f.dir, 'ignored'), 'replacement data'); }
+      process.kill(process.pid, 'SIGKILL');
+    }
+  },
+});
+await cleaner.remove(f.dir);
+throw new Error('crash point was not reached');
+`);
+  const child = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+  assert.equal(child.signal, 'SIGKILL', child.stderr);
+}
+
+for (const at of ['afterQuarantine', 'afterRollbackRename', 'afterBranchDelete']) test(`P1 crash journal: ${at} recovers on a fresh instance`, async () => {
+  const f = await fixture();
+  crashCleanup(f, at);
+  await f.cleaner.reconcile();
+  if (at === 'afterBranchDelete') {
+    assert.ok(git(f.repo, 'branch', '--list', f.branch).includes(f.branch), 'crashed deletion must recreate the checked-out branch');
+    assert.equal(git(join(f.root, 'racing-checkout'), 'rev-parse', 'HEAD'), f.head);
+    assert.equal(existsSync(f.dir), false);
+  } else {
+    assert.equal(existsSync(f.dir), true, 'original checkout must be recovered after process death');
+    assert.equal(git(f.dir, 'rev-parse', '--show-toplevel'), f.dir);
+    assert.ok(git(f.repo, 'worktree', 'list', '--porcelain').includes(f.dir));
+    assert.doesNotMatch(git(f.repo, 'worktree', 'list', '--porcelain'), /aw-removing/);
+    if (at === 'afterRollbackRename') assert.equal(readFileSync(join(f.dir, 'ignored'), 'utf8'), 'late crash data');
+  }
+  assert.equal(git(f.repo, 'rev-parse', f.branch), f.head);
+  assert.equal(readdirSync(join(f.home, 'worktree-cleanup')).length, 0);
+});
+
+test('P1 crash journal: occupied original path retains quarantine and persists visible recovery across restart', async () => {
+  const f = await fixture();
+  crashCleanup(f, 'afterQuarantine', true);
+  const rows = await f.cleaner.list();
+  const pending = rows.find((r) => r.reason?.includes('Cleanup recovery pending'))!;
+  assert.ok(pending); assert.match(pending.dir, /aw-removing/); assert.equal(pending.owned, true);
+  assert.ok(pending.reason?.includes(f.dir)); assert.ok(pending.reason?.includes(f.head));
+  assert.equal(readFileSync(join(pending.dir, 'file'), 'utf8'), 'changed');
+  assert.equal(readFileSync(join(f.dir, 'ignored'), 'utf8'), 'replacement data');
+  const fresh = racingCleaner(f, () => {});
+  assert.deepEqual(await fresh.sweep(), []);
+  assert.ok((await fresh.list()).some((r) => r.dir === pending.dir && r.reason?.includes('occupied')));
+  assert.equal((await fresh.remove(pending.dir, true)).removed, false);
 });

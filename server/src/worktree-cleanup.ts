@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import { readdir, readlink, realpath, lstat, readFile, mkdir, writeFile, rename, mkdtemp, rmdir } from 'node:fs/promises';
+import { readdir, readlink, realpath, lstat, readFile, mkdir, writeFile, rename, mkdtemp, rmdir, open, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { execFile } from './child.ts';
 import { branchChange, type ForgeLookup } from './forge.ts';
@@ -13,7 +14,18 @@ const inside = (path: string, parent: string) => path === parent || path.startsW
 export const CLEANUP_DELAY = 3 * 24 * 3600_000;
 export type WorktreeRecord = { session: string; repo: string; dir: string; branch: string; baseSha: string; createdAt: number; removedAt?: number };
 export type WorktreeRow = { repo: string; dir: string; branch: string | null; head: string; owned: boolean; bytes: number | null; ageMs: number; live: boolean | null; reason: string | null; url?: string };
-export type CleanupOptions = { home: string; repos: () => string[]; liveDirs: () => string[]; procRoot?: string; forge?: ForgeLookup; now?: () => number; onRemoved?: (dir: string) => void; step?: (step: 'beforeQuarantine' | 'afterQuarantine' | 'beforeBranchDelete', dir: string) => void | Promise<void> };
+export type CleanupOptions = { home: string; repos: () => string[]; liveDirs: () => string[]; procRoot?: string; forge?: ForgeLookup; now?: () => number; onRemoved?: (dir: string) => void; step?: (step: 'beforeQuarantine' | 'afterQuarantine' | 'beforeBranchDelete' | 'afterRollbackRename' | 'afterBranchDelete', dir: string) => void | Promise<void> };
+
+type CleanupJournal = {
+  id: string; repo: string; dir: string; quarantine: string; branch: string; head: string;
+  phase: 'checkout' | 'branch'; reason?: string; retries?: number; retryAt?: number;
+};
+
+// Both the file and its directory must reach disk before the destructive operation.
+async function syncDirectory(dir: string) {
+  const handle = await open(dir, 'r');
+  try { await handle.sync(); } finally { await handle.close(); }
+}
 
 async function branchCheckouts(repo: string, branch: string): Promise<string[]> {
   const raw = await git(repo, 'worktree', 'list', '--porcelain', '-z');
@@ -99,6 +111,85 @@ export class WorktreeCleanup {
   private serial<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.lock.then(fn, fn); this.lock = next.catch(() => {}); return next;
   }
+  private journalDir() { return join(this.opts.home, 'worktree-cleanup'); }
+  private async saveJournal(j: CleanupJournal) {
+    const folder = this.journalDir();
+    await mkdir(folder, { recursive: true, mode: 0o700 });
+    await syncDirectory(dirname(folder));
+    const file = join(folder, j.id + '.json');
+    const handle = await open(file + '.tmp', 'w', 0o600);
+    try { await handle.writeFile(JSON.stringify(j)); await handle.sync(); } finally { await handle.close(); }
+    await rename(file + '.tmp', file);
+    await syncDirectory(folder);
+  }
+  private async clearJournal(j: CleanupJournal) {
+    await unlink(join(this.journalDir(), j.id + '.json'));
+    await syncDirectory(this.journalDir());
+    await rmdir(dirname(j.quarantine)).catch(() => {});
+  }
+  private async journals(): Promise<CleanupJournal[]> {
+    let names: string[];
+    try { names = await readdir(this.journalDir()); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []; throw e; }
+    return Promise.all(names.filter((name) => name.endsWith('.json')).map(async (name) => {
+      const j = JSON.parse(await readFile(join(this.journalDir(), name), 'utf8'));
+      if (name !== j.id + '.json' || !['checkout', 'branch'].includes(j.phase)
+        || ![j.repo, j.dir, j.quarantine, j.branch].every((v) => typeof v === 'string' && v.length)
+        || !/^[a-f0-9]{40,64}$/.test(j.head)) throw new Error(`Invalid cleanup journal: ${name}; cleanup stopped`);
+      return j;
+    }));
+  }
+  private async restoreBranch(j: CleanupJournal) {
+    await git(j.repo, 'update-ref', '--no-deref', `refs/heads/${j.branch}`, j.head, '').catch(async () => {
+      // A competing writer (including a symbolic ref) wins. Never overwrite it.
+      await git(j.repo, 'rev-parse', '--verify', `refs/heads/${j.branch}`);
+    });
+  }
+  private async markRemoved(j: CleanupJournal) {
+    this.opts.onRemoved?.(j.dir);
+    for (const r of await this.records()) if (r.dir === j.dir && r.repo === j.repo)
+      await recordWorktree(this.opts.home, { ...r, removedAt: this.opts.now?.() ?? Date.now() });
+  }
+  private async exists(path: string) {
+    try { await lstat(path); return true; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false; throw e; }
+  }
+  private async reconcilePending() {
+    for (const j of await this.journals()) {
+      if ((j.retryAt ?? 0) > (this.opts.now?.() ?? Date.now())) continue;
+      try {
+        if (j.phase === 'checkout' && await this.exists(j.quarantine)) {
+          if (await this.exists(j.dir)) throw new Error(`Original path ${j.dir} is occupied; checkout retained at ${j.quarantine}`);
+          await rename(j.quarantine, j.dir);
+          await syncDirectory(dirname(j.dir));
+          await syncDirectory(dirname(j.quarantine));
+        }
+        if (j.phase === 'checkout' && await this.exists(j.dir)) {
+          // Also repairs a crash after rollback rename but before Git metadata repair.
+          await git(j.repo, 'worktree', 'repair', '--', j.dir);
+        } else {
+          // A crash may precede the post-delete race check. Conservatively restore
+          // even without a currently registered checkout; unused branches cost no data.
+          await this.restoreBranch(j);
+          await this.markRemoved(j);
+        }
+        await this.clearJournal(j);
+      } catch (e) {
+        j.reason = `Cleanup recovery pending: ${(e as Error).message}. Branch ${j.branch}, recovery SHA ${j.head}; original ${j.dir}; retained checkout ${j.quarantine}`;
+        j.retries = (j.retries ?? 0) + 1;
+        j.retryAt = (this.opts.now?.() ?? Date.now()) + Math.min(3600_000, 1000 * 2 ** Math.min(j.retries, 12));
+        await this.saveJournal(j);
+      }
+    }
+  }
+  reconcile(): Promise<void> { return this.serial(() => this.reconcilePending()); }
+  private async pendingRows(): Promise<WorktreeRow[]> {
+    return Promise.all((await this.journals()).map(async (j) => ({
+      repo: j.repo, dir: await this.exists(j.quarantine) ? j.quarantine : j.dir, branch: j.branch, head: j.head,
+      owned: true, bytes: null, ageMs: 0, live: null,
+      reason: j.reason ?? `Cleanup recovery pending for ${j.dir}; retained checkout ${j.quarantine}; branch ${j.branch} at ${j.head}`,
+    })));
+  }
   private async records(): Promise<WorktreeRecord[]> {
     const dir = join(this.opts.home, 'worktrees');
     const out: WorktreeRecord[] = [];
@@ -172,8 +263,11 @@ export class WorktreeCleanup {
   }
   list(repo?: string): Promise<WorktreeRow[]> {
     return this.serial(async () => {
-      const rows = [];
+      await this.reconcilePending();
+      const rows = (await this.pendingRows()).filter((r) => !repo || r.repo === repo);
+      const pending = await this.journals();
       for (const row of (await this.candidates()).filter((r) => !repo || r.repo === repo)) {
+        if (pending.some((j) => j.repo === row.repo && (j.dir === row.dir || j.quarantine === row.dir || j.branch === row.branch))) continue;
         const checked = await this.inspect(row, false);
         checked.bytes = await size(row.dir).catch(() => null);
         rows.push(checked);
@@ -183,13 +277,19 @@ export class WorktreeCleanup {
   }
   remove(dir: string, explicit = false): Promise<{ removed: boolean; reason: string | null }> {
     return this.serial(async () => {
+      await this.reconcilePending();
+      const pending = await this.journals();
+      if (pending.some((j) => j.dir === dir || j.quarantine === dir))
+        return { removed: false, reason: 'Cleanup recovery pending; refresh the worktree list for the retained location and recovery SHA' };
       const row = (await this.candidates()).find((r) => r.dir === dir);
       if (!row) return { removed: false, reason: 'Not a registered linked worktree' };
+      if (pending.some((j) => j.repo === row.repo && j.branch === row.branch)) return { removed: false, reason: 'Cleanup recovery pending for this branch' };
       if (!row.owned && !explicit) return { removed: false, reason: 'Not an Agent Worlds worktree; explicit removal required' };
       const checked = await this.inspect(row);
       if (checked.reason) return { removed: false, reason: checked.reason };
       let quarantine: string | undefined;
       let staging: string | undefined;
+      let journal: CleanupJournal | undefined;
       const restore = async () => {
         if (!quarantine) return;
         if (quarantine !== dir) {
@@ -199,9 +299,13 @@ export class WorktreeCleanup {
           catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
           await rename(quarantine, dir);
           quarantine = dir;
+          await syncDirectory(dirname(dir));
+          await syncDirectory(dirname(journal!.quarantine));
+          await this.opts.step?.('afterRollbackRename', dir);
         }
         await git(row.repo, 'worktree', 'repair', '--', dir);
         quarantine = undefined;
+        if (journal) { await this.clearJournal(journal); journal = undefined; }
       };
       try {
         // These checks alone cannot protect ignored files written before removal.
@@ -214,6 +318,8 @@ export class WorktreeCleanup {
         await this.opts.step?.('beforeQuarantine', dir);
         staging = await mkdtemp(join(dirname(dir), `.aw-removing-${basename(dir)}-`));
         const moved = join(staging, 'checkout');
+        journal = { id: randomUUID(), repo: row.repo, dir, quarantine: moved, branch: row.branch!, head: row.head, phase: 'checkout' };
+        await this.saveJournal(journal);
         await git(row.repo, 'worktree', 'move', '--', dir, moved); // Same filesystem; NEVER --force.
         quarantine = moved;
         await this.opts.step?.('afterQuarantine', moved);
@@ -228,7 +334,7 @@ export class WorktreeCleanup {
         }
         await git(row.repo, 'worktree', 'remove', '--', moved); // NEVER --force
         quarantine = undefined;
-        this.opts.onRemoved?.(dir);
+        await this.markRemoved(journal);
         let note: string | null = null;
         let branchDeleted = false;
         let recoveryPending = false;
@@ -237,9 +343,12 @@ export class WorktreeCleanup {
           if ((await branchCheckouts(row.repo, row.branch!)).length) note = 'Worktree removed; local branch kept because it is checked out elsewhere';
           else {
             await this.opts.step?.('beforeBranchDelete', dir);
+            journal.phase = 'branch';
+            await this.saveJournal(journal);
             await git(row.repo, 'update-ref', '--no-deref', '-d', `refs/heads/${row.branch}`, row.head);
             branchDeleted = true;
             recoveryPending = true;
+            await this.opts.step?.('afterBranchDelete', dir);
             // Git's ref lock does not lock worktree registration. If a checkout raced
             // the deletion (or cannot be inspected), restore create-only: never overwrite
             // a concurrent writer's ref, including a symbolic ref.
@@ -249,9 +358,7 @@ export class WorktreeCleanup {
               keepBranch = (await branchCheckouts(row.repo, row.branch!)).length > 0 || running !== false;
             }
             finally {
-              if (keepBranch) await git(row.repo, 'update-ref', '--no-deref', `refs/heads/${row.branch}`, row.head, '').catch(async () => {
-                await git(row.repo, 'rev-parse', '--verify', `refs/heads/${row.branch}`); // A competing writer already kept it.
-              });
+              if (keepBranch) await this.restoreBranch(journal);
             }
             recoveryPending = false;
             if (keepBranch) {
@@ -266,9 +373,11 @@ export class WorktreeCleanup {
             : branchDeleted ? 'Worktree and local branch removed; could not clear local branch settings'
               : 'Worktree removed; local branch kept because its head changed or Git refused deletion';
         }
-        try {
-          for (const r of await this.records()) if (r.dir === dir && r.repo === row.repo) await recordWorktree(this.opts.home, { ...r, removedAt: this.opts.now?.() ?? Date.now() });
-        } catch { note = [note, 'Could not update the worktree creation record'].filter(Boolean).join('. '); }
+        if (!recoveryPending) { await this.clearJournal(journal); journal = undefined; }
+        else {
+          journal.reason = note ?? 'Cleanup recovery pending';
+          await this.saveJournal(journal);
+        }
         return { removed: true, reason: note };
       } catch {
         if (quarantine) {
@@ -283,7 +392,12 @@ export class WorktreeCleanup {
   }
   async sweep() {
     // Inventory is read-only. Automatic removal considers owned checkouts only, with fresh guards each time.
-    const rows = await this.serial(() => this.candidates());
+    const rows = await this.serial(async () => {
+      const recovering = await this.journals();
+      await this.reconcilePending();
+      const pending = await this.journals();
+      return (await this.candidates()).filter((r) => ![...recovering, ...pending].some((j) => j.repo === r.repo && (j.dir === r.dir || j.quarantine === r.dir || j.branch === r.branch)));
+    });
     const results = [];
     for (const row of rows) if (row.owned) results.push({ dir: row.dir, ...await this.remove(row.dir) });
     return results;

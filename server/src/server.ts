@@ -1689,12 +1689,15 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   const cleanupNow = async () => {
     if (cleaning || closing) return;
     cleaning = true;
-    try { await cleanup.sweep(); } catch (e) { console.error('[agent-worlds] worktree cleanup failed', e); }
+    try {
+      for (const result of await cleanup.sweep()) if (result.reason) console.warn('[agent-worlds] worktree cleanup', result.dir, result.reason);
+    } catch (e) { console.error('[agent-worlds] worktree cleanup failed', e); }
     finally { cleaning = false; }
   };
   return {
     cleanup, server: servers[0], servers, store, insights: insights!, scan, deliverMail, sweep: sweepNow,
-    listen(): Promise<void> {
+    async listen(): Promise<void> {
+      await cleanup.reconcile();
       cleanupTimer = setInterval(() => { void cleanupNow(); }, 3600_000);
       cleanupTimer.unref();
       sweeper = setInterval(sweepNow, 15_000);
