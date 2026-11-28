@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { rmSync, mkdirSync, writeFileSync, existsSync, symlinkSync, readFileSync } from 'node:fs';
+import { rmSync, mkdirSync, writeFileSync, existsSync, symlinkSync, readFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmp } from './fixtures.ts';
 import { WorktreeCleanup, CLEANUP_DELAY, recordWorktree, processUse } from '../src/worktree-cleanup.ts';
@@ -200,4 +200,180 @@ test('symbolic ref retargeted after folder removal never deletes the primary bra
     onRemoved: () => { git(f.repo, 'symbolic-ref', `refs/heads/${f.branch}`, 'refs/heads/main'); } });
   assert.equal((await cleaner.remove(f.dir)).removed, true);
   assert.equal(git(f.repo, 'branch', '--list', 'main').includes('main'), true, 'deletion must not dereference a concurrently retargeted branch');
+});
+
+// Every fixture uses a temporary real Git repository. The injected steps place writes
+// exactly between the relevant safety check and destructive Git operation.
+function racingCleaner(f: Awaited<ReturnType<typeof fixture>>, step: NonNullable<ConstructorParameters<typeof WorktreeCleanup>[0]['step']>) {
+  return new WorktreeCleanup({ home: f.home, repos: () => [f.repo], liveDirs: () => f.live, procRoot: f.proc,
+    forge: async () => ({ state: 'merged', headSha: f.head, mergedAt: new Date(f.now - CLEANUP_DELAY - 1000).toISOString(), url: 'https://example.com/pr/1' }), step });
+}
+
+test('P1 process: open file outside cwd keeps real Git worktree', async () => {
+  const f = await fixture();
+  const child = spawn(process.execPath, ['-e', "require('fs').openSync(process.argv[1], 'r'); process.stdout.write('ready'); setInterval(() => {}, 1000)", join(f.dir, 'file')], { cwd: f.root, stdio: ['ignore', 'pipe', 'inherit'] });
+  try {
+    await new Promise<void>((resolve, reject) => { child.stdout.once('data', () => resolve()); child.once('error', reject); child.once('exit', () => reject(new Error('child exited before ready'))); });
+    symlinkSync(`/proc/${child.pid}`, join(f.proc, String(child.pid)));
+    assert.equal(await processUse(f.dir, f.proc), true, 'an open fd counts even though cwd is outside');
+    assert.equal((await f.cleaner.remove(f.dir)).removed, false);
+    assert.equal(readFileSync(join(f.dir, 'file'), 'utf8'), 'changed');
+  } finally { child.kill(); await new Promise((r) => child.once('exit', r)); }
+});
+
+for (const source of ['maps', 'exe', 'root', 'unreadable'] as const) test(`P1 process: ${source} keeps real Git worktree`, async () => {
+  const f = await fixture(), pid = join(f.proc, '123'); mkdirSync(pid); mkdirSync(join(pid, 'fd'));
+  for (const link of ['cwd', 'exe', 'root']) symlinkSync(source === link ? join(f.dir, 'file') : f.root, join(pid, link));
+  if (source !== 'unreadable') writeFileSync(join(pid, 'maps'), source === 'maps' ? `1000-2000 r--p 00000000 00:00 1 ${join(f.dir, 'file')}\n` : '');
+  assert.equal(await processUse(f.dir, f.proc), source === 'unreadable' ? null : true);
+  assert.equal((await f.cleaner.remove(f.dir)).removed, false);
+  assert.ok(existsSync(f.dir));
+});
+
+for (const name of ['ignored', '.aw/handoff.md']) test(`P1 quarantine: late ${name} survives real Git removal race`, async () => {
+  const f = await fixture(); let reached = false;
+  const cleaner = racingCleaner(f, (step) => {
+    if (step !== 'beforeQuarantine') return;
+    reached = true;
+    if (name.startsWith('.aw/')) mkdirSync(join(f.dir, '.aw'));
+    writeFileSync(join(f.dir, name), 'late private data');
+  });
+  const result = await cleaner.remove(f.dir);
+  assert.equal(reached, true); assert.equal(result.removed, false);
+  assert.equal(readFileSync(join(f.dir, name), 'utf8'), 'late private data');
+  assert.equal(git(f.dir, 'rev-parse', '--show-toplevel'), f.dir);
+  assert.equal(git(f.repo, 'rev-parse', f.branch), f.head);
+});
+
+test('P1 quarantine: writes to old pathname after move are never removed', async () => {
+  const f = await fixture(); let reached = false;
+  const cleaner = racingCleaner(f, (step) => {
+    if (step !== 'afterQuarantine') return;
+    reached = true; mkdirSync(f.dir, { recursive: true }); writeFileSync(join(f.dir, 'ignored'), 'new folder data');
+  });
+  assert.equal((await cleaner.remove(f.dir)).removed, true); assert.equal(reached, true);
+  assert.equal(existsSync(join(f.dir, 'ignored')), true, 'replacement folder data must survive');
+  assert.equal(readFileSync(join(f.dir, 'ignored'), 'utf8'), 'new folder data');
+});
+
+test('P1 quarantine: failed restoration keeps moved data and names its location', async () => {
+  const f = await fixture(); let moved = '';
+  const cleaner = racingCleaner(f, (step, dir) => {
+    if (step !== 'afterQuarantine') return;
+    moved = dir; writeFileSync(join(dir, 'ignored'), 'quarantined data');
+    mkdirSync(f.dir); writeFileSync(join(f.dir, 'ignored'), 'new path data');
+  });
+  const result = await cleaner.remove(f.dir);
+  assert.equal(result.removed, false); assert.ok(result.reason?.includes(moved));
+  assert.equal(readFileSync(join(moved, 'ignored'), 'utf8'), 'quarantined data');
+  assert.equal(readFileSync(join(f.dir, 'ignored'), 'utf8'), 'new path data');
+  assert.equal(git(moved, 'rev-parse', 'HEAD'), f.head);
+});
+
+test('P1 branch: checkout between snapshot and ref deletion restores branch create-only', async () => {
+  const f = await fixture(), other = join(f.root, 'racing-checkout'); let reached = false;
+  git(f.repo, 'config', `branch.${f.branch}.description`, 'keep branch settings');
+  const cleaner = racingCleaner(f, (step) => {
+    if (step !== 'beforeBranchDelete') return;
+    reached = true; git(f.repo, 'worktree', 'add', other, f.branch);
+  });
+  const result = await cleaner.remove(f.dir);
+  assert.equal(result.removed, true); assert.equal(reached, true);
+  assert.equal(git(f.repo, 'branch', '--list', f.branch).includes(f.branch), true, 'checked-out branch must still exist');
+  assert.equal(git(other, 'rev-parse', 'HEAD'), f.head);
+  assert.match(result.reason!, /local branch kept/);
+  assert.equal(git(f.repo, 'config', `branch.${f.branch}.description`), 'keep branch settings');
+});
+
+test('P1 process: handle opened after initial checks follows quarantine and blocks deletion', async () => {
+  const f = await fixture(); let child: ReturnType<typeof spawn> | undefined;
+  const cleaner = racingCleaner(f, async (step) => {
+    if (step !== 'beforeQuarantine') return;
+    child = spawn(process.execPath, ['-e', "require('fs').openSync(process.argv[1], 'r'); process.stdout.write('ready'); setInterval(() => {}, 1000)", join(f.dir, 'file')], { cwd: f.root, stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise<void>((resolve, reject) => { child!.stdout!.once('data', () => resolve()); child!.once('error', reject); child!.once('exit', () => reject(new Error('child exited before ready'))); });
+    symlinkSync(`/proc/${child.pid}`, join(f.proc, String(child.pid)));
+  });
+  try {
+    const result = await cleaner.remove(f.dir);
+    assert.equal(result.removed, false); assert.match(result.reason!, /In use/);
+    assert.equal(readFileSync(join(f.dir, 'file'), 'utf8'), 'changed');
+    assert.equal(git(f.dir, 'rev-parse', '--show-toplevel'), f.dir);
+  } finally { if (child) { child.kill(); await new Promise((r) => child!.once('exit', r)); } }
+});
+
+
+test('P1 branch: in-flight Git operation after snapshot keeps ref', async () => {
+  const f = await fixture(); let child: ReturnType<typeof spawn> | undefined;
+  const cleaner = racingCleaner(f, async (step) => {
+    if (step !== 'beforeBranchDelete') return;
+    child = spawn('git', ['-C', f.repo, 'hash-object', '--stdin'], { stdio: ['pipe', 'ignore', 'ignore'] });
+    await new Promise<void>((resolve, reject) => { child!.once('spawn', resolve); child!.once('error', reject); });
+    symlinkSync(`/proc/${child.pid}`, join(f.proc, String(child.pid)));
+  });
+  try {
+    const result = await cleaner.remove(f.dir);
+    assert.equal(result.removed, true);
+    assert.equal(git(f.repo, 'branch', '--list', f.branch).includes(f.branch), true, 'in-flight Git operation must retain its branch');
+    assert.match(result.reason!, /local branch kept/);
+  } finally { if (child) { child.kill(); await new Promise((r) => child!.once('exit', r)); } }
+});
+
+test('P1 branch: failed create-only restore reports recovery SHA instead of claiming branch kept', async () => {
+  const f = await fixture(), other = join(f.root, 'recovery-checkout');
+  const hook = join(f.repo, '.git', 'hooks', 'reference-transaction');
+  writeFileSync(hook, `#!/bin/sh
+if [ "$1" = prepared ]; then
+  while read old new ref; do
+    if [ "$old" = 0000000000000000000000000000000000000000 ] && [ "$ref" = refs/heads/${f.branch} ]; then exit 1; fi
+  done
+fi
+exit 0
+`); chmodSync(hook, 0o755);
+  const cleaner = racingCleaner(f, (step) => {
+    if (step === 'beforeBranchDelete') git(f.repo, 'worktree', 'add', other, f.branch);
+  });
+  const result = await cleaner.remove(f.dir);
+  assert.equal(result.removed, true);
+  assert.equal(git(f.repo, 'branch', '--list', f.branch), '');
+  assert.ok(result.reason?.includes(`could not verify or restore local branch ${f.branch} at ${f.head}`));
+  assert.doesNotMatch(result.reason!, /branch kept/);
+});
+
+test('P1 branch: initializing real Git checkout before symbolic HEAD keeps ref', async (t) => {
+  const f = await fixture(), other = join(f.root, 'initializing-checkout');
+  const ready = join(f.root, 'hook-ready'), release = join(f.root, 'hook-release');
+  const hook = join(f.repo, '.git', 'hooks', 'reference-transaction');
+  writeFileSync(hook, `#!${process.execPath}
+const fs = require('node:fs');
+const input = fs.readFileSync(0, 'utf8');
+if (process.argv[2] === 'prepared' && input.includes(${JSON.stringify(`ref:refs/heads/${f.branch} HEAD`)})) {
+  fs.writeFileSync(${JSON.stringify(ready)}, String(process.ppid));
+  const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) clearInterval(timer); }, 10);
+}
+`); chmodSync(hook, 0o755);
+  let child: ReturnType<typeof spawn> | undefined, done: Promise<number | null> | undefined, supported = true;
+  const cleaner = racingCleaner(f, async (step) => {
+    if (step !== 'beforeBranchDelete') return;
+    child = spawn('git', ['-C', f.repo, 'worktree', 'add', other, f.branch], { stdio: 'ignore' });
+    done = new Promise((resolve, reject) => { child!.once('exit', resolve); child!.once('error', reject); });
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(ready)) {
+      if (child.exitCode !== null) { supported = false; return; }
+      assert.ok(Date.now() < deadline, 'Git HEAD transaction hook did not become ready');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // No synthetic process is listed: this isolates the initializing-checkout guard.
+    assert.match(git(f.repo, 'worktree', 'list', '--porcelain'), /locked initializing/);
+  });
+  try {
+    const result = await cleaner.remove(f.dir);
+    if (!supported) { t.skip('Git does not expose symbolic HEAD reference-transaction hooks'); return; }
+    assert.equal(result.removed, true);
+    assert.equal(git(f.repo, 'branch', '--list', f.branch).includes(f.branch), true, 'initializing checkout must retain its branch');
+    assert.match(result.reason!, /local branch kept/);
+  } finally {
+    writeFileSync(release, 'continue');
+    if (done) assert.equal(await done, 0);
+  }
+  assert.equal(git(other, 'rev-parse', 'HEAD'), f.head);
 });

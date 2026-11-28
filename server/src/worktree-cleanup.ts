@@ -1,5 +1,5 @@
 import { promisify } from 'node:util';
-import { readdir, readlink, realpath, lstat, readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { readdir, readlink, realpath, lstat, readFile, mkdir, writeFile, rename, mkdtemp, rmdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { execFile } from './child.ts';
 import { branchChange, type ForgeLookup } from './forge.ts';
@@ -13,11 +13,17 @@ const inside = (path: string, parent: string) => path === parent || path.startsW
 export const CLEANUP_DELAY = 3 * 24 * 3600_000;
 export type WorktreeRecord = { session: string; repo: string; dir: string; branch: string; baseSha: string; createdAt: number; removedAt?: number };
 export type WorktreeRow = { repo: string; dir: string; branch: string | null; head: string; owned: boolean; bytes: number | null; ageMs: number; live: boolean | null; reason: string | null; url?: string };
-export type CleanupOptions = { home: string; repos: () => string[]; liveDirs: () => string[]; procRoot?: string; forge?: ForgeLookup; now?: () => number; onRemoved?: (dir: string) => void };
+export type CleanupOptions = { home: string; repos: () => string[]; liveDirs: () => string[]; procRoot?: string; forge?: ForgeLookup; now?: () => number; onRemoved?: (dir: string) => void; step?: (step: 'beforeQuarantine' | 'afterQuarantine' | 'beforeBranchDelete', dir: string) => void | Promise<void> };
 
 async function branchCheckouts(repo: string, branch: string): Promise<string[]> {
   const raw = await git(repo, 'worktree', 'list', '--porcelain', '-z');
-  return raw.split('\0\0').filter((block) => block.split('\0').includes(`branch refs/heads/${branch}`))
+  return raw.split('\0\0').filter((block) => {
+    const fields = block.split('\0');
+    if (!fields.some((f) => f.startsWith('worktree ')) || fields.includes('bare')) return false;
+    // An initializing add may have resolved this branch but not written HEAD yet.
+    return fields.includes(`branch refs/heads/${branch}`) || fields.includes('locked initializing')
+      || !fields.some((f) => /^HEAD [a-f0-9]{40,64}$/.test(f) && !/^HEAD 0+$/.test(f));
+  })
     .flatMap((block) => block.split('\0').filter((field) => field.startsWith('worktree ')).map((field) => field.slice(9)));
 }
 
@@ -36,8 +42,43 @@ export async function processUse(dir: string, procRoot = '/proc'): Promise<boole
   try { names = await readdir(procRoot); } catch { return null; }
   let unknown = false;
   for (const pid of names.filter((n) => /^\d+$/.test(n))) {
-    try { if (inside(await readlink(join(procRoot, pid, 'cwd')), dir)) return true; }
-    catch (e) { if (!['ENOENT', 'ESRCH'].includes((e as NodeJS.ErrnoException).code ?? '')) unknown = true; }
+    const folder = join(procRoot, pid);
+    try {
+      // Deleted-but-open files still belong to the checkout. Include directory handles,
+      // mapped files and executable/root links, not just the process's current directory.
+      const uses = (path: string) => inside(path.replace(/ \(deleted\)$/, ''), dir);
+      for (const link of ['cwd', 'exe', 'root']) if (uses(await readlink(join(folder, link)))) return true;
+      for (const fd of await readdir(join(folder, 'fd'))) if (uses(await readlink(join(folder, 'fd', fd)))) return true;
+      const maps = await readFile(join(folder, 'maps'), 'utf8');
+      for (const line of maps.split('\n')) {
+        const path = line.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.*)$/)?.[1];
+        if (path && uses(path.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8))))) return true;
+      }
+    } catch {
+      // Ignore only a process proven gone. Permission failures (any UID), missing
+      // links on a live process and racing fd closures cannot prove the tree idle.
+      try { await lstat(folder); unknown = true; }
+      catch (e) { if (!['ENOENT', 'ESRCH'].includes((e as NodeJS.ErrnoException).code ?? '')) unknown = true; }
+    }
+  }
+  return unknown ? null : false;
+}
+
+/** A Git add may have resolved a ref before registering its checkout. Fail closed
+ * for every UID. Scan before the final worktree list: an add that exits during
+ * this scan must have registered by the time that subsequent list is read. */
+async function gitRunning(procRoot = '/proc'): Promise<boolean | null> {
+  let names: string[];
+  try { names = await readdir(procRoot); } catch { return null; }
+  let unknown = false;
+  for (const pid of names.filter((n) => /^\d+$/.test(n))) {
+    const folder = join(procRoot, pid);
+    try {
+      if (/^git(?:-|$)/.test(basename((await readlink(join(folder, 'exe'))).replace(/ \(deleted\)$/, '')))) return true;
+    } catch {
+      try { await lstat(folder); unknown = true; }
+      catch (e) { if (!['ENOENT', 'ESRCH'].includes((e as NodeJS.ErrnoException).code ?? '')) unknown = true; }
+    }
   }
   return unknown ? null : false;
 }
@@ -147,32 +188,97 @@ export class WorktreeCleanup {
       if (!row.owned && !explicit) return { removed: false, reason: 'Not an Agent Worlds worktree; explicit removal required' };
       const checked = await this.inspect(row);
       if (checked.reason) return { removed: false, reason: checked.reason };
+      let quarantine: string | undefined;
+      let staging: string | undefined;
+      const restore = async () => {
+        if (!quarantine) return;
+        if (quarantine !== dir) {
+          // git worktree move nests into an existing destination directory. Rename
+          // instead: a racing nonempty replacement must never be overwritten.
+          try { await lstat(dir); throw new Error('Original path is occupied'); }
+          catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+          await rename(quarantine, dir);
+          quarantine = dir;
+        }
+        await git(row.repo, 'worktree', 'repair', '--', dir);
+        quarantine = undefined;
+      };
       try {
-        // Repeat local checks immediately before git's own non-forced removal safety check.
+        // These checks alone cannot protect ignored files written before removal.
         if (this.opts.liveDirs().some((d) => inside(d, dir)) || await processUse(dir, this.opts.procRoot) !== false
           || (await git(dir, 'ls-files', '-v')).split('\n').some((line) => /^[a-zS]/.test(line))
           || (await readdir(join(dir, '.aw')).catch((e) => { if (e.code === 'ENOENT') return []; throw e; })).length
           || (await git(dir, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching')).length
           || (await git(dir, 'rev-parse', 'HEAD')) !== row.head
           || (await git(dir, 'branch', '--show-current')) !== row.branch) return { removed: false, reason: 'Worktree changed during checks' };
-        await git(row.repo, 'worktree', 'remove', '--', dir); // NEVER --force
+        await this.opts.step?.('beforeQuarantine', dir);
+        staging = await mkdtemp(join(dirname(dir), `.aw-removing-${basename(dir)}-`));
+        const moved = join(staging, 'checkout');
+        await git(row.repo, 'worktree', 'move', '--', dir, moved); // Same filesystem; NEVER --force.
+        quarantine = moved;
+        await this.opts.step?.('afterQuarantine', moved);
+        // Writers using the original pathname can now only create a separate folder.
+        // Handles that followed the move are detected by the full process scan.
+        const final = await this.inspect({ ...row, dir: moved }, false);
+        if (final.reason || this.opts.liveDirs().some((d) => inside(d, dir))
+          || (await git(moved, 'rev-parse', 'HEAD')) !== row.head
+          || (await git(moved, 'branch', '--show-current')) !== row.branch) {
+          await restore();
+          return { removed: false, reason: final.reason ?? 'Worktree changed during checks' };
+        }
+        await git(row.repo, 'worktree', 'remove', '--', moved); // NEVER --force
+        quarantine = undefined;
         this.opts.onRemoved?.(dir);
         let note: string | null = null;
         let branchDeleted = false;
+        let recoveryPending = false;
         try {
           // Atomic compare-and-delete: an external ref update must never lose its new commits.
           if ((await branchCheckouts(row.repo, row.branch!)).length) note = 'Worktree removed; local branch kept because it is checked out elsewhere';
           else {
+            await this.opts.step?.('beforeBranchDelete', dir);
             await git(row.repo, 'update-ref', '--no-deref', '-d', `refs/heads/${row.branch}`, row.head);
             branchDeleted = true;
-            await git(row.repo, 'config', '--remove-section', `branch.${row.branch}`).catch((e) => { if (!/no such section/i.test(e.stderr ?? '')) throw e; });
+            recoveryPending = true;
+            // Git's ref lock does not lock worktree registration. If a checkout raced
+            // the deletion (or cannot be inspected), restore create-only: never overwrite
+            // a concurrent writer's ref, including a symbolic ref.
+            let keepBranch = true;
+            try {
+              const running = await gitRunning(this.opts.procRoot);
+              keepBranch = (await branchCheckouts(row.repo, row.branch!)).length > 0 || running !== false;
+            }
+            finally {
+              if (keepBranch) await git(row.repo, 'update-ref', '--no-deref', `refs/heads/${row.branch}`, row.head, '').catch(async () => {
+                await git(row.repo, 'rev-parse', '--verify', `refs/heads/${row.branch}`); // A competing writer already kept it.
+              });
+            }
+            recoveryPending = false;
+            if (keepBranch) {
+              branchDeleted = false;
+              note = 'Worktree removed; local branch kept because another checkout or Git operation may use it';
+            }
+            if (branchDeleted) await git(row.repo, 'config', '--remove-section', `branch.${row.branch}`).catch((e) => { if (!/no such section/i.test(e.stderr ?? '')) throw e; });
           }
-        } catch { note = branchDeleted ? 'Worktree and local branch removed; could not clear local branch settings' : 'Worktree removed; local branch kept because its head changed or Git refused deletion'; }
+        } catch {
+          note = recoveryPending
+            ? `Worktree removed; could not verify or restore local branch ${row.branch} at ${row.head}; inspect the branch before continuing`
+            : branchDeleted ? 'Worktree and local branch removed; could not clear local branch settings'
+              : 'Worktree removed; local branch kept because its head changed or Git refused deletion';
+        }
         try {
           for (const r of await this.records()) if (r.dir === dir && r.repo === row.repo) await recordWorktree(this.opts.home, { ...r, removedAt: this.opts.now?.() ?? Date.now() });
         } catch { note = [note, 'Could not update the worktree creation record'].filter(Boolean).join('. '); }
         return { removed: true, reason: note };
-      } catch { return { removed: false, reason: 'Git refused cleanup; inspect the worktree and local branch' }; }
+      } catch {
+        if (quarantine) {
+          try { await restore(); }
+          catch { return { removed: false, reason: `Worktree kept at ${quarantine}; original path could not be restored` }; }
+        }
+        return { removed: false, reason: 'Git refused cleanup; inspect the worktree and local branch' };
+      } finally {
+        if (staging) await rmdir(staging).catch(() => {});
+      }
     });
   }
   async sweep() {
