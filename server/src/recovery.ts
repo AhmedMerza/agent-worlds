@@ -31,6 +31,9 @@ export class Recovery {
     this.data.set(s.id, s); this.save();
   }
   delete(id: string) { if (this.data.delete(id)) this.save(); }
+  dropFolder(dir: string) {
+    for (const s of this.list()) if (s.cwd === dir || s.cwd.startsWith(dir + '/')) this.delete(s.id);
+  }
   rename(from: string, to: string) {
     const old = this.data.get(from);
     if (!old) return;

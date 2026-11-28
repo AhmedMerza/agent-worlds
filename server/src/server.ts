@@ -1,3 +1,5 @@
+import { WorktreeCleanup } from './worktree-cleanup.ts';
+import type { ForgeLookup } from './forge.ts';
 import { type SetupJob, type SetupStatus } from './worktree-setup.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
@@ -47,6 +49,7 @@ const TYPES: Record<string, string> = {
 const PUBLIC_RE = /^\/(manifest\.webmanifest|icon-[\w-]+\.png|apple-touch-icon\.png)$/;
 
 type Opts = {
+  cleanupForge?: ForgeLookup;
   holdMs?: number; deps?: Partial<ConstructorParameters<typeof Store>[1]>; webDist?: string; spawnPty?: typeof spawnTmuxPty;
   home?: string; summarise?: Summarise; procRoot?: string; homes?: AgentHomes; tmuxPrefix?: string; resolveRepo?: ConstructorParameters<typeof Worlds>[2]; createSession?: typeof sys.createSession;
   installed?: (bin: string) => boolean;
@@ -357,6 +360,11 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     repos: allRepos,
     onChange: (capture) => broadcast({ type: 'capture', capture }),
     onRemove: (id) => broadcast({ type: 'capture-removed', id }),
+  });
+  const cleanup = new WorktreeCleanup({ home, repos: allRepos, procRoot: opts.procRoot, forge: opts.cleanupForge,
+    liveDirs: () => [...store.sessions.values()].map((s) => s.cwd)
+      .concat([...runs.values()].filter((r) => ['running', 'waiting'].includes(r.status)).flatMap((r) => r.dir ? [r.dir] : [])),
+    onRemoved: (dir) => { recovery.dropFolder(dir); pushRecoverable(); },
   });
   const createSession = opts.createSession ?? sys.createSession;
   // Without tmux, sessions run in ptys this server owns; one ending removes its card.
@@ -796,6 +804,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       setTimeout(opts.onRestart, 200);
       return;
     }
+    if (method === 'GET' && url.pathname === '/api/worktrees') return send(res, 200, { worktrees: await cleanup.list(url.searchParams.get('repo') ?? undefined) });
+    if (method === 'POST' && url.pathname === '/api/worktrees/remove') {
+      const b = await readBody(req);
+      if (typeof b.dir !== 'string' || b.confirm !== true) return send(res, 400, { error: 'Confirm an individual worktree path' });
+      const result = await cleanup.remove(b.dir, true);
+      return send(res, result.removed ? 200 : 409, result);
+    }
     if (method === 'GET' && url.pathname === '/api/state') return send(res, 200, { worlds: cfg.worlds, sessions: store.list(), recoverable: recoverable(), unmanaged, runs: [...runs.values()], captures: captures.list() });
     if (method === 'GET' && url.pathname === '/api/history') {
       const n = Number(url.searchParams.get('limit') ?? 50);
@@ -808,7 +823,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const interruptedIds = new Set(interrupted.map((s) => s.id));
       const remembered = interrupted.filter((s) => !only || inRepo(s.cwd, only)).map((s) => ({ sessionId: s.id, cwd: s.cwd, lastPrompt: s.lastPrompt ?? s.task, lastActivity: s.updatedAt, agent: s.agent }));
       const native = [...await history(cfg.claudeProjectsDir, limit, only), ...await kimiHistory(home, limit, only), ...await codexHistory(codexHome, limit, only)];
-      const all = [...new Map([...remembered, ...native].map((s) => [s.sessionId, s])).values()];
+      const all = [...new Map([...remembered, ...native].filter((s) => !s.cwd || sys.isDir(s.cwd)).map((s) => [s.sessionId, s])).values()];
       const items = await Promise.all(all.sort((a, b) => b.lastActivity - a.lastActivity).slice(0, limit).map(async (h) => {
         const info = h.cwd ? await repoOf(h.cwd) : null;
         return {
@@ -1669,9 +1684,19 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   let interrupts: NodeJS.Timeout | null = null;
   let scanner: NodeJS.Timeout | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
+  let cleanupTimer: NodeJS.Timeout | null = null;
+  let cleaning = false;
+  const cleanupNow = async () => {
+    if (cleaning || closing) return;
+    cleaning = true;
+    try { await cleanup.sweep(); } catch (e) { console.error('[agent-worlds] worktree cleanup failed', e); }
+    finally { cleaning = false; }
+  };
   return {
-    server: servers[0], servers, store, insights: insights!, scan, deliverMail, sweep: sweepNow,
+    cleanup, server: servers[0], servers, store, insights: insights!, scan, deliverMail, sweep: sweepNow,
     listen(): Promise<void> {
+      cleanupTimer = setInterval(() => { void cleanupNow(); }, 3600_000);
+      cleanupTimer.unref();
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
       interrupts = setInterval(() => { void refreshSetups(); void store.checkInterrupts(); void store.checkCodexPrompts(sys.capturePane); store.checkBusy(); void deliverMail(); }, 2_000);
@@ -1698,6 +1723,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (interrupts) clearInterval(interrupts);
       if (scanner) clearInterval(scanner);
       if (heartbeat) clearInterval(heartbeat);
+      if (cleanupTimer) clearInterval(cleanupTimer);
       tunnel.stop();
       stopWatch?.();
       direct.killAll();

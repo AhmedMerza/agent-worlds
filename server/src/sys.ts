@@ -3,6 +3,7 @@ import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { statSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { recordWorktree } from './worktree-cleanup.ts';
 import { homeDir } from './config.ts';
 import { writeSetupStatus, type SetupOptions, type SetupJob } from './worktree-setup.ts';
 import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.ts';
@@ -144,16 +145,23 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   const id = randomBytes(2).toString('hex');
   let dir = opts.repo;
   let branch: string | null = null;
+  let baseSha: string | null = null;
   if (opts.worktree) {
     if (!('head' in await repoInfo(opts.repo))) throw new Error(`${opts.repo} is not a git repo, so it cannot use a worktree`);
     branch = opts.branch || `aw/${slug(opts.task || 'session', 32)}-${id}`;
     const [valid, start] = await Promise.all([run('git', ['check-ref-format', '--branch', branch]), defaultStart(opts.repo)]);
     if (valid === null || branch.startsWith('-')) throw new Error(`invalid branch name: ${branch}`);
+    baseSha = (await run('git', ['-C', opts.repo, 'rev-parse', start + '^{commit}']))?.trim() ?? null;
+    if (!baseSha) throw new Error('could not record worktree base SHA');
     dir = join(`${opts.repo}-worktrees`, branch.replace(/\//g, '-'));
-    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, dir, start]);
+    const err = await runErr('git', ['-C', opts.repo, 'worktree', 'add', '-b', branch, dir, baseSha]);
     if (err !== null) throw new Error(`git worktree add failed: ${err}`);
   }
   const name = `${opts.prefix ?? 'aw-'}${slug(basename(opts.repo))}-${id}`;
+  if (branch && baseSha) {
+    const info = await repoInfo(dir);
+    await recordWorktree(opts.home ?? homeDir(), { session: name, repo: info.repo, dir, branch, baseSha, createdAt: Date.now() });
+  }
   const task = (opts.task ?? '').trim();
   // With `home`, the session reports to this server (Claude through <home>/hooks.json) even when the
   // user never installed the hooks globally.

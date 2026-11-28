@@ -51,7 +51,7 @@ export function leaveRow(el: Element, done: () => void) {
   const e = el as HTMLElement
   if (reduced()) return done()
   e.style.width = `${e.offsetWidth}px`; e.style.top = `${e.offsetTop}px`; e.style.left = `${e.offsetLeft}px`; e.style.position = 'absolute'
-  gsap.to(e, { opacity: 0, x: 12, duration: DUR.exit, ease: EASE.exit, onComplete: done })
+  gsap.to(e, { opacity: 0, x: getComputedStyle(e).direction === 'rtl' ? -12 : 12, duration: DUR.exit, ease: EASE.exit, onComplete: done })
 }
 
 /** The secondary reaction: something that just changed (a count, a Filed badge) lands with a little overshoot. */

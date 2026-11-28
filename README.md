@@ -197,6 +197,23 @@ The saved per-repo options are `worlds[].worktreeSetup["/absolute/repo/path"]` i
 default; a blank command keeps automatic dependency detection. Existing sessions and resumed
 conversations do not rerun setup.
 
+### Worktree cleanup
+
+Agent Worlds checks its worktrees for cleanup hourly. It removes a checkout only after `gh` or
+`glab` confirms its request merged at that exact HEAD at least three days ago, its files are clean
+(including untracked and ignored files), its commits were pushed, and no session, run or process
+uses the folder. Run/handoff data in `.aw/`, hidden tracked-file flags, another checkout of the
+same branch, or any failed safety check keep it. A source branch deleted by the forge after merge
+is fine; an unreachable forge or remote is not.
+
+Inspect checkouts under **Manage worlds → the repo → Worktrees**. Refresh only reads local state;
+**Check and remove…** rechecks the merge and every safety guard before deleting one folder.
+Automatic cleanup covers creation-recorded worktrees and older `<repo>-worktrees/aw-*` folders
+on `aw/*` branches. Other linked worktrees require individual confirmation and the same checks.
+Cleanup removes the local branch with an atomic expected-SHA check and never deletes a remote
+branch. Recent-session and restart-resume entries for a removed folder disappear. Creation state
+(repo, folder, branch and base SHA) is kept outside the checkout under `<home>/worktrees/`.
+
 ### Ultrawide and phone
 
 The layout uses the whole screen. On an ultrawide monitor you get rooms, a full-height terminal

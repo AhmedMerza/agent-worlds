@@ -164,7 +164,7 @@ const toastOn = ref(false)
 watch(() => state.toast?.n, () => {
   toastOn.value = true
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastOn.value = false }, 2800)
+  toastTimer = setTimeout(() => { toastOn.value = false }, Math.min(10_000, Math.max(2800, (state.toast?.text.length ?? 0) * 55)))
 })
 // If the filtered world disappears, show everything again.
 watch(groups, (g) => { if (state.filter !== 'all' && !g.some((x) => x.world.id === state.filter)) state.filter = 'all' })

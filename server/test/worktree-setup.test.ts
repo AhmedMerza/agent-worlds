@@ -110,6 +110,11 @@ test('isolated terminal: setup is visible before agent, failures block launch, o
   let app: ReturnType<typeof startServer> | undefined;
   try {
     const good = await createSession({ repo: dir, home, claudeBin: agent, task: 'good', worktree: true });
+    const creation = JSON.parse(readFileSync(join(home, 'worktrees', good.tmuxSession + '.json'), 'utf8'));
+    assert.equal(creation.repo, dir);
+    assert.equal(creation.dir, good.dir);
+    assert.equal(creation.branch, good.branch);
+    assert.equal(creation.baseSha, execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim());
     const screen = () => tmux('capture-pane', '-p', '-t', good.tmuxSession, '-S', '-100');
     await wait(() => screen().includes('INSTALLING'));
     assert.equal(existsSync(join(good.dir, 'agent-started')), false);

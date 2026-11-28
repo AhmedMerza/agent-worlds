@@ -5,6 +5,7 @@ import { ui, state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessio
 import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf, spawnWith, spawnMoved } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
 import WorktreeSetup from './WorktreeSetup.vue'
+import WorktreeList from './WorktreeList.vue'
 import { openOverlay } from '../motion'
 
 const emit = defineEmits<{ close: [] }>()
@@ -158,7 +159,7 @@ defineExpose({ escape })
               <label v-if="w.leadSpawn">at most <input class="reply-in num" type="number" min="0" :value="w.maxSpawned ?? 6 /* the server's MAX_SPAWNED */" :aria-label="`Most worker sessions in ${w.name} may start at once`" @change="capSpawn(w, ($event.target as HTMLInputElement).value)"> at once</label>
             </div>
             <ul class="repos">
-              <li v-for="r in w.repos" :key="r" class="repo-with-setup"><div class="repo-heading"><span class="path" :title="r">{{ baseName(r) }} <small>{{ r }}</small></span><button class="linkbtn" :aria-label="`Remove ${r} from ${w.name}`" @click="removeRepo(w, r)">Remove</button></div><WorktreeSetup :world="w" :repo="r" :reveal="ui.setupRepo === r" /></li>
+              <li v-for="r in w.repos" :key="r" class="repo-with-setup"><div class="repo-heading"><span class="path" :title="r">{{ baseName(r) }} <small>{{ r }}</small></span><button class="linkbtn" :aria-label="`Remove ${r} from ${w.name}`" @click="removeRepo(w, r)">Remove</button></div><WorktreeSetup :world="w" :repo="r" :reveal="ui.setupRepo === r" /><WorktreeList :repo="r" /></li>
               <li v-if="!w.repos.length" class="why">No repos yet.</li>
             </ul>
             <div class="actions">
