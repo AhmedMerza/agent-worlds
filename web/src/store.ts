@@ -214,7 +214,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<Api
   } catch { return { ok: false, error: 'Could not reach the server.' } }
 }
 export const createWorld = (name: string, color: string, repos: string[] = []) => api<{ world: World }>('POST', '/api/worlds', { name, color, repos })
-export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'color' | 'repos' | 'leadSpawn' | 'maxSpawned'>>) => api<{ world: World }>('PATCH', `/api/worlds/${encodeURIComponent(id)}`, patch)
+export const updateWorld = (id: string, patch: Partial<Pick<World, 'name' | 'color' | 'repos' | 'leadSpawn' | 'maxSpawned' | 'worktreeSetup'>>) => api<{ world: World }>('PATCH', `/api/worlds/${encodeURIComponent(id)}`, patch)
 /** Moves one session to world `worldId` (its repo stays put); the server clears the move when that is its folder's world. */
 export const moveSession = (id: string, worldId: string | null) => api<unknown>('POST', `/api/sessions/${encodeURIComponent(id)}/world`, { worldId })
 export const deleteWorld = (id: string) => api<unknown>('DELETE', `/api/worlds/${encodeURIComponent(id)}`)
@@ -484,7 +484,7 @@ function savedViews(): Views {
 
 /** Dialog state shared by the header, rooms and detail panel. */
 /** recentRepo: Recent sessions shows only that repo's (its folder and worktrees); null shows all. */
-export const ui = reactive({ ...savedViews(), worldsOpen: false,
+export const ui = reactive({ ...savedViews(), worldsOpen: false, setupRepo: null as string | null,
   /** The selected session's chat, slid in from the right (opened from a person's card in a room). */
   chatDrawer: false,
   /** The one person whose card is open, in whichever room they are. */

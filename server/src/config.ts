@@ -1,3 +1,4 @@
+import { setupOptions, type SetupOptions } from './worktree-setup.ts';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -10,6 +11,7 @@ export type World = {
   leadSpawn?: boolean;
   /** At most this many workers started by sessions in this world at once (default MAX_SPAWNED). */
   maxSpawned?: number;
+  worktreeSetup?: Record<string, SetupOptions>;
 };
 /** The default cap on live sessions started by other sessions, per world. */
 export const MAX_SPAWNED = 6;
@@ -97,6 +99,7 @@ export function parseConfig(raw: unknown): Config {
         // Only when set: worlds are written back to config.json as they are
         ...(w.leadSpawn !== undefined ? { leadSpawn: w.leadSpawn as boolean } : {}),
         ...(w.maxSpawned !== undefined ? { maxSpawned: w.maxSpawned as number } : {}),
+        ...(w.worktreeSetup !== undefined ? { worktreeSetup: setupOptions(w.worktreeSetup) } : {}),
       });
     }
   }

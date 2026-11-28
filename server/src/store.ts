@@ -1,3 +1,4 @@
+import type { SetupStatus } from './worktree-setup.ts';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Config } from './config.ts';
@@ -70,6 +71,7 @@ export type Session = {
   parent: string | null;
   /** The model provider and model a Qwen session was started on ("OpenRouter · openrouter/free"). */
   via: string | null;
+  setup?: SetupStatus;
   state: State; waitingSince: number | null; task: string | null; lastPrompt: string | null; now: string;
   log: { t: number; text: string }[];
   helpers: (Helper & { agentId?: string; agentType?: string; bg?: boolean })[];

@@ -6,6 +6,7 @@ export interface World {
   id: string; name: string; color: string; repos: string[]
   /** Its sessions may start and end their own workers (aw_spawn / aw_stop), at most maxSpawned at once (server default 6). */
   leadSpawn?: boolean; maxSpawned?: number
+  worktreeSetup?: Record<string, { enabled?: boolean; command?: string; timeoutSeconds?: number }>
 }
 export interface LogLine { t: number; text: string }
 export interface Helper { id: string; task: string; state: 'working' | 'done'; startedAt: number }
@@ -50,6 +51,7 @@ export interface Session {
   label?: string | null
   /** The session that started this one with aw_spawn (its lead). */
   parent?: string | null
+  setup?: { state: 'running' | 'ready' | 'error'; message: string }
   state: SessionState
   /** Busy, but not needing you (state stays 'working'): compacting, or background work runs on after the turn. */
   busy?: { kind: 'compact' } | { kind: 'background'; tasks: number; nextAt: number | null } | null

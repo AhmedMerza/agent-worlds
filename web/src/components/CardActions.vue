@@ -8,7 +8,7 @@ const drafts = reactive<Record<string, string>>({})
 import { computed } from 'vue'
 import type { Session, Question, Card } from '../types'
 import { actedLine, cardAsk, permissionDetail, buildAnswers, scopeAvailability, showLearnNudge, cardLive, agentName } from '../logic'
-import { worldOf, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, type Scope } from '../store'
+import { worldOf, select, decidePermission, answerQuestions, acknowledge, sendInput, focusTerminal as focusTerm, ui, type Scope } from '../store'
 import ReviewBlock from './ReviewBlock.vue'
 import QuestionOptions from './QuestionOptions.vue'
 import ContinueIn from './ContinueIn.vue'
@@ -104,6 +104,13 @@ const scopes: { scope: Scope; label: (r: string, w: string) => string }[] = [
   <template v-else-if="c.kind === 'done'">
     <ReviewBlock v-if="c.review" :id="s.id" :review="c.review" :name="s.repoName" :branch="s.branch" :agent="agentName(s)" />
     <div v-else class="actions"><button class="btn go" :disabled="busy.ack" @click="act('ack', 'ack', () => acknowledge(s.id))">Got it</button></div>
+  </template>
+
+  <template v-else-if="c.kind === 'error' && s.setup?.state === 'error'">
+    <div class="actions">
+      <button class="btn primary" @click="select(s.id); focusTerm()">Open setup terminal</button>
+      <button class="btn" @click="ui.needsOpen = false; ui.setupRepo = s.repo; ui.worldsOpen = true">Worktree setup settings</button>
+    </div>
   </template>
 
   <template v-else>

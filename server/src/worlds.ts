@@ -1,3 +1,4 @@
+import { setupOptions } from './worktree-setup.ts';
 import { execFile } from './child.ts';
 import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -67,6 +68,9 @@ export class Worlds {
     if (b.color !== undefined && (typeof b.color !== 'string' || !COLOR_RE.test(b.color))) return bad('color must be #rrggbb');
     if (b.leadSpawn !== undefined && typeof b.leadSpawn !== 'boolean') return bad('leadSpawn must be true or false');
     if (b.maxSpawned !== undefined && (!Number.isInteger(b.maxSpawned) || (b.maxSpawned as number) < 0)) return bad('maxSpawned must be a whole number, 0 or more');
+    if (b.worktreeSetup !== undefined) {
+      try { setupOptions(b.worktreeSetup); } catch (e) { return bad((e as Error).message); }
+    }
     return null;
   }
 
@@ -91,7 +95,7 @@ export class Worlds {
       for (let n = 2; worlds.some((w) => w.id === id); n++) id = `${base}-${n}`;
       const used = new Set(worlds.map((w) => w.color.toLowerCase()));
       const color = (b.color as string) ?? PALETTE.find((c) => !used.has(c)) ?? PALETTE[worlds.length % PALETTE.length];
-      const world: World = { id, name: (b.name as string).trim(), color, repos };
+      const world: World = { id, name: (b.name as string).trim(), color, repos, ...(b.worktreeSetup !== undefined ? { worktreeSetup: setupOptions(b.worktreeSetup) } : {}) };
       return this.save([...worlds, world]) ?? [201, { world }];
     });
   }
@@ -107,6 +111,7 @@ export class Worlds {
       if (b.color !== undefined) world.color = b.color as string;
       if (b.leadSpawn !== undefined) world.leadSpawn = b.leadSpawn as boolean;
       if (b.maxSpawned !== undefined) world.maxSpawned = b.maxSpawned as number;
+      if (b.worktreeSetup !== undefined) world.worktreeSetup = { ...cur.worktreeSetup, ...setupOptions(b.worktreeSetup) };
       if (b.repos !== undefined) {
         const r = await this.repos(b.repos, id, this.cfg.worlds);
         if ('err' in r) return r.err;

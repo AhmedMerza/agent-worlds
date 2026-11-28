@@ -22,8 +22,8 @@ const items = computed(() => chatItems(turns.value ?? []))
 /** Agent messages as HTML, rendered once per fetched transcript (not on every keystroke in the message box). */
 const html = computed(() => items.value.map((it) => (it.who === 'claude' ? renderMarkdown(it.text) : '')))
 const card = computed(() => (s.value?.card && (NEEDS_YOU.includes(s.value.state) || s.value.state === 'done') ? s.value.card : null))
-const holdsInput = computed(() => typingWaits(card.value))
-const inputHint = computed(() => !holdsInput.value ? (s.value?.state === 'working' ? 'Message (it reads this when it can)' : 'Message')
+const holdsInput = computed(() => (!!s.value?.setup && s.value.setup.state !== 'ready') || typingWaits(card.value))
+const inputHint = computed(() => s.value?.setup && s.value.setup.state !== 'ready' ? 'The agent starts after worktree setup succeeds' : !holdsInput.value ? (s.value?.state === 'working' ? 'Message (it reads this when it can)' : 'Message')
   : card.value && !cardLive(card.value) ? 'Answer its request in its terminal first' : 'Answer its request above first')
 
 const text = ref('')

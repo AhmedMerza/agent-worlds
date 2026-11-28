@@ -1,7 +1,10 @@
 import { execFile } from './child.ts';
 import { dirname, basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { statSync, mkdirSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { homeDir } from './config.ts';
+import { writeSetupStatus, type SetupOptions, type SetupJob } from './worktree-setup.ts';
 import { AGENTS, launchArgs, shq, type AgentId, type Provider } from './agents.ts';
 
 export type RepoInfo = { repo: string; branch: string | null; worktree: boolean; top?: string; head?: string | null };
@@ -133,9 +136,9 @@ export type SpawnDirect = (name: string, file: string, args: string[], cwd: stri
 
 /**
  * Start the agent CLI (`claude` unless told otherwise) in a new detached tmux session, optionally in a fresh worktree
- * (<repo>-worktrees/<branch>, new branch forked from the repo's default branch, see defaultStart). Everything goes through argv; nothing touches a shell.
+ * (<repo>-worktrees/<branch>, new branch forked from the repo's default branch, see defaultStart). Agent arguments stay quoted; worktree setup runs in the same terminal before the CLI.
  */
-export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; agent?: AgentId; prefix?: string; home?: string; resume?: string; permissionMode?: string; codexUnrestricted?: boolean; provider?: Provider; model?: string; spawnDirect?: SpawnDirect }): Promise<{ tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
+export async function createSession(opts: { repo: string; task?: string; worktree: boolean; branch?: string; claudeBin?: string; agent?: AgentId; prefix?: string; home?: string; resume?: string; permissionMode?: string; codexUnrestricted?: boolean; provider?: Provider; model?: string; spawnDirect?: SpawnDirect; setup?: SetupOptions }): Promise<{ setupFile?: string; tmuxSession: string; dir: string; branch: string | null; pane?: string | null; direct?: boolean }> {
   const direct = !(await hasTmux());
   if (direct && !opts.spawnDirect) throw new Error(`this needs tmux, which is not installed (${TMUX_INSTALL}). Start sessions from the web page instead.`); // before any worktree is made
   const id = randomBytes(2).toString('hex');
@@ -164,12 +167,25 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   // The -c is gated on the -p exit code: a failed -p (a trust prompt, a crash) must show its failure in the
   // pane, not resume some other conversation. (Resuming the -p run's own session id is an open question.)
   const chain = agent === 'kimi' && task ? { file: 'bash', argv: ['-c', `${shq(bin)}${args.length ? ` ${args.map(shq).join(' ')}` : ''} -p ${shq(task)} && exec ${shq(bin)}${args.length ? ` ${args.map(shq).join(' ')}` : ''} -c`] } : { file: bin, argv: args };
+  let setupFile: string | undefined;
+  let command = chain;
+  if (opts.worktree && opts.setup?.enabled !== false) {
+    const folder = join(opts.home ?? homeDir(), 'worktree-setup');
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    setupFile = join(folder, name + '.json');
+    const job: SetupJob = { repo: opts.repo, dir, name, task, agent, options: opts.setup ?? {} };
+    writeFileSync(setupFile, JSON.stringify(job), { mode: 0o600 });
+    writeSetupStatus(setupFile + '.status', { state: 'running', message: 'Preparing worktree configuration and dependencies…' });
+    const runner = fileURLToPath(new URL('./worktree-setup.ts', import.meta.url));
+    // Keep a failed setup visible until End. Never drop into a shell that could consume agent input.
+    command = { file: '/bin/sh', argv: ['-c', `if ${[process.execPath, runner, setupFile].map(shq).join(' ')}; then exec ${[chain.file, ...chain.argv].map(shq).join(' ')}; else exec ${shq(process.execPath)} -e 'setInterval(() => {}, 2147483647)'; fi`] };
+  }
   if (direct) {
     // AGENT_WORLDS_PTY lets aw-hook tell the server which of its sessions an event belongs to (tmux has TMUX_PANE for that).
-    try { await opts.spawnDirect!(name, chain.file, chain.argv, dir, { ...vars, AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start ${chain.file}: ${(e as Error).message}`); }
-    return { tmuxSession: name, dir, branch, pane: null, direct: true };
+    try { await opts.spawnDirect!(name, command.file, command.argv, dir, { ...vars, AGENT_WORLDS_PTY: name }); } catch (e) { throw new Error(`could not start ${chain.file}: ${(e as Error).message}`); }
+    return { tmuxSession: name, dir, branch, pane: null, direct: true, ...(setupFile ? { setupFile } : {}) };
   }
-  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, chain.file, ...chain.argv]);
+  const err = await runErr('tmux', ['new-session', '-d', '-s', name, '-c', dir, ...env, command.file, ...command.argv]);
   if (err !== null) throw new Error(`tmux failed: ${err}`);
   // Several clients (a desktop terminal and the browser) may attach at once: size the window to
   // whichever client was used last instead of shrinking it to the smallest one.
@@ -178,7 +194,7 @@ export async function createSession(opts: { repo: string; task?: string; worktre
   const t = `=${name}:`;
   await run('tmux', ['set-option', '-w', '-t', t, 'aggressive-resize', 'on', ';', 'set-option', '-w', '-t', t, 'window-size', 'latest']);
   const pane = (await run('tmux', ['display-message', '-p', '-t', t, '#{pane_id}']))?.trim() ?? '';
-  return { tmuxSession: name, dir, branch, pane: PANE_RE.test(pane) ? pane : null };
+  return { tmuxSession: name, dir, branch, pane: PANE_RE.test(pane) ? pane : null, ...(setupFile ? { setupFile } : {}) };
 }
 
 /** null on success, else the trimmed stderr. */

@@ -37,7 +37,8 @@ async function copyAttach() {
       <p v-else class="why">Which conversation this is could not be told, so it cannot be moved automatically. Use Recent sessions (R) to pick it.</p>
     </div>
     <div v-else class="detail">
-      <p v-if="s.state === 'starting'" class="why">{{ s.agent === 'gemini' ? 'Gemini may be asking for your API key or to trust this folder.' : s.agent === 'agy' ? 'Antigravity may be asking you to sign in with Google or to trust this folder.' : `${agentName(s)} may be asking to trust this folder.` }} Answer below in the terminal.</p>
+      <p v-if="s.setup?.state === 'running'" class="why">Worktree setup is running before the agent starts. Watch its output in the terminal.</p>
+      <p v-else-if="s.state === 'starting'" class="why">{{ s.agent === 'gemini' ? 'Gemini may be asking for your API key or to trust this folder.' : s.agent === 'agy' ? 'Antigravity may be asking you to sign in with Google or to trust this folder.' : `${agentName(s)} may be asking to trust this folder.` }} Answer below in the terminal.</p>
       <div class="d-head"><h3>{{ nameOf(s) }}</h3><span :class="['pill', s.state]">{{ stateLabel(s, state.now) }}</span></div>
       <p class="path">{{ world?.name }}<template v-if="s.branch || s.worktree"> · {{ s.worktree ? 'worktree on' : 'branch' }} {{ s.branch ?? 'unknown' }}</template></p>
       <p v-if="(s.agent && s.agent !== 'claude') || s.via" class="path">Runs on {{ agentName(s) }}<template v-if="s.via"> · {{ s.via }}</template></p>
@@ -77,7 +78,7 @@ async function copyAttach() {
         <button class="btn" @click="ui.recentRepo = s.repo; ui.recentOpen = true">Past sessions here</button>
         <button v-if="world?.id === UNSORTED.id" class="btn" @click="ui.putSession = s.id">Put {{ s.repoName }} in a world…</button>
         <button v-else-if="state.worlds.length > 1" class="btn" @click="ui.moveSession = s.id">Move to another world…</button>
-        <ContinueIn :session-id="s.id" :current="s.agent ?? 'claude'" :repo-name="s.repoName" />
+        <ContinueIn v-if="!s.setup || s.setup.state === 'ready'" :session-id="s.id" :current="s.agent ?? 'claude'" :repo-name="s.repoName" />
       </div>
     </div>
   </section>

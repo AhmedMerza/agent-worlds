@@ -174,6 +174,29 @@ it is view-only; answer its cards from the inbox, or in the terminal it runs in.
 git worktree and with an optional first task. The task field can stay empty for a blank session.
 In a folder that is not a git repo the session starts right there, with no worktree or branch option.
 
+New worktrees prepare themselves before the agent starts. They copy the main checkout's root
+`.env*` files, then run `composer install --no-interaction --prefer-dist --no-progress` when the
+new branch has `composer.lock`, and `flutter pub get` when it has `pubspec.yaml`. Installs use
+that branch's files, including its lockfiles; dependency directories are never copied.
+
+A `.worktreeinclude` in the main checkout replaces the automatic `.env*` copy list. It uses
+gitignore patterns (including comments and `!` exclusions), and selects only gitignored files.
+An empty file copies nothing. Existing files and symlinks in the new checkout are never
+overwritten; copying through a directory symlink outside the worktree fails setup.
+
+In **Manage worlds → the repo → Worktree setup**, turn preparation off to skip both copying and
+installs, or set a shell command to replace automatic installs. File copying still happens with
+a custom command. Setup can run repository scripts and hooks: its output is visible in the
+session's terminal, with a default ten-minute timeout (configurable from 1 to 3,600 seconds).
+Failure or timeout leaves an error card and the terminal available; the agent does not start.
+Check the terminal, adjust the repo's setup settings, and start a new session. Setup status
+survives a server restart while its tmux terminal is alive.
+
+The saved per-repo options are `worlds[].worktreeSetup["/absolute/repo/path"]` in `config.json`:
+`{ "enabled": true, "command": "", "timeoutSeconds": 600 }`. Leaving a field unset uses its
+default; a blank command keeps automatic dependency detection. Existing sessions and resumed
+conversations do not rerun setup.
+
 ### Ultrawide and phone
 
 The layout uses the whole screen. On an ultrawide monitor you get rooms, a full-height terminal

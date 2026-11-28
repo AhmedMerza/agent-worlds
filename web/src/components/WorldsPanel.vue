@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { World } from '../types'
-import { state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, spawnRules, spawnFailures, loadSpawnRules, type AgentInfo, type SpawnAgents } from '../store'
+import { ui, state, createWorld, updateWorld, deleteWorld, reorderWorlds, sessionList, moveRepo, showToast, fetchAgents, saveSpawnAgents, spawnRules, spawnFailures, loadSpawnRules, type AgentInfo, type SpawnAgents } from '../store'
 import { PALETTE, deleteWorldText, moveId, nextColor, withRepo, baseName, maxSpawnedOf, spawnWith, spawnMoved } from '../logic'
 import FolderBrowser from './FolderBrowser.vue'
+import WorktreeSetup from './WorktreeSetup.vue'
+import { openOverlay } from '../motion'
 
 const emit = defineEmits<{ close: [] }>()
 const error = ref('')
@@ -11,15 +13,26 @@ const newName = ref('')
 const browsing = ref<string | null>(null) // world id being given a repo
 const confirming = ref<string | null>(null)
 const box = ref<HTMLElement | null>(null)
+const root = ref<HTMLElement | null>(null)
+let motion: ReturnType<typeof openOverlay> = null
+const opener = document.activeElement as HTMLElement | null
+onBeforeUnmount(() => { motion?.revert(); ui.setupRepo = null; if (opener?.isConnected) opener.focus() })
 const ids = computed(() => state.worlds.map((w) => w.id))
 const sessionsIn = (w: World) => sessionList.value.filter((s) => s.worldId === w.id).length
 onMounted(async () => {
   box.value?.focus()
+  motion = openOverlay(root.value!, box.value!, opener?.tagName === 'BUTTON' ? opener : null, matchMedia('(max-width: 760px)').matches)
   const r = await fetchAgents(true) // fresh: another window may have changed the rules
-  if (!r.ok) { agentsError.value = r.error; return }
-  // Your default first breaks ties when a lead omits the agent.
-  agents.value = r.data.agents.filter((a) => a.installed).sort((x, y) => Number(y.id === r.data.default) - Number(x.id === r.data.default))
-  loadSpawnRules(r.data.spawn ?? null)
+  if (!r.ok) agentsError.value = r.error
+  else {
+    // Your default first breaks ties when a lead omits the agent.
+    agents.value = r.data.agents.filter((a) => a.installed).sort((x, y) => Number(y.id === r.data.default) - Number(x.id === r.data.default))
+    loadSpawnRules(r.data.spawn ?? null)
+  }
+  if (ui.setupRepo) {
+    await nextTick()
+    box.value?.querySelector('.repo-setup[open]')?.scrollIntoView({ block: 'center' })
+  }
 })
 /** Which agents (and models) leads in any world may start their workers on, in order of preference. */
 const agents = ref<AgentInfo[] | null>(null)
@@ -102,9 +115,9 @@ defineExpose({ escape })
 </script>
 
 <template>
-  <div class="overlay" @click.self="emit('close')">
+  <div ref="root" class="overlay" @click.self="emit('close')">
     <div ref="box" class="dialog worlds" role="dialog" aria-modal="true" aria-label="Worlds" tabindex="-1">
-      <h2>Manage worlds</h2>
+      <h2 data-enter>Manage worlds</h2>
       <p class="why">A world is a named group of repos. Sessions in those repos show up in its room. Rename, recolour, reorder or delete each one here. Where sessions may start their own workers, a lead session builds its own team instead of asking you to start each one.</p>
       <p class="why">A lead may start workers in folders listed in any world. Workers appear with their folder and count toward the lead's world's limit.</p>
       <p v-if="error" class="err" role="alert">{{ error }}</p>
@@ -112,7 +125,7 @@ defineExpose({ escape })
       <FolderBrowser v-if="browsing" :world-id="browsing" @pick="addRepo" @move="moveHere" @back="browsing = null" />
 
       <template v-else>
-        <fieldset class="spawn-agents">
+        <fieldset class="spawn-agents" data-enter>
           <legend>Which agents leads may give work to (all worlds)</legend>
           <p class="why">A lead session can start its own worker sessions. Untick an agent to keep leads off it, and order the rest by preference. The lead chooses an agent and, where supported, a model for each task; if it omits the agent, work is spread across those allowed. Name the models a lead may pick, or leave the box empty for any. Changes save at once.</p>
           <p v-if="agentsError" class="err" role="alert">Could not load the agents: {{ agentsError }}</p>
@@ -130,7 +143,7 @@ defineExpose({ escape })
         </fieldset>
         <p v-if="!state.worlds.length" class="why">No worlds yet. Create one below.</p>
         <ul class="wlist">
-          <li v-for="(w, i) in state.worlds" :key="w.id" class="winfo" :style="{ '--tint': w.color }">
+          <li v-for="(w, i) in state.worlds" :key="w.id" class="winfo" :data-enter-row="ui.setupRepo && w.repos.includes(ui.setupRepo) ? undefined : ''" :style="{ '--tint': w.color }">
             <label class="soon" :for="`wname-${w.id}`">Name (click to rename)</label>
             <div class="wrow">
               <input :id="`wname-${w.id}`" class="reply-in wname" :value="draft?.id === w.id ? draft.text : w.name" @focus="draft = { id: w.id, text: w.name }" @input="draft = { id: w.id, text: ($event.target as HTMLInputElement).value }" @blur="draft = null" :aria-label="`Name of ${w.name}`" @change="rename(w, ($event.target as HTMLInputElement).value)" @keydown.enter="($event.target as HTMLInputElement).blur()">
@@ -145,7 +158,7 @@ defineExpose({ escape })
               <label v-if="w.leadSpawn">at most <input class="reply-in num" type="number" min="0" :value="w.maxSpawned ?? 6 /* the server's MAX_SPAWNED */" :aria-label="`Most worker sessions in ${w.name} may start at once`" @change="capSpawn(w, ($event.target as HTMLInputElement).value)"> at once</label>
             </div>
             <ul class="repos">
-              <li v-for="r in w.repos" :key="r"><span class="path" :title="r">{{ baseName(r) }} <small>{{ r }}</small></span><button class="linkbtn" :aria-label="`Remove ${r} from ${w.name}`" @click="removeRepo(w, r)">Remove</button></li>
+              <li v-for="r in w.repos" :key="r" class="repo-with-setup"><div class="repo-heading"><span class="path" :title="r">{{ baseName(r) }} <small>{{ r }}</small></span><button class="linkbtn" :aria-label="`Remove ${r} from ${w.name}`" @click="removeRepo(w, r)">Remove</button></div><WorktreeSetup :world="w" :repo="r" :reveal="ui.setupRepo === r" /></li>
               <li v-if="!w.repos.length" class="why">No repos yet.</li>
             </ul>
             <div class="actions">
@@ -167,3 +180,9 @@ defineExpose({ escape })
     </div>
   </div>
 </template>
+
+<style scoped>
+.repos .repo-with-setup{display:block;min-width:0}
+.repo-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
+.repo-heading .path{min-width:0;overflow-wrap:anywhere}
+</style>

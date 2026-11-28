@@ -1,3 +1,4 @@
+import { type SetupJob, type SetupStatus } from './worktree-setup.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
@@ -22,7 +23,7 @@ import { Password, LoginLimiter, Tunnel, AccessLog, findCloudflared, installClou
 import { history, kimiHistory, kimiSessionDir, kimiState, kimiLastPrompt, codexHistory, codexSession, codexModels, findTranscript, inRepo, scanClaude, scanAgents, transcriptSummary, codexTurn, codexFullAccess, geminiLastPrompt, SESSION_ID_RE, type AgentProc, type AgentHomes } from './history.ts';
 import { writeHandoff } from './handoff.ts';
 import { readHead, readTail, conversation, codexConversation, midTurn } from './transcript.ts';
-import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { watchCode, prepareRestart } from './update.ts';
 import { containPtyErrors, Direct, type PtyLike } from './direct.ts';
@@ -434,10 +435,46 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     }
     store.push(s);
   }
+  // Setup runs in the terminal, independently of this server. Read its small status files after a restart too.
+  async function refreshSetups() {
+    const folder = join(home, 'worktree-setup');
+    let names: string[];
+    try { names = readdirSync(folder).filter((f) => f.endsWith('.json')); } catch { return; }
+    if (!names.length) return;
+    const panes = await (opts.tmuxPanes ?? sys.tmuxPanes)();
+    for (const name of names) {
+      try {
+        const job = JSON.parse(readFileSync(join(folder, name), 'utf8')) as SetupJob;
+        const status = JSON.parse(readFileSync(join(folder, name) + '.status', 'utf8')) as SetupStatus;
+        const live = [...store.sessions.values()].find((s) => s.tmux?.session === job.name || s.direct === job.name);
+        if (live && !live.id.startsWith('starting:')) continue;
+        const pane = [...(panes?.entries() ?? [])].find(([, sessions]) => sessions.has(job.name))?.[0] ?? null;
+        if (!live && !pane) continue; // ended session: never recreate its card
+        const id = live?.id ?? await store.addStarting({ tmuxSession: job.name, pane, dir: job.dir, task: job.task, agent: isAgent(job.agent) ? job.agent : 'claude', parent: job.parent });
+        const card = store.sessions.get(id);
+        if (!card || !id.startsWith('starting:')) continue;
+        const message = status.state === 'ready' ? 'Worktree setup complete. Starting agent…' : status.message;
+        if (card.now !== message || card.setup?.state !== status.state || card.state !== (status.state === 'error' ? 'error' : 'starting')) {
+          card.setup = status;
+          card.now = message;
+          card.state = status.state === 'error' ? 'error' : 'starting';
+          card.card = status.state === 'error' ? { kind: 'error', summary: message } : null;
+          store.push(card);
+        }
+        if (status.state === 'error') for (const r of runs.values()) {
+          const step = r.steps[r.current];
+          if (r.status === 'running' && ((pane && step.pane === pane) || (card.direct && step.direct === card.direct))) {
+            r.status = 'failed'; r.note = message; pushRun(r);
+          }
+        }
+      } catch (e) { console.error('[agent-worlds] cannot read worktree setup status', name, (e as Error).message); }
+    }
+  }
   async function scanNow() {
     const home = opts.home ?? homeDir();
     procs = scanAgents(opts.procRoot ?? '/proc', cfg.claudeProjectsDir, { home, homes: opts.homes });
     for (const p of procs) if (p.managedHome === home && (p.pane || p.direct) && p.sessionId && !isManaged(p)) await adopt(p);
+    await refreshSetups();
     const next = await Promise.all(procs.filter((p) => p.agent === 'claude' && !isManaged(p)).map(async (p) => {
       const info = await repoOf(p.cwd);
       return { pid: p.pid, cwd: p.cwd, repo: info.repo, worldId: store.worldFor(p.sessionId, info.repo, p.cwd), sessionId: p.sessionId, inTmux: !!p.pane, since: p.since, ...(await ghostOf(p.sessionId)) };
@@ -986,6 +1023,9 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
         return send(res, 200, { run: r });
       }
       if (r.status !== 'waiting' && r.status !== 'running') return send(res, 409, { error: `the run is ${r.status}` });
+      const current = r.steps[r.current];
+      const setupSession = [...store.sessions.values()].find((s) => (current.pane && s.tmux?.pane === current.pane) || (current.direct && s.direct === current.direct));
+      if (setupSession?.setup && setupSession.setup.state !== 'ready') return send(res, 409, { error: 'Worktree setup must succeed before the run can move on.' });
       if (moving.has(r.id)) return send(res, 409, { error: 'the run is already moving on to the next step' });
       // A checkpoint passed, or you move a step on that never handed off.
       await moveOn(r, async () => {
@@ -1031,6 +1071,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     if (cm && method === 'POST') {
       const s = store.sessions.get(decodeURIComponent(cm[1]));
       if (!s) return send(res, 404, { error: 'no such session' });
+      if (s.setup && s.setup.state !== 'ready') return send(res, 409, { error: 'Worktree setup has not succeeded. Check its terminal and setup settings, then start a new session.' });
       const b = await readBody(req);
       if (!isAgent(b.agent)) return send(res, 422, { error: `agent must be one of ${Object.keys(AGENTS).join(', ')}` });
       if (b.agent === s.agent) return send(res, 409, { error: `this session already runs ${AGENTS[s.agent].name}` });
@@ -1164,6 +1205,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       if (m[2] === 'ack') return store.ack(id) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'no such session' });
       const s = store.sessions.get(id);
       if (!s) return send(res, 404, { error: 'no such session' });
+      if (s.setup && s.setup.state !== 'ready') return send(res, 409, { error: 'The agent has not started: worktree setup must succeed first. Check its terminal.' });
       if (typeof body.text !== 'string' || body.text.length > 10000) return send(res, 400, { error: 'text must be a string up to 10000 chars' });
       if (s.direct) return direct.type(s.direct, body.text.replace(/\r\n?/g, '\n')) ? send(res, 200, { ok: true }) : send(res, 409, { error: 'session has ended' });
       if (!s.tmux) return send(res, 409, { error: 'session is not running in tmux' });
@@ -1265,7 +1307,13 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
    */
   async function launch(o: { agent: AgentId; repo: string; task: string; worktree: boolean; branch?: string; permissionMode?: string; codexUnrestricted?: boolean; provider?: Provider; model?: string; via?: string | null; card?: string; parent?: string | null; originWorldId?: string },
     made?: (c: Awaited<ReturnType<typeof sys.createSession>>) => Promise<void> | void) {
-    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.agent === 'codex' ? { codexUnrestricted: o.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    const setup = cfg.worlds.find((w) => w.repos.includes(o.repo))?.worktreeSetup?.[o.repo];
+    const c = await createSession({ agent: o.agent, ...(o.provider ? { provider: o.provider } : {}), ...(o.model ? { model: o.model } : {}), repo: o.repo, task: o.task, worktree: o.worktree, branch: o.branch, ...(setup ? { setup } : {}), ...(o.permissionMode !== undefined ? { permissionMode: o.permissionMode } : {}), ...(o.agent === 'codex' ? { codexUnrestricted: o.codexUnrestricted !== false } : {}), claudeBin: cfg.claudeBin, home: opts.home ?? homeDir(), prefix: opts.tmuxPrefix, spawnDirect });
+    if (c.setupFile && o.parent) {
+      const job = JSON.parse(readFileSync(c.setupFile, 'utf8')) as SetupJob;
+      writeFileSync(c.setupFile + '.tmp', JSON.stringify({ ...job, parent: o.parent }), { mode: 0o600 });
+      renameSync(c.setupFile + '.tmp', c.setupFile);
+    }
     await made?.(c);
     const id = await store.addStarting({ tmuxSession: c.tmuxSession, pane: c.pane ?? null, direct: c.direct ? c.tmuxSession : null, dir: c.dir, task: o.card ?? (o.task || null), agent: o.agent, via: o.via ?? null, parent: o.parent ?? null });
     const live = [...store.sessions.values()].find((s) => (c.pane && s.tmux?.pane === c.pane) || (c.direct && s.direct === c.tmuxSession));
@@ -1275,6 +1323,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
       const origin = o.originWorldId ?? store.sessions.get(o.parent)?.worldId;
       if (origin) spawnOrigins.set(liveId, origin);
     }
+    if (c.setupFile) await refreshSetups();
     return { ...c, id };
   }
   /** A run's steps from a request (POST /api/runs, aw_spawn): the steps, or err: [status, why not]. */
@@ -1301,6 +1350,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
   async function realId(starting: string, pane: string | null, direct: string | null): Promise<string | 'gone' | null> {
     if (!starting.startsWith('starting:')) return starting; // its agent was up before the card was made
     for (const end = Date.now() + (opts.spawnIdMs ?? 20_000); Date.now() < end; await new Promise((r) => setTimeout(r, 250))) {
+      if (store.sessions.get(starting)?.state === 'error') return 'gone';
       if (store.sessions.has(starting)) continue;
       return [...store.sessions.values()].find((s) => (pane && s.tmux?.pane === pane) || (direct && s.direct === direct))?.id ?? 'gone';
     }
@@ -1624,7 +1674,7 @@ export function startServer(cfg: Config, token: string, opts: Opts = {}) {
     listen(): Promise<void> {
       sweeper = setInterval(sweepNow, 15_000);
       sweeper.unref();
-      interrupts = setInterval(() => { void store.checkInterrupts(); void store.checkCodexPrompts(sys.capturePane); store.checkBusy(); void deliverMail(); }, 2_000);
+      interrupts = setInterval(() => { void refreshSetups(); void store.checkInterrupts(); void store.checkCodexPrompts(sys.capturePane); store.checkBusy(); void deliverMail(); }, 2_000);
       interrupts.unref();
       const rescan = () => scan().catch((e) => console.error('[agent-worlds] process scan failed', e));
       void rescan();
