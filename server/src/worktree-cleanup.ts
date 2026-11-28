@@ -142,7 +142,18 @@ export class WorktreeCleanup {
   private async restoreBranch(j: CleanupJournal) {
     await git(j.repo, 'update-ref', '--no-deref', `refs/heads/${j.branch}`, j.head, '').catch(async () => {
       // A competing writer (including a symbolic ref) wins. Never overwrite it.
-      await git(j.repo, 'rev-parse', '--verify', `refs/heads/${j.branch}`);
+      const ref = `refs/heads/${j.branch}`;
+      const head = await git(j.repo, 'rev-parse', '--verify', ref);
+      // Reading an old ref while a surviving deletion holds its lock is not recovery.
+      // Git's verify transaction acquires the backend's locks (loose/packed/reftable)
+      // without changing the competing ref. Lock failures retain the journal for retry.
+      await new Promise<void>((resolve, reject) => {
+        const child = execFile('git', ['-C', j.repo, 'update-ref', '--no-deref', '--stdin'], {
+          timeout: 15_000, maxBuffer: 4 << 20,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
+        }, (error) => error ? reject(error) : resolve());
+        child.stdin!.end(`verify ${ref} ${head}\n`);
+      });
     });
   }
   private async markRemoved(j: CleanupJournal) {

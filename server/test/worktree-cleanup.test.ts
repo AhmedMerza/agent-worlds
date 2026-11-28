@@ -392,6 +392,72 @@ if (process.argv[2] === 'prepared' && input.includes(${JSON.stringify(`ref:refs/
 });
 
 // SIGKILL bypasses catch/finally: these are process deaths, not recoverable exceptions.
+for (const packed of [false, true]) test(`P1 crash journal: surviving ref deletion stays pending (${packed ? 'packed' : 'loose'} refs)`, async () => {
+  const f = await fixture(), other = join(f.root, 'racing-checkout');
+  if (packed) git(f.repo, 'pack-refs', '--all', '--prune');
+  const ready = join(f.root, 'delete-ready'), release = join(f.root, 'delete-release'), committed = join(f.root, 'delete-committed');
+  const hook = join(f.repo, '.git', 'hooks', 'reference-transaction');
+  writeFileSync(hook, `#!${process.execPath}
+const fs = require('node:fs');
+const input = fs.readFileSync(0, 'utf8');
+if (input.includes(${JSON.stringify(`${f.head} ${'0'.repeat(40)} refs/heads/${f.branch}`)})) {
+  if (process.argv[2] === 'prepared') {
+    fs.writeFileSync(${JSON.stringify(ready)}, String(process.ppid));
+    const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) clearInterval(timer); }, 10);
+  }
+  if (process.argv[2] === 'committed') fs.writeFileSync(${JSON.stringify(committed)}, 'done');
+}
+`); chmodSync(hook, 0o755);
+  const script = join(f.root, 'surviving-delete.ts');
+  writeFileSync(script, `
+import { WorktreeCleanup } from ${JSON.stringify(new URL('../src/worktree-cleanup.ts', import.meta.url).href)};
+import { execFileSync } from 'node:child_process';
+const f = ${JSON.stringify({ home: f.home, repo: f.repo, proc: f.proc, dir: f.dir, branch: f.branch, head: f.head, now: f.now, other })};
+await new WorktreeCleanup({ home: f.home, repos: () => [f.repo], liveDirs: () => [], procRoot: f.proc,
+  forge: async () => ({ state: 'merged', headSha: f.head, mergedAt: new Date(f.now - ${CLEANUP_DELAY} - 1000).toISOString(), url: 'https://example.com/pr/1' }),
+  step: (step) => { if (step === 'beforeBranchDelete') execFileSync('git', ['-C', f.repo, 'worktree', 'add', f.other, f.branch]); },
+}).remove(f.dir);
+`);
+  const child = spawn(process.execPath, [script], { stdio: 'ignore' });
+  const exited = new Promise<NodeJS.Signals | null>((resolve, reject) => { child.once('exit', (_, signal) => resolve(signal)); child.once('error', reject); });
+  const waitFor = async (predicate: () => boolean, message: string) => {
+    const deadline = Date.now() + 10_000;
+    while (!predicate()) { assert.ok(Date.now() < deadline, message); await new Promise((r) => setTimeout(r, 10)); }
+  };
+  const journals = () => readdirSync(join(f.home, 'worktree-cleanup')).filter((name) => name.endsWith('.json'));
+  let now = f.now;
+  const fresh = new WorktreeCleanup({ home: f.home, repos: () => [f.repo], liveDirs: () => [], procRoot: f.proc, now: () => now });
+  try {
+    await waitFor(() => existsSync(ready), 'deletion did not reach its prepared hook');
+    assert.ok(existsSync(join(f.repo, '.git', 'refs', 'heads', f.branch + '.lock')));
+    child.kill('SIGKILL'); // Only Node dies; its Git child remains paused with the ref lock.
+    assert.equal(await exited, 'SIGKILL');
+    assert.equal(git(f.repo, 'rev-parse', f.branch), f.head, 'the locked deletion still exposes the old ref');
+    await fresh.reconcile();
+    assert.equal(journals().length, 1, 'a surviving writer must keep branch recovery journaled');
+    const pending = (await fresh.list()).find((row) => row.branch === f.branch)!;
+    assert.ok(pending.reason?.includes(f.branch));
+    assert.ok(pending.reason?.includes(f.head), 'pending inventory must name the recovery SHA');
+    const journal = JSON.parse(readFileSync(join(f.home, 'worktree-cleanup', journals()[0]), 'utf8'));
+    assert.equal(journal.retries, 1); assert.ok(journal.retryAt > now);
+    writeFileSync(release, 'continue');
+    await waitFor(() => existsSync(committed) && git(f.repo, 'branch', '--list', f.branch) === '', 'surviving Git child did not finish deletion');
+    assert.match(git(f.repo, 'worktree', 'list', '--porcelain'), /HEAD 0{40}/, 'racing checkout now has a missing ref');
+    await fresh.reconcile();
+    assert.equal(journals().length, 1, 'backoff must retain the journal until retry');
+    now = journal.retryAt;
+    await fresh.reconcile();
+    assert.equal(git(f.repo, 'rev-parse', f.branch), f.head);
+    assert.equal(git(other, 'rev-parse', 'HEAD'), f.head);
+    assert.deepEqual(journals(), []);
+  } finally {
+    writeFileSync(release, 'continue');
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited;
+    if (existsSync(ready)) await waitFor(() => existsSync(committed), 'paused Git child did not exit its hook');
+  }
+});
+
 function crashCleanup(f: Awaited<ReturnType<typeof fixture>>, at: string, occupied = false) {
   const script = join(f.root, 'crash.ts');
   writeFileSync(script, `
