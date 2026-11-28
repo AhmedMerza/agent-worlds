@@ -163,7 +163,7 @@ export class WorktreeCleanup {
           // Atomic compare-and-delete: an external ref update must never lose its new commits.
           if ((await branchCheckouts(row.repo, row.branch!)).length) note = 'Worktree removed; local branch kept because it is checked out elsewhere';
           else {
-            await git(row.repo, 'update-ref', '-d', `refs/heads/${row.branch}`, row.head);
+            await git(row.repo, 'update-ref', '--no-deref', '-d', `refs/heads/${row.branch}`, row.head);
             branchDeleted = true;
             await git(row.repo, 'config', '--remove-section', `branch.${row.branch}`).catch((e) => { if (!/no such section/i.test(e.stderr ?? '')) throw e; });
           }

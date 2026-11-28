@@ -191,3 +191,13 @@ test('new checkout attached after folder removal keeps the local branch', async 
   assert.equal(result.removed, true); assert.match(result.reason!, /checked out elsewhere/);
   assert.equal(git(other, 'rev-parse', 'HEAD'), f.head);
 });
+
+test('symbolic ref retargeted after folder removal never deletes the primary branch', async () => {
+  const f = await fixture();
+  git(f.repo, 'update-ref', 'refs/heads/main', f.head);
+  const cleaner = new WorktreeCleanup({ home: f.home, repos: () => [f.repo], liveDirs: () => [], procRoot: f.proc,
+    forge: async () => ({ state: 'merged', headSha: f.head, mergedAt: new Date(f.now - CLEANUP_DELAY - 1000).toISOString(), url: 'https://example.com/pr/1' }),
+    onRemoved: () => { git(f.repo, 'symbolic-ref', `refs/heads/${f.branch}`, 'refs/heads/main'); } });
+  assert.equal((await cleaner.remove(f.dir)).removed, true);
+  assert.equal(git(f.repo, 'branch', '--list', 'main').includes('main'), true, 'deletion must not dereference a concurrently retargeted branch');
+});
